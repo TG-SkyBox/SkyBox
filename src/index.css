@@ -1,0 +1,198 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* TeleExplorer Design System - NUEXA Glass Dark Theme */
+
+@layer base {
+  :root {
+    /* Dark Theme Colors - Almost Black with Glass */
+    --background: 0 0% 7%; /* #121212 */
+    --foreground: 0 0% 90%; /* #E6E6E6 */
+
+    --card: 0 0% 100% / 0.03; /* Glass effect */
+    --card-foreground: 0 0% 90%;
+
+    --popover: 0 0% 12%;
+    --popover-foreground: 0 0% 90%;
+
+    --primary: 142 70% 45%; /* Green accent */
+    --primary-foreground: 0 0% 100%;
+
+    --secondary: 0 0% 100% / 0.05; /* Glass secondary */
+    --secondary-foreground: 0 0% 90%;
+
+    --muted: 0 0% 100% / 0.03;
+    --muted-foreground: 0 0% 50%; /* #808080 */
+
+    --accent: 142 70% 50%; /* Green hover */
+    --accent-foreground: 0 0% 100%;
+
+    --destructive: 0 70% 50%; /* Red */
+    --destructive-foreground: 0 0% 100%;
+
+    --border: 0 0% 100% / 0.08;
+    --input: 0 0% 100% / 0.05;
+    --ring: 142 70% 45%;
+
+    --radius: 12px;
+
+    /* Glass panel tokens */
+    --panel: 0 0% 100% / 0.03;
+    --panel-2: 0 0% 100% / 0.06;
+    --telegram-accent: 142 70% 45%;
+    --telegram-accent-hover: 142 70% 50%;
+    --telegram-border: 0 0% 100% / 0.08;
+    --telegram-divider: 0 0% 100% / 0.04;
+
+    /* Glass sidebar tokens */
+    --sidebar-background: 0 0% 100% / 0.02;
+    --sidebar-foreground: 0 0% 90%;
+    --sidebar-primary: 142 70% 45%;
+    --sidebar-primary-foreground: 0 0% 100%;
+    --sidebar-accent: 0 0% 100% / 0.08;
+    --sidebar-accent-foreground: 0 0% 100%;
+    --sidebar-border: 0 0% 100% / 0.06;
+    --sidebar-ring: 142 70% 45%;
+
+    /* Glass effects */
+    --glass-blur: 20px;
+    --glass-opacity: 0.03;
+  }
+}
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+
+  body {
+    @apply text-foreground antialiased;
+    font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+    background: 
+      radial-gradient(ellipse at 0% 0%, hsl(142 70% 45% / 0.08) 0%, transparent 40%),
+      radial-gradient(ellipse at 100% 100%, hsl(200 70% 50% / 0.05) 0%, transparent 40%),
+      radial-gradient(ellipse at 50% 50%, hsl(0 0% 15% / 0.5) 0%, transparent 60%),
+      linear-gradient(180deg, hsl(0 0% 8%) 0%, hsl(0 0% 5%) 100%);
+    min-height: 100vh;
+  }
+
+  /* Custom scrollbar */
+  ::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+  }
+
+  ::-webkit-scrollbar-track {
+    background: transparent;
+  }
+
+  ::-webkit-scrollbar-thumb {
+    background: hsl(var(--muted-foreground) / 0.3);
+    border-radius: 3px;
+  }
+
+  ::-webkit-scrollbar-thumb:hover {
+    background: hsl(var(--muted-foreground) / 0.5);
+  }
+}
+
+@layer components {
+  /* Glass panel effect */
+  .telegram-panel {
+    @apply rounded-xl border border-border;
+    background: hsl(0 0% 15% / 0.5);
+    backdrop-filter: blur(24px);
+    -webkit-backdrop-filter: blur(24px);
+  }
+
+  /* Glass card */
+  .glass-card {
+    @apply rounded-xl border border-border;
+    background: hsl(0 0% 15% / 0.4);
+    backdrop-filter: blur(24px);
+    -webkit-backdrop-filter: blur(24px);
+  }
+
+  /* Glass sidebar */
+  .glass-sidebar {
+    background: hsl(0 0% 12% / 0.6);
+    backdrop-filter: blur(24px);
+    -webkit-backdrop-filter: blur(24px);
+    border-right: 1px solid hsl(0 0% 100% / 0.08);
+  }
+
+  /* Glass input */
+  .telegram-input {
+    @apply rounded-lg px-4 py-3 text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent transition-all duration-200;
+    background: hsl(0 0% 100% / 0.05);
+    border: 1px solid hsl(0 0% 100% / 0.08);
+  }
+
+  /* Glass button */
+  .telegram-button {
+    @apply bg-primary hover:bg-accent text-primary-foreground font-medium rounded-lg px-6 py-3 transition-all duration-200 active:scale-[0.98];
+  }
+
+  /* Divider */
+  .telegram-divider {
+    @apply h-px bg-gradient-to-r from-transparent via-border to-transparent;
+  }
+
+  /* Glass hover item */
+  .telegram-hover-item {
+    @apply transition-all duration-150 cursor-pointer rounded-lg;
+  }
+  
+  .telegram-hover-item:hover {
+    background: hsl(0 0% 100% / 0.06);
+  }
+
+  /* Glass active item */
+  .telegram-active-item {
+    background: hsl(0 0% 100% / 0.08);
+  }
+
+  /* Active sidebar item with green accent */
+  .sidebar-active {
+    background: hsl(0 0% 100% / 0.06);
+    border-left: 3px solid hsl(142 70% 45%);
+  }
+}
+
+@layer utilities {
+  /* Text styles */
+  .text-title {
+    @apply text-lg font-semibold text-foreground;
+  }
+
+  .text-body {
+    @apply text-sm text-foreground;
+  }
+
+  .text-small {
+    @apply text-xs text-muted-foreground;
+  }
+
+  .text-link {
+    @apply text-primary hover:text-accent cursor-pointer transition-colors duration-150;
+  }
+
+  /* Subtle glow effect */
+  .telegram-glow {
+    box-shadow: 0 0 0 3px hsl(var(--primary) / 0.15);
+  }
+
+  /* Glass background utility */
+  .bg-glass {
+    background: hsl(0 0% 12% / 0.5);
+    backdrop-filter: blur(24px);
+    -webkit-backdrop-filter: blur(24px);
+  }
+
+  .bg-glass-dark {
+    background: hsl(0 0% 8% / 0.7);
+    backdrop-filter: blur(24px);
+    -webkit-backdrop-filter: blur(24px);
+  }
+}
