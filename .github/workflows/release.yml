@@ -208,7 +208,9 @@ jobs:
           OWNER_REPO: pamod-madubashana/SkyBox
         run: |
           set -euo pipefail
-          shopt -s nullglob globstar
+          shopt -s nullglob
+          # bash 3.2 (macos-latest) doesn't support `globstar`
+          shopt -s globstar 2>/dev/null || true
 
           # Fresh staging folder
           rm -rf upload
