@@ -1,0 +1,48 @@
+*** Begin Patch
+*** Update File: src/telegram/login.rs
+@@ pub async fn tg_poll_qr_login_impl(app: tauri::AppHandle) -> Result<QrPollResult, TelegramError> {
+                 match login_token {
+                     tl::enums::auth::LoginToken::Token(t) => {
+@@
+                     tl::enums::auth::LoginToken::MigrateTo(m) => {
+-                    log::info!("tg_poll_qr_login_impl: Migration required to DC {}", m.dc_id);
+-                    handle_dc_migration_safe(&client, m.dc_id, m.token, flow_id, app).await
+-                }
++                        // Determine if there is enough time remaining before the token expires to complete DC migration.
++                        let now_ts = Utc::now().timestamp();
++                        let remaining = qr_state_snapshot.expires_unix - now_ts;
++                        let migration_ttl_threshold: i64 = 10;
++                        if remaining < migration_ttl_threshold {
++                            // Not enough time left for migration handshake; treat the token as expired and prompt regeneration.
++                            log::warn!(
++                                "tg_poll_qr_login_impl: Token will expire in {}s (<{}s threshold) during migration to DC {}; expiring instead of migrating",
++                                remaining,
++                                migration_ttl_threshold,
++                                m.dc_id
++                            );
++                            {
++                                let mut guard = AUTH_STATE.lock().await;
++                                if let Some(state) = guard.as_mut() {
++                                    state.qr_state = None;
++                                }
++                            }
++                            return Ok(QrPollResult {
++                                status: QrLoginStatus::Expired,
++                                qr_url: None,
++                                user_info: None,
++                                session_data: None,
++                                requires_password: false,
++                                message: Some(format!(
++                                    "Login token expired during migration to DC {}; please generate a new QR code",
++                                    m.dc_id
++                                )),
++                            });
++                        }
++                        log::info!(
++                            "tg_poll_qr_login_impl: Migration required to DC {} with {}s remaining; proceeding with migration",
++                            m.dc_id,
++                            remaining
++                        );
++                        handle_dc_migration_safe(&client, m.dc_id, m.token, flow_id, app).await
++                    }
+*** End Patch

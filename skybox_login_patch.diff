@@ -1,0 +1,60 @@
+*** Begin Patch
+*** Update File: src-tauri/src/telegram/login.rs
+@@
+ use base64::Engine;
+ use chrono::Utc;
+
+ /// Compute proper expiration timestamp from the token's expires field
+ /// 
+ /// Logic:
+ /// - If expires_field <= 0: return now + 120 seconds
+ /// - If expires_field < 6 hours (21600): treat as TTL seconds => now + expires_field
+ /// - Else: treat as absolute Unix timestamp => expires_field
+ /// - Apply small grace: subtract 1 second if result is in future
+ fn compute_expires_at(expires_field: i32, now: i64) -> i64 {
+     let computed = if expires_field <= 0 {
+         // Invalid or zero TTL, default to 2 minutes
+         now + 120
+     } else if expires_field < 21600 {
+         // Treat as TTL in seconds (less than 6 hours)
+         now + expires_field as i64
+     } else {
+         // Treat as absolute Unix timestamp
+         expires_field as i64
+     };
+     // Apply small grace period (subtract 1 second if still in future)
+     if computed > now {
+         computed - 1
+     } else {
+         computed
+     }
+ }
+
+ // DC endpoint mapping (hardcoded for now, but could be made dynamic)
+ fn get_dc_endpoint(dc_id: i32) -> Option<(&'static str, u16)> {
+     match dc_id {
+         1 => Some(("149.154.167.40", 443)),
+         2 => Some(("149.154.167.51", 443)),
+         3 => Some(("149.154.167.51", 443)),
+         4 => Some(("149.154.167.51", 443)),
+         5 => Some(("91.108.56.198", 443)),
+         _ => None,
+     }
+ }
+
+ async fn build_dc_client(
+     dc_id: i32,
+     _current_client: Option<&Client>,
+ ) -> Result<(Client, Arc<TlSession>), TelegramError> {
+     log::debug!("build_dc_client: Building client for DC {}", dc_id);
+     let (ip, port) = get_dc_endpoint(dc_id)
+         .ok_or_else(|| TelegramError {
+             message: format!("Unsupported DC ID: {}", dc_id),
+         })?;
+     log::debug!("build_dc_client: Using endpoint {}:{} for DC {}", ip, port, dc_id);
+     #[allow(deprecated)]
+     let session = Arc::new(TlSession::new());
+     let built = build_client(session.clone());
+     log::debug!("build_dc_client: Created client for DC {}, session initialized", dc_id);
+     Ok((built.client, session))
+ }

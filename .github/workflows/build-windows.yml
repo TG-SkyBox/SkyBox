@@ -3,16 +3,26 @@ name: Build Tauri Windows App
 on:
   push:
     branches: [ main, master ]
-  pull_request:
-    branches: [ main, master ]
   workflow_dispatch:
 
 jobs:
   build-tauri-windows:
     runs-on: windows-latest
     if: "!contains(github.event.head_commit.message, 'new release')"
+    env:
+        TAURI_PRIVATE_KEY: ${{ secrets.TAURI_PRIVATE_KEY }}
+        TAURI_KEY_PASSWORD: ${{ secrets.TAURI_KEY_PASSWORD }}
+        TELEGRAM_API_ID: ${{ secrets.TELEGRAM_API_ID }}
+        TELEGRAM_API_HASH: ${{ secrets.TELEGRAM_API_HASH }}
     
     steps:
+      - name: Debug env presence
+        shell: pwsh
+        run: |
+          ""
+          if ($env:TELEGRAM_API_ID) { "TELEGRAM_API_ID is set" } else { "TELEGRAM_API_ID is MISSING" }
+          if ($env:TELEGRAM_API_HASH) { "TELEGRAM_API_HASH is set" } else { "TELEGRAM_API_HASH is MISSING" }
+          
       - name: Checkout repository
         uses: actions/checkout@v4
 
@@ -40,9 +50,7 @@ jobs:
 
       - name: Build Tauri app
         run: npm run tauri build
-        env:
-          TAURI_PRIVATE_KEY: ${{ secrets.TAURI_PRIVATE_KEY }}
-          TAURI_KEY_PASSWORD: ${{ secrets.TAURI_KEY_PASSWORD }}
+        
 
       - name: Upload Windows installer (MSI)
         uses: actions/upload-artifact@v4

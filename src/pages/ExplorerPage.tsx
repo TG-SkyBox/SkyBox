@@ -1,30 +1,105 @@
-import { useState, useMemo } from "react";
-import { ExplorerSidebar } from "@/components/teleexplorer/ExplorerSidebar";
-import { SearchBar } from "@/components/teleexplorer/SearchBar";
-import { Breadcrumbs } from "@/components/teleexplorer/Breadcrumbs";
-import { FileRow, FileItem } from "@/components/teleexplorer/FileRow";
-import { DetailsPanel } from "@/components/teleexplorer/DetailsPanel";
-import { ConfirmDialog } from "@/components/teleexplorer/ConfirmDialog";
-import { TelegramButton } from "@/components/teleexplorer/TelegramButton";
-import { FolderPlus, Grid, List, SortAsc, RefreshCw } from "lucide-react";
-import { useNavigate } from "react-router-dom";
+import { useState, useEffect, useMemo } from "react";
+import { ExplorerSidebar } from "@/components/skybox/ExplorerSidebar";
+import { SearchBar } from "@/components/skybox/SearchBar";
+import { Breadcrumbs } from "@/components/skybox/Breadcrumbs";
+import { FileRow, FileItem } from "@/components/skybox/FileRow";
+import { FileGrid } from "@/components/skybox/FileGrid";
+import { DetailsPanel } from "@/components/skybox/DetailsPanel";
+import { ConfirmDialog } from "@/components/skybox/ConfirmDialog";
+import { TelegramButton } from "@/components/skybox/TelegramButton";
+import { FolderPlus, Grid, List, SortAsc, RefreshCw, Copy, Trash2, Edit3, LogOut } from "lucide-react";
+import { useNavigate, useLocation } from "react-router-dom";
 import { toast } from "@/hooks/use-toast";
+import { invoke } from "@tauri-apps/api/core";
 
-// Mock data for demo
-const mockFiles: FileItem[] = [
-  { name: "Documents", path: "/home/user/Documents", isDirectory: true, modifiedAt: "2025-01-20T10:30:00" },
-  { name: "Downloads", path: "/home/user/Downloads", isDirectory: true, modifiedAt: "2025-01-21T08:15:00" },
-  { name: "Pictures", path: "/home/user/Pictures", isDirectory: true, modifiedAt: "2025-01-19T14:22:00" },
-  { name: "Projects", path: "/home/user/Projects", isDirectory: true, modifiedAt: "2025-01-21T16:45:00" },
-  { name: "Music", path: "/home/user/Music", isDirectory: true, modifiedAt: "2025-01-15T09:00:00" },
-  { name: "Videos", path: "/home/user/Videos", isDirectory: true, modifiedAt: "2025-01-18T11:30:00" },
-  { name: "report-2025.pdf", path: "/home/user/report-2025.pdf", isDirectory: false, size: 2457600, modifiedAt: "2025-01-21T15:30:00", extension: "pdf" },
-  { name: "notes.txt", path: "/home/user/notes.txt", isDirectory: false, size: 4096, modifiedAt: "2025-01-20T09:15:00", extension: "txt" },
-  { name: "screenshot.png", path: "/home/user/screenshot.png", isDirectory: false, size: 1048576, modifiedAt: "2025-01-21T12:00:00", extension: "png" },
-  { name: "project.zip", path: "/home/user/project.zip", isDirectory: false, size: 52428800, modifiedAt: "2025-01-19T16:45:00", extension: "zip" },
-  { name: "config.json", path: "/home/user/config.json", isDirectory: false, size: 2048, modifiedAt: "2025-01-17T08:30:00", extension: "json" },
-  { name: "video-tutorial.mp4", path: "/home/user/video-tutorial.mp4", isDirectory: false, size: 157286400, modifiedAt: "2025-01-16T14:00:00", extension: "mp4" },
-];
+interface FsError {
+  message: string;
+}
+
+interface DbError {
+  message: string;
+}
+
+interface TelegramError {
+  message: string;
+}
+
+// Define the FileEntry type to match the Rust struct
+interface FileEntry {
+  name: string;
+  path: string;
+  is_directory: boolean;
+  size?: number;
+  modified_at?: string;
+  extension?: string;
+}
+
+interface RecentPath {
+  id: number;
+  path: string;
+  last_opened: string;
+}
+
+interface Favorite {
+  id: number;
+  path: string;
+  label: string;
+}
+
+interface Session {
+  id: number;
+  phone: string;
+  session_data?: string;
+  created_at: string;
+}
+
+interface TelegramAuthResult {
+  authorized: boolean;
+  session_data?: string;
+  user_info?: {
+    id: number;
+    username?: string;
+    first_name?: string;
+    last_name?: string;
+    profile_photo?: string;
+  };
+  requires_password: boolean;
+}
+
+// Define the user info type
+interface UserInfo {
+  id: number;
+  username?: string;
+  first_name?: string;
+  last_name?: string;
+  profile_photo?: string;
+}
+
+interface TelegramMessage {
+  message_id: number;
+  chat_id: number;
+  category: string;
+  filename?: string;
+  extension?: string;
+  mime_type?: string;
+  timestamp: string;
+  size?: number;
+  text?: string;
+  thumbnail?: string;
+  file_reference: string;
+}
+
+// Convert Rust FileEntry to our FileItem type
+const convertFileEntryToFileItem = (entry: FileEntry): FileItem => {
+  return {
+    name: entry.name,
+    path: entry.path,
+    isDirectory: entry.is_directory,
+    size: entry.size,
+    modifiedAt: entry.modified_at,
+    extension: entry.extension,
+  };
+};
 
 const mockRoots = [
   { id: "1", path: "/home/user", name: "Home" },
@@ -33,6 +108,7 @@ const mockRoots = [
 
 export default function ExplorerPage() {
   const navigate = useNavigate();
+  const location = useLocation();
   const [search, setSearch] = useState("");
   const [selectedFile, setSelectedFile] = useState<FileItem | null>(null);
   const [showDetails, setShowDetails] = useState(false);
@@ -40,18 +116,278 @@ export default function ExplorerPage() {
   const [favorites, setFavorites] = useState<string[]>([]);
   const [deleteTarget, setDeleteTarget] = useState<FileItem | null>(null);
   const [isLoading, setIsLoading] = useState(false);
+  const [files, setFiles] = useState<FileItem[]>([]);
+  const [currentPath, setCurrentPath] = useState<string>("tg://saved");
+  const [error, setError] = useState<string | null>(null);
+  const [userInfo, setUserInfo] = useState<UserInfo | null>(null);
+  const [avatarUrl, setAvatarUrl] = useState<string | null>(null);
+  const [phoneNumber, setPhoneNumber] = useState<string | null>(null);
 
-  const currentPath = "/home/user";
-  const breadcrumbItems = [
-    { name: "home", path: "/home" },
-    { name: "user", path: "/home/user" },
-  ];
+  // Initialize with home directory and user info
+  useEffect(() => {
+    loadDirectory("tg://saved");
+    loadFavorites();
+
+    // Check if user info was passed from the LoadingPage
+    const passedUserInfo = location.state?.userInfo as UserInfo | undefined;
+    if (passedUserInfo) {
+      setUserInfo(passedUserInfo);
+      loadProfilePhoto(passedUserInfo.profile_photo); // Load photo with cached version if available
+    } else {
+      loadUserInfo().then(() => {
+        // We handle setting avatarUrl inside loadUserInfo now, 
+        // but loadProfilePhoto still needs to be called to check for updates if missing
+        loadProfilePhoto();
+      });
+    }
+
+    // Trigger indexing
+    indexSavedMessages();
+  }, [location.state]);
+
+  const indexSavedMessages = async () => {
+    try {
+      const result: any = await invoke("tg_index_saved_messages");
+      console.log("Indexing summary:", result);
+      if (result.total_new_messages > 0) {
+        toast({
+          title: "Saved Messages Indexed",
+          description: `Found ${result.total_new_messages} new messages.`,
+        });
+        // If we are currently viewing a Saved Messages path, refresh it
+        if (currentPath.startsWith("tg://saved")) {
+          loadDirectory(currentPath);
+        }
+      }
+    } catch (error) {
+      console.error("Error indexing saved messages:", error);
+    }
+  };
+
+  // Load user info from session
+  const loadUserInfo = async () => {
+    try {
+      const session: any = await invoke("db_get_session");
+      if (session) {
+        // If we have cached user info, use it immediately
+        if (session.first_name || session.last_name || session.username) {
+          setUserInfo({
+            id: 0,
+            username: session.username || null,
+            first_name: session.first_name || null,
+            last_name: session.last_name || null,
+            profile_photo: session.profile_photo || null
+          });
+
+          if (session.profile_photo) {
+            setAvatarUrl(session.profile_photo);
+          }
+          if (session.phone) {
+            setPhoneNumber(session.phone);
+          }
+        }
+
+        if (session.session_data) {
+          const result: TelegramAuthResult = await invoke("tg_restore_session", {
+            sessionData: session.session_data
+          });
+
+          if (result.authorized && result.user_info) {
+            setUserInfo(result.user_info);
+
+            if (result.user_info.profile_photo) {
+              setAvatarUrl(result.user_info.profile_photo);
+            }
+
+            // Background update of cache if info changed or was missing
+            if (!session.first_name || !session.last_name || !session.username) {
+              invoke("db_update_session_user_info", {
+                firstName: result.user_info.first_name,
+                lastName: result.user_info.last_name,
+                username: result.user_info.username
+              }).catch(e => console.error("Failed to update user info cache:", e));
+            }
+          }
+        }
+      }
+    } catch (error) {
+      console.error("Error loading user info:", error);
+    }
+  };
+
+  // Load profile photo from Telegram
+  const loadProfilePhoto = async (cachedPhoto?: string | null) => {
+    // If we already have an avatarUrl or a cachedPhoto is provided, don't reload
+    const currentAvatar = avatarUrl || cachedPhoto;
+    if (currentAvatar) {
+      if (!avatarUrl && cachedPhoto) setAvatarUrl(cachedPhoto);
+      return;
+    }
+
+    try {
+      const photoUrl: string | null = await invoke("tg_get_my_profile_photo");
+      if (photoUrl) {
+        setAvatarUrl(photoUrl);
+      }
+    } catch (error) {
+      console.error("Error loading profile photo:", error);
+      // Don't show error to user, just keep the fallback avatar
+    }
+  };
+
+  // Listen for navigation events from sidebar
+  useEffect(() => {
+    const handleNavigateEvent = (event: CustomEvent) => {
+      loadDirectory(event.detail);
+    };
+
+    window.addEventListener('navigate-to-path', handleNavigateEvent as EventListener);
+
+    return () => {
+      window.removeEventListener('navigate-to-path', handleNavigateEvent as EventListener);
+    };
+  }, []);
+
+  // Listen for logout events from sidebar
+  useEffect(() => {
+    const handleLogoutEvent = () => {
+      handleLogout();
+    };
+
+    window.addEventListener('logout-request', handleLogoutEvent);
+
+    return () => {
+      window.removeEventListener('logout-request', handleLogoutEvent);
+    };
+  }, []);
+
+  // Handle keyboard shortcuts
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      // Ctrl/Cmd + R to refresh
+      if ((e.ctrlKey || e.metaKey) && e.key === 'r') {
+        e.preventDefault();
+        handleRefresh();
+      }
+
+      // Escape to close details panel
+      if (e.key === 'Escape' && showDetails) {
+        setShowDetails(false);
+      }
+
+      // Delete key to delete selected file
+      if (e.key === 'Delete' && selectedFile) {
+        setDeleteTarget(selectedFile);
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+    return () => {
+      window.removeEventListener('keydown', handleKeyDown);
+    };
+  }, [selectedFile, showDetails]);
+
+  const loadDirectory = async (path: string) => {
+    setIsLoading(true);
+    setError(null);
+    try {
+      if (path === "tg://saved") {
+        const categories = ["Images", "Videos", "Audios", "Documents", "Notes"];
+        const virtualFolders: FileItem[] = categories.map(cat => ({
+          name: cat,
+          path: `tg://saved/${cat}`,
+          isDirectory: true,
+        }));
+        setFiles(virtualFolders);
+        setCurrentPath(path);
+      } else if (path.startsWith("tg://saved/")) {
+        const cat = path.replace("tg://saved/", "");
+        const result: TelegramMessage[] = await invoke("tg_get_indexed_saved_messages", { category: cat });
+
+        const messageFiles: FileItem[] = result.map(msg => ({
+          name: msg.filename || (msg.text ? (msg.text.length > 30 ? msg.text.substring(0, 30) + "..." : msg.text) : `Message ${msg.message_id}`),
+          path: `tg://msg/${msg.message_id}`,
+          isDirectory: false,
+          size: msg.size,
+          modifiedAt: msg.timestamp,
+          extension: msg.extension || (msg.category === "Notes" ? "txt" : ""),
+          messageId: msg.message_id,
+          thumbnail: msg.thumbnail || undefined,
+        }));
+        setFiles(messageFiles);
+        setCurrentPath(path);
+      } else {
+        const result: FileEntry[] = await invoke("fs_list_dir", { path });
+        const convertedFiles = result.map(convertFileEntryToFileItem);
+        setFiles(convertedFiles);
+        setCurrentPath(path);
+      }
+
+      // Add to recent paths (only for real FS paths for now, or decide if virtual paths should be saved)
+      if (!path.startsWith("tg://")) {
+        try {
+          await invoke("db_add_recent_path", { path });
+        } catch (error) {
+          console.error("Error adding recent path:", error);
+        }
+      }
+    } catch (error) {
+      const typedError = error as FsError;
+      setError(typedError.message || "An unknown error occurred");
+      toast({
+        title: "Error loading directory",
+        description: typedError.message || "An unknown error occurred",
+        variant: "destructive",
+      });
+      console.error("Error loading directory:", error);
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const loadFavorites = async () => {
+    try {
+      const result: Favorite[] = await invoke("db_get_favorites");
+      const favoritePaths = result.map(fav => fav.path);
+      setFavorites(favoritePaths);
+    } catch (error) {
+      const typedError = error as DbError;
+      console.error("Error loading favorites:", error);
+    }
+  };
+
+  const handleNavigateToPath = (path: string) => {
+    loadDirectory(path);
+  };
+
+  const breadcrumbItems = useMemo(() => {
+    if (!currentPath) return [];
+
+    if (currentPath.startsWith("tg://saved")) {
+      const part = currentPath.replace("tg://saved/", "");
+      if (part !== "tg://saved" && part !== "") {
+        return [{ name: part, path: currentPath }];
+      }
+      return [];
+    }
+
+    const parts = currentPath.split('/').filter(p => p);
+    const breadcrumbs = [];
+
+    let current = "";
+    parts.forEach(part => {
+      current += `/${part}`;
+      breadcrumbs.push({ name: part, path: current });
+    });
+
+    return breadcrumbs;
+  }, [currentPath]);
 
   const filteredFiles = useMemo(() => {
-    if (!search.trim()) return mockFiles;
+    if (!search.trim()) return files;
     const query = search.toLowerCase();
-    return mockFiles.filter((f) => f.name.toLowerCase().includes(query));
-  }, [search]);
+    return files.filter((f) => f.name.toLowerCase().includes(query));
+  }, [search, files]);
 
   // Sort: directories first, then by name
   const sortedFiles = useMemo(() => {
@@ -67,54 +403,135 @@ export default function ExplorerPage() {
     setShowDetails(true);
   };
 
-  const handleFileOpen = (file: FileItem) => {
+  const handleFileOpen = async (file: FileItem) => {
     if (file.isDirectory) {
+      loadDirectory(file.path);
       toast({
         title: "Opening folder",
         description: file.name,
       });
     } else {
-      toast({
-        title: "Opening file",
-        description: file.name,
-      });
+      try {
+        await invoke("fs_open_path", { path: file.path });
+        toast({
+          title: "Opening file",
+          description: file.name,
+        });
+      } catch (error) {
+        const typedError = error as FsError;
+        toast({
+          title: "Error opening file",
+          description: typedError.message || "An unknown error occurred",
+          variant: "destructive",
+        });
+      }
     }
   };
 
-  const handleToggleFavorite = () => {
+  const handleToggleFavorite = async () => {
     if (!selectedFile) return;
     const path = selectedFile.path;
+
     if (favorites.includes(path)) {
-      setFavorites(favorites.filter((f) => f !== path));
-      toast({ title: "Removed from favorites" });
+      // Remove from favorites
+      try {
+        // Find the favorite ID by path
+        const allFavorites: Favorite[] = await invoke("db_get_favorites");
+        const favoriteToRemove = allFavorites.find(fav => fav.path === path);
+
+        if (favoriteToRemove) {
+          await invoke("db_remove_favorite", { id: favoriteToRemove.id });
+          setFavorites(prev => prev.filter(f => f !== path));
+          toast({
+            title: "Removed from favorites",
+            description: `${selectedFile.name} is no longer a favorite`
+          });
+        }
+      } catch (error) {
+        const typedError = error as DbError;
+        toast({
+          title: "Error removing from favorites",
+          description: typedError.message || "An unknown error occurred",
+          variant: "destructive",
+        });
+      }
     } else {
-      setFavorites([...favorites, path]);
-      toast({ title: "Added to favorites" });
+      // Add to favorites
+      try {
+        const id: number = await invoke("db_add_favorite", {
+          path: path,
+          label: selectedFile.name
+        });
+        setFavorites(prev => [...prev, path]);
+        toast({
+          title: "Added to favorites",
+          description: `${selectedFile.name} is now a favorite`
+        });
+      } catch (error) {
+        const typedError = error as DbError;
+        toast({
+          title: "Error adding to favorites",
+          description: typedError.message || "An unknown error occurred",
+          variant: "destructive",
+        });
+      }
     }
   };
 
-  const handleDelete = () => {
+  const handleDelete = async () => {
     if (!deleteTarget) return;
-    toast({
-      title: "Deleted",
-      description: `${deleteTarget.name} has been deleted`,
-    });
-    setDeleteTarget(null);
-    if (selectedFile?.path === deleteTarget.path) {
-      setSelectedFile(null);
-      setShowDetails(false);
+
+    try {
+      await invoke("fs_delete", { path: deleteTarget.path });
+      toast({
+        title: "Deleted",
+        description: `${deleteTarget.name} has been deleted`,
+      });
+
+      // Reload the current directory to reflect changes
+      loadDirectory(currentPath);
+      setDeleteTarget(null);
+      if (selectedFile?.path === deleteTarget.path) {
+        setSelectedFile(null);
+        setShowDetails(false);
+      }
+    } catch (error) {
+      const typedError = error as FsError;
+      toast({
+        title: "Error deleting item",
+        description: typedError.message || "An unknown error occurred",
+        variant: "destructive",
+      });
     }
   };
 
   const handleRefresh = async () => {
     setIsLoading(true);
-    await new Promise((r) => setTimeout(r, 500));
+    await loadDirectory(currentPath);
     setIsLoading(false);
-    toast({ title: "Refreshed" });
+    toast({
+      title: "Refreshed",
+      description: "Directory contents refreshed"
+    });
   };
 
-  const handleLogout = () => {
-    toast({ title: "Logged out" });
+  const handleLogout = async () => {
+    try {
+      // Logout from Telegram
+      await invoke("tg_logout");
+
+      // Clear session from database
+      await invoke("db_clear_session");
+      toast({ title: "Logged out" });
+    } catch (error) {
+      const typedError = error as TelegramError;
+      console.error("Error during logout:", error);
+      toast({
+        title: "Logout error",
+        description: typedError.message || "An error occurred during logout",
+        variant: "destructive",
+      });
+    }
     navigate("/login");
   };
 
@@ -128,24 +545,62 @@ export default function ExplorerPage() {
   const handleCopyPath = () => {
     if (selectedFile) {
       navigator.clipboard.writeText(selectedFile.path);
-      toast({ title: "Path copied to clipboard" });
+      toast({
+        title: "Path copied",
+        description: "File path copied to clipboard"
+      });
     }
   };
 
-  const handleNewFolder = () => {
+  const handleNewFolder = async () => {
+    const folderName = prompt("Enter folder name:");
+    if (!folderName) return;
+
+    // Construct the new path
+    const newPath = `${currentPath}/${folderName}`.replace("//", "/");
+
+    try {
+      await invoke("fs_create_dir", { path: newPath });
+      toast({
+        title: "Folder created",
+        description: `Created folder: ${folderName}`,
+      });
+      // Reload the current directory to show the new folder
+      loadDirectory(currentPath);
+    } catch (error) {
+      const typedError = error as FsError;
+      toast({
+        title: "Error creating folder",
+        description: typedError.message || "An unknown error occurred",
+        variant: "destructive",
+      });
+    }
+  };
+
+  const handleRename = () => {
+    if (!selectedFile) return;
+
+    const newName = prompt("Enter new name:", selectedFile.name);
+    if (!newName || newName === selectedFile.name) return;
+
+    // Construct new path
+    const directory = selectedFile.path.substring(0, selectedFile.path.lastIndexOf('/'));
+    const newPath = `${directory}/${newName}`.replace("//", "/");
+
     toast({
-      title: "New folder",
-      description: "Create folder dialog would open",
+      title: "Rename feature",
+      description: "Rename functionality would be implemented here",
     });
   };
 
   return (
-    <div className="h-screen flex bg-background overflow-hidden">
+    <div className="h-screen flex overflow-hidden">
       {/* Sidebar */}
       <ExplorerSidebar
-        roots={mockRoots}
-        onAddRoot={handleAddRoot}
         currentPath={currentPath}
+        userInfo={userInfo}
+        avatarUrl={avatarUrl}
+        phoneNumber={phoneNumber}
       />
 
       {/* Main content */}
@@ -157,11 +612,15 @@ export default function ExplorerPage() {
               onClick={handleRefresh}
               className="p-2 rounded text-muted-foreground hover:text-foreground hover:bg-secondary transition-colors"
               disabled={isLoading}
-              title="Refresh"
+              title="Refresh (Ctrl+R)"
             >
               <RefreshCw className={`w-4 h-4 ${isLoading ? "animate-spin" : ""}`} />
             </button>
-            <Breadcrumbs items={breadcrumbItems} onNavigate={(path) => console.log("Navigate to", path)} />
+            <Breadcrumbs
+              items={breadcrumbItems}
+              onNavigate={handleNavigateToPath}
+              homePath={currentPath.startsWith("tg://") ? "tg://saved" : "/"}
+            />
           </div>
 
           <div className="flex items-center gap-2">
@@ -174,17 +633,17 @@ export default function ExplorerPage() {
             <div className="flex items-center gap-1 ml-2">
               <button
                 onClick={() => setViewMode("list")}
-                className={`p-2 rounded transition-colors ${
-                  viewMode === "list" ? "bg-secondary text-foreground" : "text-muted-foreground hover:text-foreground"
-                }`}
+                className={`p-2 rounded transition-colors ${viewMode === "list" ? "bg-secondary text-foreground" : "text-muted-foreground hover:text-foreground"
+                  }`}
+                title="List view"
               >
                 <List className="w-4 h-4" />
               </button>
               <button
                 onClick={() => setViewMode("grid")}
-                className={`p-2 rounded transition-colors ${
-                  viewMode === "grid" ? "bg-secondary text-foreground" : "text-muted-foreground hover:text-foreground"
-                }`}
+                className={`p-2 rounded transition-colors ${viewMode === "grid" ? "bg-secondary text-foreground" : "text-muted-foreground hover:text-foreground"
+                  }`}
+                title="Grid view"
               >
                 <Grid className="w-4 h-4" />
               </button>
@@ -199,6 +658,38 @@ export default function ExplorerPage() {
               <FolderPlus className="w-4 h-4" />
               New Folder
             </TelegramButton>
+
+            {/* Contextual actions for selected file */}
+            {selectedFile && (
+              <>
+                <TelegramButton
+                  variant="secondary"
+                  size="sm"
+                  onClick={handleCopyPath}
+                  aria-label="Copy path (Ctrl+C)"
+                >
+                  <Copy className="w-4 h-4" />
+                </TelegramButton>
+
+                <TelegramButton
+                  variant="secondary"
+                  size="sm"
+                  onClick={handleRename}
+                  aria-label="Rename (F2)"
+                >
+                  <Edit3 className="w-4 h-4" />
+                </TelegramButton>
+
+                <TelegramButton
+                  variant="secondary"
+                  size="sm"
+                  onClick={() => setDeleteTarget(selectedFile)}
+                  aria-label="Delete (Del)"
+                >
+                  <Trash2 className="w-4 h-4" />
+                </TelegramButton>
+              </>
+            )}
           </div>
 
           <div className="flex items-center gap-2">
@@ -207,7 +698,7 @@ export default function ExplorerPage() {
               Name
             </button>
             <span className="text-small text-muted-foreground">
-              {sortedFiles.length} items
+              {sortedFiles.length} {sortedFiles.length === 1 ? 'item' : 'items'}
             </span>
           </div>
         </div>
@@ -215,35 +706,69 @@ export default function ExplorerPage() {
         {/* File list */}
         <div className="flex-1 flex min-h-0">
           <div className="flex-1 overflow-y-auto p-4">
-            {sortedFiles.length === 0 ? (
+            {error ? (
+              <div className="flex flex-col items-center justify-center h-full text-center">
+                <p className="text-body text-destructive mb-2">
+                  Error: {error}
+                </p>
+                <TelegramButton onClick={() => loadDirectory(currentPath)}>
+                  Retry
+                </TelegramButton>
+              </div>
+            ) : isLoading ? (
+              <div className="flex flex-col items-center justify-center h-full text-center">
+                <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary mb-2"></div>
+                <p className="text-body text-muted-foreground">
+                  Loading directory contents...
+                </p>
+              </div>
+            ) : sortedFiles.length === 0 ? (
               <div className="flex flex-col items-center justify-center h-full text-center">
                 <p className="text-body text-muted-foreground mb-2">
                   {search ? "No files match your search" : "This folder is empty"}
                 </p>
+                {!search && (
+                  <TelegramButton onClick={handleNewFolder}>
+                    Create New Folder
+                  </TelegramButton>
+                )}
                 {search && (
                   <button
                     onClick={() => setSearch("")}
-                    className="text-body text-link"
+                    className="text-body text-link mt-2"
                   >
                     Clear search
                   </button>
                 )}
               </div>
             ) : (
-              <div className="space-y-0.5">
-                {sortedFiles.map((file) => (
-                  <FileRow
-                    key={file.path}
-                    file={file}
-                    isSelected={selectedFile?.path === file.path}
-                    onSelect={() => handleFileSelect(file)}
-                    onOpen={() => handleFileOpen(file)}
-                    onContextMenu={(e) => {
+              <div className={viewMode === "list" ? "space-y-0.5" : "p-1"}>
+                {viewMode === "list" ? (
+                  sortedFiles.map((file) => (
+                    <FileRow
+                      key={file.path}
+                      file={file}
+                      isSelected={selectedFile?.path === file.path}
+                      onSelect={() => handleFileSelect(file)}
+                      onOpen={() => handleFileOpen(file)}
+                      onContextMenu={(e) => {
+                        e.preventDefault();
+                        handleFileSelect(file);
+                      }}
+                    />
+                  ))
+                ) : (
+                  <FileGrid
+                    files={sortedFiles}
+                    selectedFile={selectedFile}
+                    onSelect={handleFileSelect}
+                    onOpen={handleFileOpen}
+                    onContextMenu={(e, file) => {
                       e.preventDefault();
                       handleFileSelect(file);
                     }}
                   />
-                ))}
+                )}
               </div>
             )}
           </div>
@@ -254,7 +779,7 @@ export default function ExplorerPage() {
               file={selectedFile}
               onClose={() => setShowDetails(false)}
               onToggleFavorite={handleToggleFavorite}
-              onRename={() => toast({ title: "Rename", description: "Rename dialog would open" })}
+              onRename={handleRename}
               onDelete={() => selectedFile && setDeleteTarget(selectedFile)}
               onCopyPath={handleCopyPath}
               onOpenLocation={() => toast({ title: "Reveal in folder" })}

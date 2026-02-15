@@ -1,8 +1,8 @@
 {
   "$schema": "../node_modules/@tauri-apps/cli/config.schema.json",
-  "productName": "skybox",
-  "version": "0.1.0",
-  "identifier": "com.tauri.dev",
+  "productName": "SkyBox",
+  "version": "1.0.2",
+  "identifier": "com.skybox.app",
   "build": {
     "frontendDist": "../dist",
     "devUrl": "http://localhost:3000",
@@ -13,10 +13,15 @@
     "windows": [
       {
         "title": "SkyBox",
-        "width": 800,
-        "height": 600,
+        "width": 1200,
+        "height": 800,
         "resizable": true,
-        "fullscreen": false
+        "fullscreen": false,
+        "minWidth": 800,
+        "minHeight": 600,
+        "visible": true,
+        "decorations": true,
+        "transparent": false
       }
     ],
     "security": {
@@ -32,6 +37,11 @@
       "icons/128x128@2x.png",
       "icons/icon.icns",
       "icons/icon.ico"
-    ]
+    ],
+    "publisher": "SkyBox Team",
+    "copyright": "\u00a9 2026 SkyBox. All rights reserved.",
+    "category": "DeveloperTool",
+    "shortDescription": "A Telegram-themed desktop file explorer with cloud integration",
+    "longDescription": "SkyBox is a modern desktop file explorer application built with Tauri, React, and TypeScript. It combines traditional file management capabilities with innovative Telegram integration features, allowing users to seamlessly share files and communicate through Telegram directly from the application."
   }
 }

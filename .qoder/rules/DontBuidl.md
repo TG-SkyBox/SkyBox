@@ -1,5 +1,6 @@
 ---
-trigger: always_on
+trigger: manual
+alwaysApply: false
 ---
 # SkyBox — Agent Rules (Qoder)
 
