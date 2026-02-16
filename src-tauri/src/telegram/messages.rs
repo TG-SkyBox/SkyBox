@@ -191,6 +191,74 @@ fn build_temp_upload_path(file_name: &str) -> PathBuf {
     ))
 }
 
+fn get_thumbnail_cache_dir() -> Result<PathBuf, TelegramError> {
+    let project_dirs = ProjectDirs::from("com", "skybox", "Skybox").ok_or_else(|| TelegramError {
+        message: "Failed to resolve app data directory".to_string(),
+    })?;
+
+    let thumbnails_dir = project_dirs.data_local_dir().join(".thumbnails");
+    fs::create_dir_all(&thumbnails_dir).map_err(|e| TelegramError {
+        message: format!(
+            "Failed to create thumbnail cache directory {}: {}",
+            thumbnails_dir.display(),
+            e
+        ),
+    })?;
+
+    Ok(thumbnails_dir)
+}
+
+fn detect_thumbnail_extension(bytes: &[u8]) -> &'static str {
+    if bytes.len() >= 3 && bytes[0] == 0xFF && bytes[1] == 0xD8 && bytes[2] == 0xFF {
+        return "jpg";
+    }
+    if bytes.len() >= 8
+        && bytes[0] == 0x89
+        && bytes[1] == 0x50
+        && bytes[2] == 0x4E
+        && bytes[3] == 0x47
+        && bytes[4] == 0x0D
+        && bytes[5] == 0x0A
+        && bytes[6] == 0x1A
+        && bytes[7] == 0x0A
+    {
+        return "png";
+    }
+    if bytes.len() >= 12 && &bytes[0..4] == b"RIFF" && &bytes[8..12] == b"WEBP" {
+        return "webp";
+    }
+    if bytes.len() >= 4 && &bytes[0..4] == b"GIF8" {
+        return "gif";
+    }
+
+    "jpg"
+}
+
+fn cache_thumbnail_bytes(chat_id: i64, message_id: i32, bytes: &[u8]) -> Result<String, TelegramError> {
+    let extension = detect_thumbnail_extension(bytes);
+    let thumbnail_dir = get_thumbnail_cache_dir()?;
+    let thumbnail_path = thumbnail_dir.join(format!("{}_{}.{}", chat_id, message_id, extension));
+
+    fs::write(&thumbnail_path, bytes).map_err(|e| TelegramError {
+        message: format!(
+            "Failed to write thumbnail cache file {}: {}",
+            thumbnail_path.display(),
+            e
+        ),
+    })?;
+
+    Ok(thumbnail_path.to_string_lossy().to_string())
+}
+
+fn decode_data_url_image_bytes(data_url: &str) -> Option<Vec<u8>> {
+    let base64_marker = "base64,";
+    let payload_index = data_url.find(base64_marker)? + base64_marker.len();
+    let payload = &data_url[payload_index..];
+
+    use base64::Engine;
+    base64::engine::general_purpose::STANDARD.decode(payload).ok()
+}
+
 fn normalize_saved_path(path: &str) -> String {
     let normalized = path.replace('\\', "/");
     let trimmed = normalized.trim();
