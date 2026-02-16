@@ -1,5 +1,5 @@
-import { Home, Star, Clock, FolderOpen, ChevronRight, Settings, LogOut } from "lucide-react";
-import { NavLink, useLocation, useNavigate } from "react-router-dom";
+import { Home, Star, Clock, FolderOpen, ChevronRight, Settings, LogOut, Trash2 } from "lucide-react";
+import { NavLink, useLocation } from "react-router-dom";
 import { useEffect, useState, useRef } from "react";
 import { TelegramButton } from "@/components/skybox/TelegramButton";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
@@ -15,6 +15,10 @@ interface SidebarItem {
 
 const mainItems: SidebarItem[] = [
   { id: "saved", label: "Saved Messages", icon: Clock, path: "tg://saved" },
+];
+
+const savedSubItems: SidebarItem[] = [
+  { id: "saved-recycle-bin", label: "Recycle Bin", icon: Trash2, path: "tg://saved/Recycle Bin" },
 ];
 
 interface UserInfo {
@@ -36,7 +40,6 @@ interface ExplorerSidebarProps {
 
 export function ExplorerSidebar({ roots = [], onAddRoot, currentPath, userInfo, avatarUrl, phoneNumber }: ExplorerSidebarProps) {
   const location = useLocation();
-  const navigate = useNavigate();
   const photoUrl = avatarUrl?.trim();
   const [photoFailed, setPhotoFailed] = useState(false);
   const [isMenuOpen, setIsMenuOpen] = useState(false);
@@ -102,10 +105,6 @@ export function ExplorerSidebar({ roots = [], onAddRoot, currentPath, userInfo, 
         avatarUrl={avatarUrl}
         phoneNumber={phoneNumber}
         onLogout={handleLogout}
-        onSettings={() => {
-          setIsMenuOpen(false);
-          navigate("/settings");
-        }}
       />
       {/* User Profile Header */}
       <div className="p-4 border-b border-border">
@@ -182,6 +181,28 @@ export function ExplorerSidebar({ roots = [], onAddRoot, currentPath, userInfo, 
             >
               {content}
             </NavLink>
+          );
+        })}
+
+        {savedSubItems.map((item) => {
+          const Icon = item.icon;
+          const itemPath = item.path || "";
+          const isActive = !!itemPath && !!currentPath && (
+            currentPath === itemPath || currentPath.startsWith(`${itemPath}/`)
+          );
+
+          return (
+            <button
+              key={item.id}
+              onClick={() => item.path && handleRootClick(item.path)}
+              className={`flex items-center gap-3 px-3 py-2.5 rounded-lg transition-all duration-150 w-full text-left ${isActive
+                ? "bg-sidebar-accent text-primary font-medium"
+                : "text-foreground hover:bg-sidebar-accent/50"
+                }`}
+            >
+              <Icon className="w-5 h-5" />
+              <span className="text-body font-medium">{item.label}</span>
+            </button>
           );
         })}
 

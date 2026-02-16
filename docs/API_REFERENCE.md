@@ -199,6 +199,15 @@ Moves a virtual Saved Messages item (file or folder) between local virtual folde
 
 **Returns:** `Result<(), TelegramError>`
 
+### `tg_rename_saved_item(source_path: String, new_name: String)`
+Renames a virtual Saved Messages item in local metadata.
+
+**Parameters:**
+- `source_path`: Source virtual path (`tg://msg/<id>` for files or `tg://saved/...` for folders)
+- `new_name`: New file or folder name
+
+**Returns:** `Result<(), TelegramError>`
+
 ### `tg_get_message_thumbnail(message_id: i32)`
 Fetches thumbnail for a Saved Message, stores it in local cache (`AppData\\Local\\Skybox\\.thumbnails`), and saves the cached file path in local DB.
 

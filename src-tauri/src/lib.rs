@@ -76,6 +76,7 @@ pub fn run() {
             telegram::tg_rebuild_saved_items_index,
             telegram::tg_create_saved_folder,
             telegram::tg_move_saved_item,
+            telegram::tg_rename_saved_item,
             telegram::tg_get_message_thumbnail,
             telegram::tg_prefetch_message_thumbnails,
             telegram::tg_upload_file_to_saved_messages,
