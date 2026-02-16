@@ -338,6 +338,7 @@ export default function ExplorerPage() {
       setIsSavedBackfillSyncing(true);
       try {
         let hasMore = true;
+        let indexedAny = false;
         while (!cancelled && hasMore) {
           const result: TelegramBackfillBatchResult = await invoke("tg_backfill_saved_messages_batch", {
             batchSize: SAVED_ITEMS_PAGE_SIZE,
@@ -345,12 +346,17 @@ export default function ExplorerPage() {
 
           hasMore = result.has_more;
           if (result.indexed_count > 0) {
+            indexedAny = true;
             setHasMoreSavedItems(true);
           }
 
           if (hasMore) {
             await new Promise((resolve) => setTimeout(resolve, 120));
           }
+        }
+
+        if (!cancelled && indexedAny && currentPathRef.current.startsWith("tg://saved")) {
+          await loadDirectory(currentPathRef.current);
         }
       } catch (error) {
         console.error("Error backfilling saved messages:", error);

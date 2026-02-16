@@ -171,6 +171,53 @@ fn upsert_saved_item_from_message(
     })
 }
 
+fn hydrate_saved_items_from_cached_messages(
+    db: &Database,
+    owner_id: &str,
+    chat_id: i64,
+) -> Result<usize, TelegramError> {
+    let existing_items = db
+        .count_telegram_saved_non_folder_items(owner_id)
+        .map_err(|e| TelegramError {
+            message: format!("Failed to count saved items: {}", e.message),
+        })?;
+
+    if existing_items > 0 {
+        return Ok(0);
+    }
+
+    let cached_messages = db.get_all_indexed_messages(chat_id).map_err(|e| TelegramError {
+        message: format!("Failed to read cached telegram messages: {}", e.message),
+    })?;
+
+    if cached_messages.is_empty() {
+        return Ok(0);
+    }
+
+    let mut hydrated = 0usize;
+    for message in cached_messages {
+        upsert_saved_item_from_message(db, owner_id, &message, None, None)?;
+        hydrated += 1;
+    }
+
+    let oldest_message_id = db.get_oldest_indexed_message_id(chat_id).map_err(|e| TelegramError {
+        message: format!("Failed to read oldest cached message id: {}", e.message),
+    })?;
+
+    if oldest_message_id > 0 {
+        db.set_setting(&backfill_cursor_key(chat_id), &oldest_message_id.to_string())
+            .map_err(|e| TelegramError {
+                message: format!("Failed to update backfill cursor: {}", e.message),
+            })?;
+        db.set_setting(&backfill_complete_key(chat_id), "0")
+            .map_err(|e| TelegramError {
+                message: format!("Failed to update backfill completion state: {}", e.message),
+            })?;
+    }
+
+    Ok(hydrated)
+}
+
 pub async fn tg_index_saved_messages_impl(db: Database) -> Result<serde_json::Value, TelegramError> {
     let state_guard = AUTH_STATE.lock().await;
     let state = state_guard.as_ref().ok_or_else(|| TelegramError {
@@ -191,6 +238,14 @@ pub async fn tg_index_saved_messages_impl(db: Database) -> Result<serde_json::Va
     db.ensure_telegram_saved_folders(&owner_id).map_err(|e| TelegramError {
         message: format!("Failed to ensure default folders: {}", e.message),
     })?;
+
+    let hydrated_count = hydrate_saved_items_from_cached_messages(&db, &owner_id, chat_id)?;
+    if hydrated_count > 0 {
+        log::info!(
+            "Hydrated {} saved-item records from existing local telegram_messages cache",
+            hydrated_count
+        );
+    }
 
     log::info!("Indexing Saved Messages for user {} starting from message ID {}", chat_id, last_id);
 
@@ -286,6 +341,8 @@ pub async fn tg_list_saved_items_impl(db: Database, file_path: String) -> Result
         message: format!("Failed to ensure default folders: {}", e.message),
     })?;
 
+    let _ = hydrate_saved_items_from_cached_messages(&db, &owner_id, me.raw.id())?;
+
     db.get_telegram_saved_items_by_path(&owner_id, &normalized_path).map_err(|e| TelegramError {
         message: format!("Database error: {}", e.message),
     })
@@ -314,6 +371,8 @@ pub async fn tg_list_saved_items_page_impl(
     db.ensure_telegram_saved_folders(&owner_id).map_err(|e| TelegramError {
         message: format!("Failed to ensure default folders: {}", e.message),
     })?;
+
+    let _ = hydrate_saved_items_from_cached_messages(&db, &owner_id, me.raw.id())?;
 
     let mut items = db
         .get_telegram_saved_items_by_path_paginated(&owner_id, &normalized_path, safe_offset, safe_limit + 1)
@@ -354,6 +413,8 @@ pub async fn tg_backfill_saved_messages_batch_impl(
     db.ensure_telegram_saved_folders(&owner_id).map_err(|e| TelegramError {
         message: format!("Failed to ensure default folders: {}", e.message),
     })?;
+
+    let _ = hydrate_saved_items_from_cached_messages(&db, &owner_id, chat_id)?;
 
     let complete_key = backfill_complete_key(chat_id);
     let complete = db
