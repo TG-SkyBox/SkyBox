@@ -103,6 +103,20 @@ interface TelegramSavedItem {
   owner_id: string;
 }
 
+interface TelegramSavedItemsPage {
+  items: TelegramSavedItem[];
+  has_more: boolean;
+  next_offset: number;
+}
+
+interface TelegramBackfillBatchResult {
+  fetched_count: number;
+  indexed_count: number;
+  has_more: boolean;
+  is_complete: boolean;
+  next_offset_id?: number;
+}
+
 // Convert Rust FileEntry to our FileItem type
 const convertFileEntryToFileItem = (entry: FileEntry): FileItem => {
   return {
@@ -121,6 +135,7 @@ const mockRoots = [
 ];
 
 const INTERNAL_DRAG_MIME = "application/x-skybox-item-path";
+const SAVED_ITEMS_PAGE_SIZE = 50;
 
 const isVirtualPath = (path: string): boolean => path.startsWith("tg://");
 
@@ -240,8 +255,13 @@ export default function ExplorerPage() {
   const [dropTargetPath, setDropTargetPath] = useState<string | null>(null);
   const [isExternalDragging, setIsExternalDragging] = useState(false);
   const [isUploadingFiles, setIsUploadingFiles] = useState(false);
+  const [savedItemsOffset, setSavedItemsOffset] = useState(0);
+  const [hasMoreSavedItems, setHasMoreSavedItems] = useState(false);
+  const [isLoadingMoreSavedItems, setIsLoadingMoreSavedItems] = useState(false);
+  const [isSavedBackfillSyncing, setIsSavedBackfillSyncing] = useState(false);
   const [backHistory, setBackHistory] = useState<string[]>([]);
   const [forwardHistory, setForwardHistory] = useState<string[]>([]);
+  const currentPathRef = useRef("tg://saved");
   const navigationStateRef = useRef({
     backHistory: [] as string[],
     forwardHistory: [] as string[],
@@ -278,6 +298,7 @@ export default function ExplorerPage() {
       currentPath,
       isLoading,
     };
+    currentPathRef.current = currentPath;
   }, [backHistory, forwardHistory, currentPath, isLoading]);
 
   const indexSavedMessages = async () => {

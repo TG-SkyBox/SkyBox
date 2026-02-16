@@ -8,6 +8,22 @@ use std::fs;
 use std::path::PathBuf;
 use std::time::{SystemTime, UNIX_EPOCH};
 
+const DEFAULT_BATCH_SIZE: usize = 50;
+const MAX_BATCH_SIZE: usize = 200;
+
+fn backfill_cursor_key(chat_id: i64) -> String {
+    format!("tg_saved_backfill_cursor_{}", chat_id)
+}
+
+fn backfill_complete_key(chat_id: i64) -> String {
+    format!("tg_saved_backfill_complete_{}", chat_id)
+}
+
+fn clamp_batch_size(input: Option<i32>) -> usize {
+    let parsed = input.unwrap_or(DEFAULT_BATCH_SIZE as i32).max(1) as usize;
+    parsed.min(MAX_BATCH_SIZE)
+}
+
 fn sanitize_upload_file_name(file_name: &str) -> String {
     let trimmed = file_name.trim();
     if trimmed.is_empty() {
@@ -186,10 +202,16 @@ pub async fn tg_index_saved_messages_impl(db: Database) -> Result<serde_json::Va
         }),
         _ => return Err(TelegramError { message: "Invalid user type".to_string() }),
     };
-    let mut messages_iter = client.iter_messages(input_peer);
+    let bootstrap_limited = last_id == 0;
+    let mut messages_iter = if bootstrap_limited {
+        client.iter_messages(input_peer).limit(DEFAULT_BATCH_SIZE)
+    } else {
+        client.iter_messages(input_peer)
+    };
     
     let mut new_count = 0;
     let mut category_counts = std::collections::HashMap::new();
+    let mut min_indexed_id = 0;
 
     while let Some(message) = messages_iter.next().await.map_err(|e| TelegramError {
         message: format!("Failed to fetch messages: {}", e),
@@ -204,15 +226,31 @@ pub async fn tg_index_saved_messages_impl(db: Database) -> Result<serde_json::Va
             })?;
 
             upsert_saved_item_from_message(&db, &owner_id, &tg_msg, None, None)?;
-             
+              
             new_count += 1;
+            if min_indexed_id == 0 || tg_msg.message_id < min_indexed_id {
+                min_indexed_id = tg_msg.message_id;
+            }
             *category_counts.entry(tg_msg.category.clone()).or_insert(0) += 1;
+        }
+    }
+
+    if bootstrap_limited && new_count > 0 {
+        db.set_setting(&backfill_complete_key(chat_id), "0").map_err(|e| TelegramError {
+            message: format!("Failed to update backfill completion state: {}", e.message),
+        })?;
+
+        if min_indexed_id > 0 {
+            db.set_setting(&backfill_cursor_key(chat_id), &min_indexed_id.to_string()).map_err(|e| TelegramError {
+                message: format!("Failed to update backfill cursor: {}", e.message),
+            })?;
         }
     }
 
     Ok(json!({
         "total_new_messages": new_count,
-        "categories": category_counts
+        "categories": category_counts,
+        "bootstrap_limited": bootstrap_limited
     }))
 }
 
@@ -251,6 +289,163 @@ pub async fn tg_list_saved_items_impl(db: Database, file_path: String) -> Result
     db.get_telegram_saved_items_by_path(&owner_id, &normalized_path).map_err(|e| TelegramError {
         message: format!("Database error: {}", e.message),
     })
+}
+
+pub async fn tg_list_saved_items_page_impl(
+    db: Database,
+    file_path: String,
+    offset: i64,
+    limit: i64,
+) -> Result<serde_json::Value, TelegramError> {
+    let state_guard = AUTH_STATE.lock().await;
+    let state = state_guard.as_ref().ok_or_else(|| TelegramError {
+        message: "Not authorized".to_string(),
+    })?;
+
+    let me = state.client.get_me().await.map_err(|e| TelegramError {
+        message: format!("Failed to get user info: {}", e),
+    })?;
+
+    let owner_id = me.raw.id().to_string();
+    let normalized_path = normalize_saved_path(&file_path);
+    let safe_offset = offset.max(0);
+    let safe_limit = limit.clamp(1, MAX_BATCH_SIZE as i64);
+
+    db.ensure_telegram_saved_folders(&owner_id).map_err(|e| TelegramError {
+        message: format!("Failed to ensure default folders: {}", e.message),
+    })?;
+
+    let mut items = db
+        .get_telegram_saved_items_by_path_paginated(&owner_id, &normalized_path, safe_offset, safe_limit + 1)
+        .map_err(|e| TelegramError {
+            message: format!("Database error: {}", e.message),
+        })?;
+
+    let has_more = (items.len() as i64) > safe_limit;
+    if has_more {
+        let _ = items.pop();
+    }
+
+    Ok(json!({
+        "items": items,
+        "has_more": has_more,
+        "next_offset": safe_offset + (items.len() as i64)
+    }))
+}
+
+pub async fn tg_backfill_saved_messages_batch_impl(
+    db: Database,
+    batch_size: Option<i32>,
+) -> Result<serde_json::Value, TelegramError> {
+    let state_guard = AUTH_STATE.lock().await;
+    let state = state_guard.as_ref().ok_or_else(|| TelegramError {
+        message: "Not authorized".to_string(),
+    })?;
+
+    let client = &state.client;
+    let me = client.get_me().await.map_err(|e| TelegramError {
+        message: format!("Failed to get user info: {}", e),
+    })?;
+
+    let chat_id = me.raw.id();
+    let owner_id = chat_id.to_string();
+    let limit = clamp_batch_size(batch_size);
+
+    db.ensure_telegram_saved_folders(&owner_id).map_err(|e| TelegramError {
+        message: format!("Failed to ensure default folders: {}", e.message),
+    })?;
+
+    let complete_key = backfill_complete_key(chat_id);
+    let complete = db
+        .get_setting(&complete_key)
+        .map_err(|e| TelegramError {
+            message: format!("Failed to read backfill state: {}", e.message),
+        })?
+        .unwrap_or_default()
+        == "1";
+
+    if complete {
+        return Ok(json!({
+            "fetched_count": 0,
+            "indexed_count": 0,
+            "has_more": false,
+            "is_complete": true,
+            "next_offset_id": serde_json::Value::Null
+        }));
+    }
+
+    let cursor_key = backfill_cursor_key(chat_id);
+    let stored_cursor = db
+        .get_setting(&cursor_key)
+        .map_err(|e| TelegramError {
+            message: format!("Failed to read backfill cursor: {}", e.message),
+        })?
+        .and_then(|value| value.parse::<i32>().ok())
+        .unwrap_or(0);
+
+    let initial_cursor = if stored_cursor > 0 {
+        stored_cursor
+    } else {
+        db.get_oldest_indexed_message_id(chat_id).map_err(|e| TelegramError {
+            message: format!("Failed to read oldest indexed message: {}", e.message),
+        })?
+    };
+
+    let input_peer = match &me.raw {
+        tl::enums::User::User(u) => tl::enums::InputPeer::User(tl::types::InputPeerUser {
+            user_id: u.id,
+            access_hash: u.access_hash.unwrap_or(0),
+        }),
+        _ => return Err(TelegramError { message: "Invalid user type".to_string() }),
+    };
+
+    let mut messages_iter = if initial_cursor > 0 {
+        client.iter_messages(input_peer).offset_id(initial_cursor)
+    } else {
+        client.iter_messages(input_peer)
+    }
+    .limit(limit);
+
+    let mut fetched_count = 0usize;
+    let mut indexed_count = 0usize;
+    let mut min_message_id = initial_cursor;
+
+    while let Some(message) = messages_iter.next().await.map_err(|e| TelegramError {
+        message: format!("Failed to fetch messages: {}", e),
+    })? {
+        fetched_count += 1;
+        if min_message_id == 0 || message.id() < min_message_id {
+            min_message_id = message.id();
+        }
+
+        if let Some(tg_msg) = categorize_message(&message, chat_id) {
+            db.save_telegram_message(&tg_msg).map_err(|e| TelegramError {
+                message: format!("Failed to save message: {}", e.message),
+            })?;
+
+            upsert_saved_item_from_message(&db, &owner_id, &tg_msg, None, None)?;
+            indexed_count += 1;
+        }
+    }
+
+    if fetched_count > 0 && min_message_id > 0 {
+        db.set_setting(&cursor_key, &min_message_id.to_string()).map_err(|e| TelegramError {
+            message: format!("Failed to update backfill cursor: {}", e.message),
+        })?;
+    }
+
+    let has_more = fetched_count == limit;
+    db.set_setting(&complete_key, if has_more { "0" } else { "1" }).map_err(|e| TelegramError {
+        message: format!("Failed to update backfill completion state: {}", e.message),
+    })?;
+
+    Ok(json!({
+        "fetched_count": fetched_count,
+        "indexed_count": indexed_count,
+        "has_more": has_more,
+        "is_complete": !has_more,
+        "next_offset_id": if min_message_id > 0 { serde_json::Value::from(min_message_id) } else { serde_json::Value::Null }
+    }))
 }
 
 pub async fn tg_create_saved_folder_impl(

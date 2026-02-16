@@ -806,6 +806,27 @@ impl Database {
         }
     }
 
+    pub fn get_oldest_indexed_message_id(&self, chat_id: i64) -> Result<i32, DbError> {
+        let conn = self.0.lock().unwrap();
+
+        let mut statement = conn.prepare("SELECT MIN(message_id) FROM telegram_messages WHERE chat_id = ?")
+            .map_err(|e| DbError {
+                message: format!("Failed to prepare statement: {}", e),
+            })?;
+
+        statement.bind((1, chat_id)).map_err(|e| DbError {
+            message: format!("Failed to bind chat_id: {}", e),
+        })?;
+
+        match statement.next() {
+            Ok(SqliteState::Row) => {
+                let id: i64 = statement.read::<Option<i64>, usize>(0).unwrap_or(Some(0)).unwrap_or(0);
+                Ok(id as i32)
+            }
+            _ => Ok(0),
+        }
+    }
+
     pub fn upsert_telegram_saved_item(&self, item: &TelegramSavedItem) -> Result<(), DbError> {
         let conn = self.0.lock().unwrap();
 
@@ -898,6 +919,73 @@ impl Database {
         })?;
         statement.bind((2, file_path)).map_err(|e| DbError {
             message: format!("Failed to bind file_path: {}", e),
+        })?;
+
+        let mut items = Vec::new();
+        while let Ok(SqliteState::Row) = statement.next() {
+            items.push(TelegramSavedItem {
+                chat_id: statement.read::<i64, usize>(0).unwrap_or(0),
+                message_id: statement.read::<i64, usize>(1).unwrap_or(0) as i32,
+                thumbnail: statement.read::<Option<String>, usize>(2).unwrap_or(None),
+                file_type: statement.read::<String, usize>(3).unwrap_or_else(|_| "file".to_string()),
+                file_unique_id: statement.read::<String, usize>(4).unwrap_or_default(),
+                file_size: statement.read::<i64, usize>(5).unwrap_or(0),
+                file_name: statement.read::<String, usize>(6).unwrap_or_default(),
+                file_caption: statement.read::<Option<String>, usize>(7).unwrap_or(None),
+                file_path: statement.read::<String, usize>(8).unwrap_or_default(),
+                modified_date: statement.read::<String, usize>(9).unwrap_or_default(),
+                owner_id: statement.read::<String, usize>(10).unwrap_or_default(),
+            });
+        }
+
+        Ok(items)
+    }
+
+    pub fn get_telegram_saved_items_by_path_paginated(
+        &self,
+        owner_id: &str,
+        file_path: &str,
+        offset: i64,
+        limit: i64,
+    ) -> Result<Vec<TelegramSavedItem>, DbError> {
+        let conn = self.0.lock().unwrap();
+
+        let mut statement = conn.prepare(
+            "SELECT
+                chat_id,
+                message_id,
+                thumbnail,
+                file_type,
+                file_unique_id,
+                file_size,
+                file_name,
+                file_caption,
+                file_path,
+                modified_date,
+                owner_id
+             FROM telegram_saved_items
+             WHERE owner_id = ? AND file_path = ?
+             ORDER BY
+                CASE WHEN file_type = 'folder' THEN 0 ELSE 1 END,
+                CASE WHEN file_type = 'folder' THEN LOWER(file_name) ELSE '' END,
+                CASE WHEN file_type = 'folder' THEN 0 ELSE message_id END DESC,
+                LOWER(file_name) ASC
+             LIMIT ? OFFSET ?",
+        ).map_err(|e| DbError {
+            message: format!("Failed to prepare statement: {}", e),
+        })?;
+
+        statement.bind((1, owner_id)).map_err(|e| DbError {
+            message: format!("Failed to bind owner_id: {}", e),
+        })?;
+        statement.bind((2, file_path)).map_err(|e| DbError {
+            message: format!("Failed to bind file_path: {}", e),
+        })?;
+        statement.bind((3, limit)).map_err(|e| DbError {
+            message: format!("Failed to bind limit: {}", e),
+        })?;
+        statement.bind((4, offset)).map_err(|e| DbError {
+            message: format!("Failed to bind offset: {}", e),
         })?;
 
         let mut items = Vec::new();

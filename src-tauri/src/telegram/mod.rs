@@ -215,6 +215,8 @@ use messages::{
     tg_index_saved_messages_impl,
     tg_get_indexed_saved_messages_impl,
     tg_list_saved_items_impl,
+    tg_list_saved_items_page_impl,
+    tg_backfill_saved_messages_batch_impl,
     tg_create_saved_folder_impl,
     tg_get_message_thumbnail_impl,
     tg_upload_file_to_saved_messages_impl,
@@ -284,6 +286,24 @@ pub async fn tg_list_saved_items(
     file_path: String,
 ) -> Result<Vec<crate::db::TelegramSavedItem>, TelegramError> {
     tg_list_saved_items_impl(db.inner().clone(), file_path).await
+}
+
+#[tauri::command]
+pub async fn tg_list_saved_items_page(
+    db: State<'_, crate::db::Database>,
+    file_path: String,
+    offset: i64,
+    limit: i64,
+) -> Result<serde_json::Value, TelegramError> {
+    tg_list_saved_items_page_impl(db.inner().clone(), file_path, offset, limit).await
+}
+
+#[tauri::command]
+pub async fn tg_backfill_saved_messages_batch(
+    db: State<'_, crate::db::Database>,
+    batch_size: Option<i32>,
+) -> Result<serde_json::Value, TelegramError> {
+    tg_backfill_saved_messages_batch_impl(db.inner().clone(), batch_size).await
 }
 
 #[tauri::command]
