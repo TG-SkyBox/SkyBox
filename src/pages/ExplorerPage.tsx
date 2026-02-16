@@ -287,8 +287,6 @@ export default function ExplorerPage() {
       });
     }
 
-    // Trigger indexing
-    indexSavedMessages();
   }, [location.state]);
 
   useEffect(() => {
@@ -303,22 +301,71 @@ export default function ExplorerPage() {
 
   const indexSavedMessages = async () => {
     try {
-      const result: any = await invoke("tg_index_saved_messages");
+      const result: {
+        total_new_messages: number;
+        bootstrap_limited?: boolean;
+      } = await invoke("tg_index_saved_messages");
+
       console.log("Indexing summary:", result);
       if (result.total_new_messages > 0) {
         toast({
-          title: "Saved Messages Indexed",
-          description: `Found ${result.total_new_messages} new messages.`,
+          title: "Saved Messages Synced",
+          description: `Found ${result.total_new_messages} new item${result.total_new_messages === 1 ? "" : "s"}.`,
         });
+
+        setHasMoreSavedItems(true);
         // If we are currently viewing a Saved Messages path, refresh it
-        if (currentPath.startsWith("tg://saved")) {
-          loadDirectory(currentPath);
+        if (currentPathRef.current.startsWith("tg://saved")) {
+          loadDirectory(currentPathRef.current);
         }
+      } else if (result.bootstrap_limited) {
+        setHasMoreSavedItems(true);
       }
     } catch (error) {
       console.error("Error indexing saved messages:", error);
     }
   };
+
+  useEffect(() => {
+    let cancelled = false;
+
+    const runSavedMessageSync = async () => {
+      await indexSavedMessages();
+      if (cancelled) {
+        return;
+      }
+
+      setIsSavedBackfillSyncing(true);
+      try {
+        let hasMore = true;
+        while (!cancelled && hasMore) {
+          const result: TelegramBackfillBatchResult = await invoke("tg_backfill_saved_messages_batch", {
+            batchSize: SAVED_ITEMS_PAGE_SIZE,
+          });
+
+          hasMore = result.has_more;
+          if (result.indexed_count > 0) {
+            setHasMoreSavedItems(true);
+          }
+
+          if (hasMore) {
+            await new Promise((resolve) => setTimeout(resolve, 120));
+          }
+        }
+      } catch (error) {
+        console.error("Error backfilling saved messages:", error);
+      } finally {
+        if (!cancelled) {
+          setIsSavedBackfillSyncing(false);
+        }
+      }
+    };
+
+    void runSavedMessageSync();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   // Load user info from session
   const loadUserInfo = async () => {
