@@ -1084,9 +1084,9 @@ export default function ExplorerPage() {
     sortedFiles.length === 0;
 
   const syncProgressLabel = `${Math.min(100, Math.max(0, Math.round(savedSyncProgress)))}%`;
-  const contextMenuItemClassName = "w-full flex items-center gap-2 rounded-lg px-3 py-2 text-left text-body text-foreground transition-colors hover:bg-primary/15";
-  const contextMenuDisabledItemClassName = "w-full flex items-center gap-2 rounded-lg px-3 py-2 text-left text-body text-muted-foreground/60 pointer-events-none";
-  const contextMenuDangerItemClassName = "w-full flex items-center gap-2 rounded-lg px-3 py-2 text-left text-body text-destructive transition-colors hover:bg-destructive/10";
+  const contextMenuItemClassName = "w-full flex items-center gap-2 rounded-lg px-3 py-2 text-left text-body text-foreground transition-colors hover:bg-primary/15 outline-none focus-visible:outline-none";
+  const contextMenuDisabledItemClassName = "w-full flex items-center gap-2 rounded-lg px-3 py-2 text-left text-body text-muted-foreground/60 pointer-events-none outline-none focus-visible:outline-none";
+  const contextMenuDangerItemClassName = "w-full flex items-center gap-2 rounded-lg px-3 py-2 text-left text-body text-destructive transition-colors hover:bg-destructive/10 outline-none focus-visible:outline-none";
   const contextTargetFile = contextMenuState?.targetFile ?? null;
   const canPaste = !!clipboardItem;
 
