@@ -446,6 +446,43 @@ export default function ExplorerPage() {
     }
   };
 
+  const navigateToPath = async (path: string) => {
+    if (!path) {
+      return;
+    }
+
+    if (path === currentPath) {
+      await loadDirectory(path);
+      return;
+    }
+
+    setBackHistory((prev) => [...prev, currentPath]);
+    setForwardHistory([]);
+    await loadDirectory(path);
+  };
+
+  const handleGoBack = async () => {
+    if (!backHistory.length || isLoading) {
+      return;
+    }
+
+    const previousPath = backHistory[backHistory.length - 1];
+    setBackHistory((prev) => prev.slice(0, -1));
+    setForwardHistory((prev) => [...prev, currentPath]);
+    await loadDirectory(previousPath);
+  };
+
+  const handleGoForward = async () => {
+    if (!forwardHistory.length || isLoading) {
+      return;
+    }
+
+    const nextPath = forwardHistory[forwardHistory.length - 1];
+    setForwardHistory((prev) => prev.slice(0, -1));
+    setBackHistory((prev) => [...prev, currentPath]);
+    await loadDirectory(nextPath);
+  };
+
   const loadFavorites = async () => {
     try {
       const result: Favorite[] = await invoke("db_get_favorites");
