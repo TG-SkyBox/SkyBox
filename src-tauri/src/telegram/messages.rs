@@ -1,6 +1,6 @@
 use crate::db::{Database, TelegramMessage, TelegramSavedItem};
 use crate::telegram::{AUTH_STATE, TelegramError};
-use directories::ProjectDirs;
+use directories::BaseDirs;
 use grammers_client::InputMessage;
 use grammers_client::types::{Message, Media};
 use grammers_client::grammers_tl_types as tl;
@@ -192,11 +192,11 @@ fn build_temp_upload_path(file_name: &str) -> PathBuf {
 }
 
 fn get_thumbnail_cache_dir() -> Result<PathBuf, TelegramError> {
-    let project_dirs = ProjectDirs::from("com", "skybox", "Skybox").ok_or_else(|| TelegramError {
+    let base_dirs = BaseDirs::new().ok_or_else(|| TelegramError {
         message: "Failed to resolve app data directory".to_string(),
     })?;
 
-    let thumbnails_dir = project_dirs.data_local_dir().join(".thumbnails");
+    let thumbnails_dir = base_dirs.data_local_dir().join("Skybox").join(".thumbnails");
     fs::create_dir_all(&thumbnails_dir).map_err(|e| TelegramError {
         message: format!(
             "Failed to create thumbnail cache directory {}: {}",
@@ -1022,21 +1022,13 @@ pub async fn tg_move_saved_item_impl(
     Ok(())
 }
 
-pub async fn tg_get_message_thumbnail_impl(db: Database, message_id: i32) -> Result<Option<String>, TelegramError> {
-    log::info!("tg_get_message_thumbnail_impl: Request for message_id={}", message_id);
-    
-    let state_guard = AUTH_STATE.lock().await;
-    let state = state_guard.as_ref().ok_or_else(|| TelegramError {
-        message: "Not authorized".to_string(),
-    })?;
-    
-    let client = &state.client;
-    let me = client.get_me().await.map_err(|e| TelegramError {
-        message: format!("Failed to get user info: {}", e),
-    })?;
-    let chat_id = me.raw.id();
-
-    // 1. Check database first
+async fn get_or_fetch_message_thumbnail_impl(
+    db: &Database,
+    client: &grammers_client::Client,
+    chat_id: i64,
+    input_peer: &tl::enums::InputPeer,
+    message_id: i32,
+) -> Result<Option<String>, TelegramError> {
     match db.get_telegram_message(chat_id, message_id) {
         Ok(Some(msg)) => {
             if let Some(thumb) = msg.thumbnail {
@@ -1044,7 +1036,9 @@ pub async fn tg_get_message_thumbnail_impl(db: Database, message_id: i32) -> Res
                     if thumb.starts_with("data:") {
                         if let Some(image_bytes) = decode_data_url_image_bytes(&thumb) {
                             if let Ok(cached_path) = cache_thumbnail_bytes(chat_id, message_id, &image_bytes) {
-                                if let Err(e) = db.update_telegram_message_thumbnail(chat_id, message_id, &cached_path) {
+                                if let Err(e) =
+                                    db.update_telegram_message_thumbnail(chat_id, message_id, &cached_path)
+                                {
                                     log::error!(
                                         "tg_get_message_thumbnail_impl: Failed to update cached thumbnail path in telegram_messages: {}",
                                         e.message
@@ -1052,9 +1046,11 @@ pub async fn tg_get_message_thumbnail_impl(db: Database, message_id: i32) -> Res
                                 }
 
                                 let owner_id = chat_id.to_string();
-                                if let Err(e) =
-                                    db.update_telegram_saved_item_thumbnail(&owner_id, message_id, &cached_path)
-                                {
+                                if let Err(e) = db.update_telegram_saved_item_thumbnail(
+                                    &owner_id,
+                                    message_id,
+                                    &cached_path,
+                                ) {
                                     log::error!(
                                         "tg_get_message_thumbnail_impl: Failed to update cached thumbnail path in telegram_saved_items: {}",
                                         e.message
@@ -1069,10 +1065,6 @@ pub async fn tg_get_message_thumbnail_impl(db: Database, message_id: i32) -> Res
                     }
 
                     if Path::new(&thumb).exists() {
-                        log::info!(
-                            "tg_get_message_thumbnail_impl: Found thumbnail cache file in database for message_id={}",
-                            message_id
-                        );
                         return Ok(Some(thumb));
                     }
                 }
@@ -1081,36 +1073,26 @@ pub async fn tg_get_message_thumbnail_impl(db: Database, message_id: i32) -> Res
         _ => {}
     }
 
-    // 2. Fetch message from Telegram
-    let input_peer = match &me.raw {
-        tl::enums::User::User(u) => tl::enums::InputPeer::User(tl::types::InputPeerUser {
-            user_id: u.id,
-            access_hash: u.access_hash.unwrap_or(0),
-        }),
-        _ => return Err(TelegramError { message: "Invalid user type".to_string() }),
-    };
-
-    let mut messages = client.get_messages_by_id(input_peer, &[message_id]).await.map_err(|e| TelegramError {
-        message: format!("Failed to fetch message: {}", e),
-    })?;
+    let mut messages = client
+        .get_messages_by_id(input_peer.clone(), &[message_id])
+        .await
+        .map_err(|e| TelegramError {
+            message: format!("Failed to fetch message: {}", e),
+        })?;
 
     let message = messages.pop().flatten().ok_or_else(|| TelegramError {
         message: "Message not found".to_string(),
     })?;
 
-    // 3. Extract thumbnail location
     let media = message.media();
     let file_location = match media {
         Some(Media::Photo(photo)) => {
             if let Some(tl::enums::Photo::Photo(p)) = &photo.raw.photo {
-                // Find smallest size for thumbnail
-                let smallest = p.sizes.iter().find_map(|s| {
-                    match s {
-                        tl::enums::PhotoSize::Size(sz) => Some(sz.r#type.clone()),
-                        _ => None,
-                    }
+                let smallest = p.sizes.iter().find_map(|s| match s {
+                    tl::enums::PhotoSize::Size(sz) => Some(sz.r#type.clone()),
+                    _ => None,
                 });
-                
+
                 if let Some(thumb_size) = smallest {
                     Some(tl::enums::InputFileLocation::InputPhotoFileLocation(
                         tl::types::InputPhotoFileLocation {
@@ -1118,20 +1100,23 @@ pub async fn tg_get_message_thumbnail_impl(db: Database, message_id: i32) -> Res
                             access_hash: p.access_hash,
                             file_reference: p.file_reference.clone(),
                             thumb_size,
-                        }
+                        },
                     ))
-                } else { None }
-            } else { None }
-        },
+                } else {
+                    None
+                }
+            } else {
+                None
+            }
+        }
         Some(Media::Document(doc)) => {
             if let Some(tl::enums::Document::Document(d)) = &doc.raw.document {
-                // Find a suitable thumbnail
-                let thumb_type = d.thumbs.as_ref().and_then(|t| t.iter().find_map(|s| {
-                    match s {
+                let thumb_type = d.thumbs.as_ref().and_then(|t| {
+                    t.iter().find_map(|s| match s {
                         tl::enums::PhotoSize::Size(sz) => Some(sz.r#type.clone()),
                         _ => None,
-                    }
-                }));
+                    })
+                });
 
                 if let Some(thumb_size) = thumb_type {
                     Some(tl::enums::InputFileLocation::InputDocumentFileLocation(
@@ -1140,11 +1125,15 @@ pub async fn tg_get_message_thumbnail_impl(db: Database, message_id: i32) -> Res
                             access_hash: d.access_hash,
                             file_reference: d.file_reference.clone(),
                             thumb_size,
-                        }
+                        },
                     ))
-                } else { None }
-            } else { None }
-        },
+                } else {
+                    None
+                }
+            } else {
+                None
+            }
+        }
         _ => None,
     };
 
@@ -1153,8 +1142,6 @@ pub async fn tg_get_message_thumbnail_impl(db: Database, message_id: i32) -> Res
         None => return Ok(None),
     };
 
-    // 4. Download
-    log::info!("tg_get_message_thumbnail_impl: Downloading thumbnail...");
     let mut bytes = Vec::new();
     let mut offset = 0;
     let limit = 1024 * 512;
@@ -1171,9 +1158,11 @@ pub async fn tg_get_message_thumbnail_impl(db: Database, message_id: i32) -> Res
         match client.invoke(&request).await {
             Ok(tl::enums::upload::File::File(f)) => {
                 bytes.extend_from_slice(&f.bytes);
-                if f.bytes.len() < limit as usize { break; }
+                if f.bytes.len() < limit as usize {
+                    break;
+                }
                 offset += f.bytes.len() as i64;
-            },
+            }
             _ => break,
         }
     }
@@ -1182,7 +1171,6 @@ pub async fn tg_get_message_thumbnail_impl(db: Database, message_id: i32) -> Res
         return Ok(None);
     }
 
-    // 5. Store thumbnail on disk and save path in DB
     let cached_path = cache_thumbnail_bytes(chat_id, message_id, &bytes)?;
 
     if let Err(e) = db.update_telegram_message_thumbnail(chat_id, message_id, &cached_path) {
@@ -1203,10 +1191,58 @@ pub async fn tg_get_message_thumbnail_impl(db: Database, message_id: i32) -> Res
     Ok(Some(cached_path))
 }
 
+pub async fn tg_get_message_thumbnail_impl(db: Database, message_id: i32) -> Result<Option<String>, TelegramError> {
+    log::info!("tg_get_message_thumbnail_impl: Request for message_id={}", message_id);
+
+    let client = {
+        let state_guard = AUTH_STATE.lock().await;
+        let state = state_guard.as_ref().ok_or_else(|| TelegramError {
+            message: "Not authorized".to_string(),
+        })?;
+        state.client.clone()
+    };
+
+    let me = client.get_me().await.map_err(|e| TelegramError {
+        message: format!("Failed to get user info: {}", e),
+    })?;
+    let chat_id = me.raw.id();
+
+    let input_peer = match &me.raw {
+        tl::enums::User::User(u) => tl::enums::InputPeer::User(tl::types::InputPeerUser {
+            user_id: u.id,
+            access_hash: u.access_hash.unwrap_or(0),
+        }),
+        _ => return Err(TelegramError { message: "Invalid user type".to_string() }),
+    };
+
+    get_or_fetch_message_thumbnail_impl(&db, &client, chat_id, &input_peer, message_id).await
+}
+
 pub async fn tg_prefetch_message_thumbnails_impl(
     db: Database,
     message_ids: Vec<i32>,
 ) -> Result<serde_json::Value, TelegramError> {
+    let client = {
+        let state_guard = AUTH_STATE.lock().await;
+        let state = state_guard.as_ref().ok_or_else(|| TelegramError {
+            message: "Not authorized".to_string(),
+        })?;
+        state.client.clone()
+    };
+
+    let me = client.get_me().await.map_err(|e| TelegramError {
+        message: format!("Failed to get user info: {}", e),
+    })?;
+    let chat_id = me.raw.id();
+
+    let input_peer = match &me.raw {
+        tl::enums::User::User(u) => tl::enums::InputPeer::User(tl::types::InputPeerUser {
+            user_id: u.id,
+            access_hash: u.access_hash.unwrap_or(0),
+        }),
+        _ => return Err(TelegramError { message: "Invalid user type".to_string() }),
+    };
+
     let mut ids: Vec<i32> = message_ids.into_iter().filter(|id| *id > 0).collect();
     ids.sort_unstable();
     ids.dedup();
@@ -1215,7 +1251,7 @@ pub async fn tg_prefetch_message_thumbnails_impl(
     let mut failed_count = 0usize;
 
     for message_id in ids {
-        match tg_get_message_thumbnail_impl(db.clone(), message_id).await {
+        match get_or_fetch_message_thumbnail_impl(&db, &client, chat_id, &input_peer, message_id).await {
             Ok(Some(_)) => {
                 cached_count += 1;
             }
