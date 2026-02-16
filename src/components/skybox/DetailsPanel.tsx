@@ -37,27 +37,17 @@ export function DetailsPanel({
   onOpenLocation,
   isFavorite = false,
 }: DetailsPanelProps) {
-  if (!file) {
-    return (
-      <div className="w-72 h-full glass-sidebar flex flex-col items-center justify-center p-6">
-        <File className="w-12 h-12 text-muted-foreground/50 mb-3" />
-        <p className="text-body text-muted-foreground text-center">
-          Select a file or folder to view details
-        </p>
-      </div>
-    );
-  }
-
-  const [previewThumb, setPreviewThumb] = useState<string | undefined>(resolveThumbnailSrc(file.thumbnail));
+  const [previewThumb, setPreviewThumb] = useState<string | undefined>(resolveThumbnailSrc(file?.thumbnail));
   const [hasRetriedBrokenThumbnail, setHasRetriedBrokenThumbnail] = useState(false);
 
   useEffect(() => {
-    setPreviewThumb(resolveThumbnailSrc(file.thumbnail));
+    setPreviewThumb(resolveThumbnailSrc(file?.thumbnail));
     setHasRetriedBrokenThumbnail(false);
-  }, [file.thumbnail]);
+  }, [file?.thumbnail]);
 
   const refetchThumbnail = async () => {
-    if (!file.messageId) {
+    const messageId = file?.messageId;
+    if (!messageId) {
       setPreviewThumb(undefined);
       return;
     }
@@ -70,18 +60,29 @@ export function DetailsPanel({
     setHasRetriedBrokenThumbnail(true);
 
     try {
-      const result: string | null = await invoke("tg_get_message_thumbnail", { messageId: file.messageId });
+      const result: string | null = await invoke("tg_get_message_thumbnail", { messageId });
       const resolved = resolveThumbnailSrc(result);
       if (resolved) {
         setPreviewThumb(resolved);
         return;
       }
     } catch (e) {
-      console.error("Failed to refetch missing thumbnail for message:", file.messageId, e);
+      console.error("Failed to refetch missing thumbnail for message:", messageId, e);
     }
 
     setPreviewThumb(undefined);
   };
+
+  if (!file) {
+    return (
+      <div className="w-72 h-full glass-sidebar flex flex-col items-center justify-center p-6">
+        <File className="w-12 h-12 text-muted-foreground/50 mb-3" />
+        <p className="text-body text-muted-foreground text-center">
+          Select a file or folder to view details
+        </p>
+      </div>
+    );
+  }
 
   const Icon = file.isDirectory ? Folder : file.extension?.match(/^(jpg|jpeg|png|gif|webp|svg)$/i) ? FileImage : FileText;
 
