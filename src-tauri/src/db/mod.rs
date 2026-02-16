@@ -946,6 +946,36 @@ impl Database {
         Ok(())
     }
 
+    pub fn update_telegram_saved_item_thumbnail(&self, owner_id: &str, message_id: i32, thumbnail: &str) -> Result<(), DbError> {
+        let conn = self.0.lock().unwrap();
+
+        let mut statement = conn
+            .prepare(
+                "UPDATE telegram_saved_items
+                 SET thumbnail = ?
+                 WHERE owner_id = ? AND message_id = ? AND file_type != 'folder'",
+            )
+            .map_err(|e| DbError {
+                message: format!("Failed to prepare statement: {}", e),
+            })?;
+
+        statement.bind((1, thumbnail)).map_err(|e| DbError {
+            message: format!("Failed to bind thumbnail: {}", e),
+        })?;
+        statement.bind((2, owner_id)).map_err(|e| DbError {
+            message: format!("Failed to bind owner_id: {}", e),
+        })?;
+        statement.bind((3, message_id as i64)).map_err(|e| DbError {
+            message: format!("Failed to bind message_id: {}", e),
+        })?;
+
+        statement.next().map_err(|e| DbError {
+            message: format!("Failed to execute statement: {}", e),
+        })?;
+
+        Ok(())
+    }
+
     pub fn get_telegram_saved_items_by_path(&self, owner_id: &str, file_path: &str) -> Result<Vec<TelegramSavedItem>, DbError> {
         let conn = self.0.lock().unwrap();
 
