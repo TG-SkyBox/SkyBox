@@ -547,7 +547,7 @@ export default function ExplorerPage() {
           const previousPath = backHistory[backHistory.length - 1];
           setBackHistory((prev) => prev.slice(0, -1));
           setForwardHistory((prev) => [...prev, currentPath]);
-          loadDirectory(previousPath, { force: true });
+          loadDirectory(previousPath);
         }
         return;
       }
@@ -558,7 +558,7 @@ export default function ExplorerPage() {
           const nextPath = forwardHistory[forwardHistory.length - 1];
           setForwardHistory((prev) => prev.slice(0, -1));
           setBackHistory((prev) => [...prev, currentPath]);
-          loadDirectory(nextPath, { force: true });
+          loadDirectory(nextPath);
         }
         return;
       }
