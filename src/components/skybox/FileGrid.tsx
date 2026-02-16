@@ -84,8 +84,7 @@ function FileGridItem({
     onDragLeave,
     onDrop,
 }: FileGridItemProps) {
-    const [thumbUrl, setThumbUrl] = useState<string | undefined>(resolveThumbnailSrc(file.thumbnail));
-    const [hasRetriedBrokenThumbnail, setHasRetriedBrokenThumbnail] = useState(false);
+    const [thumbUrl, setThumbUrl] = useState<string | undefined>(file.thumbnail);
     const Icon = getFileIcon(file);
 
     useEffect(() => {

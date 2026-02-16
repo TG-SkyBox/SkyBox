@@ -215,13 +215,8 @@ use messages::{
     tg_index_saved_messages_impl,
     tg_get_indexed_saved_messages_impl,
     tg_list_saved_items_impl,
-    tg_list_saved_items_page_impl,
-    tg_backfill_saved_messages_batch_impl,
-    tg_rebuild_saved_items_index_impl,
     tg_create_saved_folder_impl,
-    tg_move_saved_item_impl,
     tg_get_message_thumbnail_impl,
-    tg_prefetch_message_thumbnails_impl,
     tg_upload_file_to_saved_messages_impl,
 };
 
@@ -292,31 +287,6 @@ pub async fn tg_list_saved_items(
 }
 
 #[tauri::command]
-pub async fn tg_list_saved_items_page(
-    db: State<'_, crate::db::Database>,
-    file_path: String,
-    offset: i64,
-    limit: i64,
-) -> Result<serde_json::Value, TelegramError> {
-    tg_list_saved_items_page_impl(db.inner().clone(), file_path, offset, limit).await
-}
-
-#[tauri::command]
-pub async fn tg_backfill_saved_messages_batch(
-    db: State<'_, crate::db::Database>,
-    batch_size: Option<i32>,
-) -> Result<serde_json::Value, TelegramError> {
-    tg_backfill_saved_messages_batch_impl(db.inner().clone(), batch_size).await
-}
-
-#[tauri::command]
-pub async fn tg_rebuild_saved_items_index(
-    db: State<'_, crate::db::Database>,
-) -> Result<serde_json::Value, TelegramError> {
-    tg_rebuild_saved_items_index_impl(db.inner().clone()).await
-}
-
-#[tauri::command]
 pub async fn tg_create_saved_folder(
     db: State<'_, crate::db::Database>,
     parent_path: String,
@@ -326,25 +296,8 @@ pub async fn tg_create_saved_folder(
 }
 
 #[tauri::command]
-pub async fn tg_move_saved_item(
-    db: State<'_, crate::db::Database>,
-    source_path: String,
-    destination_path: String,
-) -> Result<(), TelegramError> {
-    tg_move_saved_item_impl(db.inner().clone(), source_path, destination_path).await
-}
-
-#[tauri::command]
 pub async fn tg_get_message_thumbnail(db: State<'_, crate::db::Database>, message_id: i32) -> Result<Option<String>, TelegramError> {
     tg_get_message_thumbnail_impl(db.inner().clone(), message_id).await
-}
-
-#[tauri::command]
-pub async fn tg_prefetch_message_thumbnails(
-    db: State<'_, crate::db::Database>,
-    message_ids: Vec<i32>,
-) -> Result<serde_json::Value, TelegramError> {
-    tg_prefetch_message_thumbnails_impl(db.inner().clone(), message_ids).await
 }
 
 #[tauri::command]

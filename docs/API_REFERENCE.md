@@ -158,29 +158,6 @@ Lists locally indexed Saved Messages items for a virtual path.
 
 **Returns:** `Result<Vec<TelegramSavedItem>, TelegramError>`
 
-### `tg_list_saved_items_page(file_path: String, offset: i64, limit: i64)`
-Lists locally indexed Saved Messages items for a virtual path using pagination.
-
-**Parameters:**
-- `file_path`: Virtual storage path (for example `/Home`, `/Home/Videos`)
-- `offset`: Pagination offset
-- `limit`: Maximum items per page (recommended `50`)
-
-**Returns:** `Result<{ items: TelegramSavedItem[], has_more: bool, next_offset: i64 }, TelegramError>`
-
-### `tg_backfill_saved_messages_batch(batch_size?: i32)`
-Indexes older Saved Messages into local storage in small batches.
-
-**Parameters:**
-- `batch_size`: Optional batch size (`50` recommended)
-
-**Returns:** `Result<{ fetched_count: usize, indexed_count: usize, has_more: bool, is_complete: bool, next_offset_id?: i32 }, TelegramError>`
-
-### `tg_rebuild_saved_items_index()`
-Rebuilds `telegram_saved_items` metadata from existing local `telegram_messages` cache.
-
-**Returns:** `Result<{ upserted_count: usize, oldest_message_id: i32 }, TelegramError>`
-
 ### `tg_create_saved_folder(parent_path: String, folder_name: String)`
 Creates a virtual Saved Messages folder record in local metadata.
 
@@ -189,28 +166,3 @@ Creates a virtual Saved Messages folder record in local metadata.
 - `folder_name`: Folder name to create
 
 **Returns:** `Result<TelegramSavedItem, TelegramError>`
-
-### `tg_move_saved_item(source_path: String, destination_path: String)`
-Moves a virtual Saved Messages item (file or folder) between local virtual folders.
-
-**Parameters:**
-- `source_path`: Source virtual path (`tg://msg/<id>` for files or `tg://saved/...` for folders)
-- `destination_path`: Destination virtual folder path (`tg://saved/...`)
-
-**Returns:** `Result<(), TelegramError>`
-
-### `tg_get_message_thumbnail(message_id: i32)`
-Fetches thumbnail for a Saved Message, stores it in local cache (`AppData\\Local\\Skybox\\.thumbnails`), and saves the cached file path in local DB.
-
-**Parameters:**
-- `message_id`: Telegram message ID
-
-**Returns:** `Result<Option<String>, TelegramError>` (absolute cached thumbnail path)
-
-### `tg_prefetch_message_thumbnails(message_ids: Vec<i32>)`
-Prefetches and caches thumbnails for multiple message IDs.
-
-**Parameters:**
-- `message_ids`: List of Telegram message IDs
-
-**Returns:** `Result<{ cached_count: usize, failed_count: usize }, TelegramError>`

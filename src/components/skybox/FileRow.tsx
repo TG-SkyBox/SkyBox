@@ -147,8 +147,7 @@ export function FileRow({
   onDrop,
   isDropTarget,
 }: FileRowProps) {
-  const [thumbUrl, setThumbUrl] = useState<string | undefined>(resolveThumbnailSrc(file.thumbnail));
-  const [hasRetriedBrokenThumbnail, setHasRetriedBrokenThumbnail] = useState(false);
+  const [thumbUrl, setThumbUrl] = useState<string | undefined>(file.thumbnail);
   const Icon = getFileIcon(file);
 
   useEffect(() => {
@@ -219,14 +218,7 @@ export function FileRow({
     >
       <div className="w-8 h-8 flex-shrink-0 flex items-center justify-center rounded-md overflow-hidden bg-secondary/50">
         {thumbUrl ? (
-          <img
-            src={thumbUrl}
-            alt={file.name}
-            className="w-5 h-5 rounded-sm object-cover"
-            onError={() => {
-              void refetchThumbnail();
-            }}
-          />
+          <img src={thumbUrl} alt={file.name} className="w-5 h-5 rounded-sm object-cover" />
         ) : (
           <Icon
             className={`w-5 h-5 ${file.isDirectory ? "text-primary" : "text-muted-foreground"

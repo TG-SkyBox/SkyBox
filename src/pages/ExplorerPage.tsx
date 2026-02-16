@@ -104,24 +104,6 @@ interface TelegramSavedItem {
   owner_id: string;
 }
 
-interface TelegramSavedItemsPage {
-  items: TelegramSavedItem[];
-  has_more: boolean;
-  next_offset: number;
-}
-
-interface TelegramIndexSavedMessagesResult {
-  total_new_messages: number;
-  started_from_empty_db?: boolean;
-}
-
-interface SavedPathCacheEntry {
-  items: FileItem[];
-  nextOffset: number;
-  hasMore: boolean;
-  isCompleteSnapshot: boolean;
-}
-
 // Convert Rust FileEntry to our FileItem type
 const convertFileEntryToFileItem = (entry: FileEntry): FileItem => {
   return {
@@ -140,11 +122,8 @@ const mockRoots = [
 ];
 
 const INTERNAL_DRAG_MIME = "application/x-skybox-item-path";
-const SAVED_ITEMS_PAGE_SIZE = 50;
 
 const isVirtualPath = (path: string): boolean => path.startsWith("tg://");
-const isSavedVirtualFolderPath = (path: string): boolean => path === "tg://saved" || path.startsWith("tg://saved/");
-const isSavedVirtualFilePath = (path: string): boolean => path.startsWith("tg://msg/");
 
 const normalizePath = (path: string): string => path.replace(/\\/g, "/");
 
@@ -219,17 +198,11 @@ const savedToVirtualPath = (savedPath: string): string => {
 };
 
 const savedItemToFileItem = (item: TelegramSavedItem): FileItem => {
-  const resolvedName = item.file_name?.trim()
-    ? item.file_name
-    : (["image", "video", "audio"].includes(item.file_type)
-      ? `${item.file_type}_${item.file_unique_id}`
-      : `message_${item.message_id || item.file_unique_id}`);
-
   const isDirectory = item.file_type === "folder";
   if (isDirectory) {
-    const folderPath = savedToVirtualPath(joinPath(item.file_path, resolvedName));
+    const folderPath = savedToVirtualPath(joinPath(item.file_path, item.file_name));
     return {
-      name: resolvedName,
+      name: item.file_name,
       path: folderPath,
       isDirectory: true,
       modifiedAt: item.modified_date,
@@ -237,14 +210,14 @@ const savedItemToFileItem = (item: TelegramSavedItem): FileItem => {
   }
 
   return {
-    name: resolvedName,
+    name: item.file_name,
     path: `tg://msg/${item.message_id}`,
     isDirectory: false,
     size: item.file_size,
     modifiedAt: item.modified_date,
-    extension: extensionFromFileName(resolvedName),
+    extension: extensionFromFileName(item.file_name),
     messageId: item.message_id > 0 ? item.message_id : undefined,
-    thumbnail: resolveThumbnailSrc(item.thumbnail),
+    thumbnail: item.thumbnail || undefined,
   };
 };
 
@@ -268,20 +241,8 @@ export default function ExplorerPage() {
   const [dropTargetPath, setDropTargetPath] = useState<string | null>(null);
   const [isExternalDragging, setIsExternalDragging] = useState(false);
   const [isUploadingFiles, setIsUploadingFiles] = useState(false);
-  const [savedItemsOffset, setSavedItemsOffset] = useState(0);
-  const [hasMoreSavedItems, setHasMoreSavedItems] = useState(false);
-  const [isLoadingMoreSavedItems, setIsLoadingMoreSavedItems] = useState(false);
-  const [isSavedBackfillSyncing, setIsSavedBackfillSyncing] = useState(false);
-  const [isSavedSyncComplete, setIsSavedSyncComplete] = useState(false);
   const [backHistory, setBackHistory] = useState<string[]>([]);
   const [forwardHistory, setForwardHistory] = useState<string[]>([]);
-  const filesRef = useRef<FileItem[]>([]);
-  const currentPathRef = useRef("tg://saved");
-  const savedLoadMoreLastAttemptRef = useRef(0);
-  const startupSyncRanRef = useRef(false);
-  const lastNavigationAtRef = useRef(Date.now());
-  const prefetchedThumbnailIdsRef = useRef<Set<number>>(new Set());
-  const savedPathCacheRef = useRef<Record<string, SavedPathCacheEntry>>({});
   const navigationStateRef = useRef({
     backHistory: [] as string[],
     forwardHistory: [] as string[],
@@ -316,18 +277,9 @@ export default function ExplorerPage() {
       currentPath,
       isLoading,
     };
-    currentPathRef.current = currentPath;
   }, [backHistory, forwardHistory, currentPath, isLoading]);
 
-  useEffect(() => {
-    filesRef.current = files;
-  }, [files]);
-
-  const markNavigationActivity = useCallback(() => {
-    lastNavigationAtRef.current = Date.now();
-  }, []);
-
-  const indexSavedMessages = async (): Promise<TelegramIndexSavedMessagesResult | null> => {
+  const indexSavedMessages = async () => {
     try {
       const result: TelegramIndexSavedMessagesResult = await invoke("tg_index_saved_messages");
 
@@ -467,14 +419,12 @@ export default function ExplorerPage() {
       }
 
       if (nextPath === currentPath) {
-        markNavigationActivity();
-        loadDirectory(nextPath, { force: true });
+        loadDirectory(nextPath);
         return;
       }
 
       setBackHistory((prev) => [...prev, currentPath]);
       setForwardHistory([]);
-      markNavigationActivity();
       loadDirectory(nextPath);
     };
 
@@ -483,7 +433,7 @@ export default function ExplorerPage() {
     return () => {
       window.removeEventListener('navigate-to-path', handleNavigateEvent as EventListener);
     };
-  }, [currentPath, markNavigationActivity]);
+  }, [currentPath]);
 
   // Listen for logout events from sidebar
   useEffect(() => {
@@ -507,11 +457,10 @@ export default function ExplorerPage() {
 
       if (canNavigateByKeyboard && isBackShortcut) {
         e.preventDefault();
-        if (backHistory.length) {
+        if (backHistory.length && !isLoading) {
           const previousPath = backHistory[backHistory.length - 1];
           setBackHistory((prev) => prev.slice(0, -1));
           setForwardHistory((prev) => [...prev, currentPath]);
-          markNavigationActivity();
           loadDirectory(previousPath);
         }
         return;
@@ -519,11 +468,10 @@ export default function ExplorerPage() {
 
       if (canNavigateByKeyboard && isForwardShortcut) {
         e.preventDefault();
-        if (forwardHistory.length) {
+        if (forwardHistory.length && !isLoading) {
           const nextPath = forwardHistory[forwardHistory.length - 1];
           setForwardHistory((prev) => prev.slice(0, -1));
           setBackHistory((prev) => [...prev, currentPath]);
-          markNavigationActivity();
           loadDirectory(nextPath);
         }
         return;
@@ -550,7 +498,51 @@ export default function ExplorerPage() {
     return () => {
       window.removeEventListener('keydown', handleKeyDown);
     };
-  }, [selectedFile, showDetails, backHistory, forwardHistory, currentPath, isLoading, markNavigationActivity]);
+  }, [selectedFile, showDetails, backHistory, forwardHistory, currentPath, isLoading]);
+
+  useEffect(() => {
+    const suppressDefaultMouseNavigation = (event: MouseEvent) => {
+      if (event.button === 3 || event.button === 4) {
+        event.preventDefault();
+        event.stopPropagation();
+      }
+    };
+
+    const handleMouseNavigationButtons = (event: MouseEvent) => {
+      if (isTextInputElement(event.target)) {
+        return;
+      }
+
+      if (event.button === 3) {
+        event.preventDefault();
+        event.stopPropagation();
+        if (backHistory.length && !isLoading) {
+          const previousPath = backHistory[backHistory.length - 1];
+          setBackHistory((prev) => prev.slice(0, -1));
+          setForwardHistory((prev) => [...prev, currentPath]);
+          void loadDirectory(previousPath);
+        }
+      }
+
+      if (event.button === 4) {
+        event.preventDefault();
+        event.stopPropagation();
+        if (forwardHistory.length && !isLoading) {
+          const nextPath = forwardHistory[forwardHistory.length - 1];
+          setForwardHistory((prev) => prev.slice(0, -1));
+          setBackHistory((prev) => [...prev, currentPath]);
+          void loadDirectory(nextPath);
+        }
+      }
+    };
+
+    window.addEventListener("mousedown", suppressDefaultMouseNavigation, true);
+    window.addEventListener("mouseup", handleMouseNavigationButtons, true);
+    return () => {
+      window.removeEventListener("mousedown", suppressDefaultMouseNavigation, true);
+      window.removeEventListener("mouseup", handleMouseNavigationButtons, true);
+    };
+  }, [backHistory, currentPath, forwardHistory, isLoading]);
 
   useEffect(() => {
     const suppressDefaultMouseNavigation = (event: MouseEvent) => {
@@ -744,13 +736,11 @@ export default function ExplorerPage() {
     setIsLoading(true);
     try {
       if (path.startsWith("tg://saved")) {
-        setSavedItemsOffset(0);
-        setHasMoreSavedItems(false);
-        if (isSavedSyncComplete) {
-          await loadAllSavedItems(path);
-        } else {
-          await loadSavedItemsPage(path, 0, false);
-        }
+        const savedPath = virtualToSavedPath(path);
+        const result: TelegramSavedItem[] = await invoke("tg_list_saved_items", { filePath: savedPath });
+        const virtualItems = result.map(savedItemToFileItem);
+        setFiles(virtualItems);
+        setCurrentPath(path);
       } else {
         const result: FileEntry[] = await invoke("fs_list_dir", { path });
         const convertedFiles = result.map(convertFileEntryToFileItem);
@@ -794,33 +784,30 @@ export default function ExplorerPage() {
 
     setBackHistory((prev) => [...prev, currentPath]);
     setForwardHistory([]);
-    markNavigationActivity();
     await loadDirectory(path);
-  }, [currentPath, markNavigationActivity]);
+  }, [currentPath]);
 
   const handleGoBack = useCallback(async () => {
-    if (!backHistory.length) {
+    if (!backHistory.length || isLoading) {
       return;
     }
 
     const previousPath = backHistory[backHistory.length - 1];
     setBackHistory((prev) => prev.slice(0, -1));
     setForwardHistory((prev) => [...prev, currentPath]);
-    markNavigationActivity();
     await loadDirectory(previousPath);
-  }, [backHistory, currentPath, markNavigationActivity]);
+  }, [backHistory, currentPath, isLoading]);
 
   const handleGoForward = useCallback(async () => {
-    if (!forwardHistory.length) {
+    if (!forwardHistory.length || isLoading) {
       return;
     }
 
     const nextPath = forwardHistory[forwardHistory.length - 1];
     setForwardHistory((prev) => prev.slice(0, -1));
     setBackHistory((prev) => [...prev, currentPath]);
-    markNavigationActivity();
     await loadDirectory(nextPath);
-  }, [currentPath, forwardHistory, markNavigationActivity]);
+  }, [currentPath, forwardHistory, isLoading]);
 
   useEffect(() => {
     const explorerUrl = window.location.href;
@@ -849,7 +836,6 @@ export default function ExplorerPage() {
       const previousPath = stack[stack.length - 1];
       setBackHistory((prev) => prev.slice(0, -1));
       setForwardHistory((prev) => [...prev, activePath]);
-      markNavigationActivity();
       void loadDirectory(previousPath);
     };
 
@@ -857,7 +843,7 @@ export default function ExplorerPage() {
     return () => {
       window.removeEventListener("popstate", handlePopState);
     };
-  }, [markNavigationActivity]);
+  }, []);
 
   const loadFavorites = async () => {
     try {
@@ -1102,7 +1088,6 @@ export default function ExplorerPage() {
           parentPath: virtualToSavedPath(currentPath),
           folderName,
         });
-        savedPathCacheRef.current = {};
       } else {
         const newPath = `${currentPath}/${folderName}`.replace("//", "/");
         await invoke("fs_create_dir", { path: newPath });
@@ -1113,7 +1098,7 @@ export default function ExplorerPage() {
         description: `Created folder: ${folderName}`,
       });
       // Reload the current directory to show the new folder
-      await loadDirectory(currentPath, { force: true });
+      await loadDirectory(currentPath);
     } catch (error) {
       const typedError = error as FsError | TelegramError;
       toast({
@@ -1140,17 +1125,7 @@ export default function ExplorerPage() {
     });
   };
 
-  const isDraggableItem = (file: FileItem) => {
-    if (isSavedVirtualFolderPath(file.path)) {
-      return file.path !== "tg://saved";
-    }
-
-    if (isSavedVirtualFilePath(file.path)) {
-      return true;
-    }
-
-    return !isVirtualPath(file.path);
-  };
+  const isDraggableItem = (file: FileItem) => !isVirtualPath(file.path);
 
   const getDraggedSourcePath = (event: React.DragEvent): string | null => {
     const fromTransfer = event.dataTransfer.getData(INTERNAL_DRAG_MIME);
@@ -1164,42 +1139,6 @@ export default function ExplorerPage() {
   const canDropToTarget = (sourcePath: string, target: FileItem): boolean => {
     if (!target.isDirectory) {
       return false;
-    }
-
-    const sourceItem = files.find((file) => file.path === sourcePath);
-
-    const sourceIsSavedVirtual = isSavedVirtualFolderPath(sourcePath) || isSavedVirtualFilePath(sourcePath);
-    const targetIsSavedVirtualFolder = isSavedVirtualFolderPath(target.path);
-
-    if (sourceIsSavedVirtual || targetIsSavedVirtualFolder) {
-      if (!sourceIsSavedVirtual || !targetIsSavedVirtualFolder) {
-        return false;
-      }
-
-      if (sourcePath === target.path) {
-        return false;
-      }
-
-      if (isSavedVirtualFolderPath(sourcePath)) {
-        const sourceParentPath = getParentPath(sourcePath);
-        if (sourceParentPath === target.path) {
-          return false;
-        }
-
-        if (target.path.startsWith(`${sourcePath}/`)) {
-          return false;
-        }
-      }
-
-      if (isSavedVirtualFilePath(sourcePath) && currentPath === target.path) {
-        return false;
-      }
-
-      if (!sourceItem && !isSavedVirtualFilePath(sourcePath)) {
-        return false;
-      }
-
-      return true;
     }
 
     if (isVirtualPath(sourcePath) || isVirtualPath(target.path)) {
@@ -1218,6 +1157,7 @@ export default function ExplorerPage() {
       return false;
     }
 
+    const sourceItem = files.find((file) => normalizePath(file.path) === normalizedSourcePath);
     if (sourceItem?.isDirectory && normalizedTargetPath.startsWith(`${normalizedSourcePath}/`)) {
       return false;
     }
@@ -1263,44 +1203,8 @@ export default function ExplorerPage() {
       return;
     }
 
-    const sourceItem = files.find((file) => file.path === sourcePath);
-    const sourceDisplayName = sourceItem?.name || getPathName(sourcePath);
-
     event.preventDefault();
     event.stopPropagation();
-
-    if ((isSavedVirtualFolderPath(sourcePath) || isSavedVirtualFilePath(sourcePath)) && isSavedVirtualFolderPath(target.path)) {
-      try {
-        await invoke("tg_move_saved_item", {
-          sourcePath,
-          destinationPath: target.path,
-        });
-
-        toast({
-          title: "Moved",
-          description: `${sourceDisplayName} moved to ${target.name}`,
-        });
-
-        if (selectedFile?.path === sourcePath) {
-          setSelectedFile(null);
-          setShowDetails(false);
-        }
-
-        savedPathCacheRef.current = {};
-        await loadDirectory(currentPath, { force: true });
-      } catch (error) {
-        const typedError = error as TelegramError;
-        toast({
-          title: "Move failed",
-          description: typedError.message || "Unable to move item",
-          variant: "destructive",
-        });
-      } finally {
-        setDraggedPath(null);
-        setDropTargetPath(null);
-      }
-      return;
-    }
 
     const destinationPath = joinPath(target.path, getPathName(sourcePath));
 
@@ -1308,7 +1212,7 @@ export default function ExplorerPage() {
       await invoke("move_file", { source: sourcePath, destination: destinationPath });
       toast({
         title: "Moved",
-        description: `${sourceDisplayName} moved to ${target.name}`,
+        description: `${getPathName(sourcePath)} moved to ${target.name}`,
       });
 
       if (selectedFile?.path === sourcePath) {
@@ -1316,7 +1220,7 @@ export default function ExplorerPage() {
         setShowDetails(false);
       }
 
-      await loadDirectory(currentPath, { force: true });
+      await loadDirectory(currentPath);
     } catch (error) {
       const typedError = error as FsError;
       toast({
@@ -1375,8 +1279,7 @@ export default function ExplorerPage() {
       }
 
       if (uploadedCount > 0) {
-        savedPathCacheRef.current = {};
-        await loadDirectory(currentPath, { force: true });
+        await loadDirectory(currentPath);
 
         const categorySummary = uploadedCategories.size
           ? ` to ${Array.from(uploadedCategories).join(", ")}`
@@ -1448,7 +1351,7 @@ export default function ExplorerPage() {
             <button
               onClick={handleGoBack}
               className="p-2 rounded text-muted-foreground hover:text-foreground hover:bg-secondary transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
-              disabled={!backHistory.length}
+              disabled={!backHistory.length || isLoading}
               title="Back (Mouse Back / Alt+Left)"
             >
               <ChevronLeft className="w-4 h-4" />
@@ -1456,7 +1359,7 @@ export default function ExplorerPage() {
             <button
               onClick={handleGoForward}
               className="p-2 rounded text-muted-foreground hover:text-foreground hover:bg-secondary transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
-              disabled={!forwardHistory.length}
+              disabled={!forwardHistory.length || isLoading}
               title="Forward (Mouse Forward / Alt+Right)"
             >
               <ChevronRight className="w-4 h-4" />
@@ -1574,7 +1477,6 @@ export default function ExplorerPage() {
             onDragOver={handleExplorerDragOver}
             onDragLeave={handleExplorerDragLeave}
             onDrop={handleExplorerDrop}
-            onScroll={handleDirectoryScroll}
           >
             {(isExternalDragging || isUploadingFiles) && (
               <div className="pointer-events-none absolute inset-4 z-20 rounded-xl border-2 border-dashed border-primary/60 bg-primary/10 flex items-center justify-center">
