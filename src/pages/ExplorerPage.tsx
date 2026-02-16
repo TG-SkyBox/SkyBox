@@ -903,6 +903,12 @@ export default function ExplorerPage() {
     });
   }, [currentPath, filteredFiles]);
 
+  const isLoadingSavedFiles =
+    currentPath.startsWith("tg://saved") &&
+    isSavedBackfillSyncing &&
+    !search.trim() &&
+    sortedFiles.length === 0;
+
   const handleFileSelect = (file: FileItem) => {
     setSelectedFile(file);
     setShowDetails(true);
@@ -1524,7 +1530,12 @@ export default function ExplorerPage() {
             <span className="text-small text-muted-foreground">
               {sortedFiles.length} {sortedFiles.length === 1 ? 'item' : 'items'}
             </span>
-            {currentPath.startsWith("tg://saved") && isSavedBackfillSyncing && (
+            {isLoadingSavedFiles ? (
+              <span className="text-small text-muted-foreground inline-flex items-center gap-1">
+                <div className="animate-spin rounded-full h-3 w-3 border-b border-primary" />
+                Loading files...
+              </span>
+            ) : currentPath.startsWith("tg://saved") && isSavedBackfillSyncing && (
               <span className="text-small text-muted-foreground inline-flex items-center gap-1">
                 <span className="inline-block w-2 h-2 rounded-full bg-primary animate-pulse" />
                 Syncing...
@@ -1567,6 +1578,11 @@ export default function ExplorerPage() {
                 <p className="text-body text-muted-foreground">
                   Loading directory contents...
                 </p>
+              </div>
+            ) : isLoadingSavedFiles ? (
+              <div className="flex flex-col items-center justify-center h-full text-center">
+                <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary mb-2"></div>
+                <p className="text-body text-muted-foreground">Loading files...</p>
               </div>
             ) : sortedFiles.length === 0 ? (
               <div className="flex flex-col items-center justify-center h-full text-center">
