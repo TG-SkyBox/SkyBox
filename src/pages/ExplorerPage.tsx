@@ -335,7 +335,7 @@ export default function ExplorerPage() {
         setHasMoreSavedItems(true);
         // If we are currently viewing a Saved Messages path, refresh it
         if (currentPathRef.current.startsWith("tg://saved")) {
-          loadDirectory(currentPathRef.current);
+          loadDirectory(currentPathRef.current, { force: true });
         }
       } else if (result.bootstrap_limited) {
         setIsSavedSyncComplete(false);
@@ -505,7 +505,7 @@ export default function ExplorerPage() {
       }
 
       if (nextPath === currentPath) {
-        loadDirectory(nextPath);
+        loadDirectory(nextPath, { force: true });
         return;
       }
 
@@ -547,7 +547,7 @@ export default function ExplorerPage() {
           const previousPath = backHistory[backHistory.length - 1];
           setBackHistory((prev) => prev.slice(0, -1));
           setForwardHistory((prev) => [...prev, currentPath]);
-          loadDirectory(previousPath);
+          loadDirectory(previousPath, { force: true });
         }
         return;
       }
@@ -558,7 +558,7 @@ export default function ExplorerPage() {
           const nextPath = forwardHistory[forwardHistory.length - 1];
           setForwardHistory((prev) => prev.slice(0, -1));
           setBackHistory((prev) => [...prev, currentPath]);
-          loadDirectory(nextPath);
+          loadDirectory(nextPath, { force: true });
         }
         return;
       }
@@ -630,6 +630,27 @@ export default function ExplorerPage() {
     };
   }, [backHistory, currentPath, forwardHistory, isLoading]);
 
+  const applySavedPathCache = (path: string): boolean => {
+    const cacheEntry = savedPathCacheRef.current[path];
+    if (!cacheEntry) {
+      return false;
+    }
+
+    setFiles(cacheEntry.items);
+    setSavedItemsOffset(cacheEntry.nextOffset);
+    setHasMoreSavedItems(cacheEntry.hasMore);
+    setCurrentPath(path);
+    return true;
+  };
+
+  const cacheSavedPath = (path: string, items: FileItem[], nextOffset: number, hasMore: boolean) => {
+    savedPathCacheRef.current[path] = {
+      items,
+      nextOffset,
+      hasMore,
+    };
+  };
+
   const loadSavedItemsPage = async (path: string, offset: number, append: boolean) => {
     const savedPath = virtualToSavedPath(path);
     const result: TelegramSavedItemsPage = await invoke("tg_list_saved_items_page", {
@@ -639,15 +660,26 @@ export default function ExplorerPage() {
     });
 
     const pageItems = result.items.map(savedItemToFileItem);
-    if (append) {
-      setFiles((prev) => [...prev, ...pageItems]);
-    } else {
-      setFiles(pageItems);
-    }
-
+    const mergedItems = append ? [...filesRef.current, ...pageItems] : pageItems;
+    setFiles(mergedItems);
     setSavedItemsOffset(result.next_offset);
     setHasMoreSavedItems(result.has_more);
     setCurrentPath(path);
+    cacheSavedPath(path, mergedItems, result.next_offset, result.has_more);
+  };
+
+  const loadAllSavedItems = async (path: string) => {
+    const savedPath = virtualToSavedPath(path);
+    const result: TelegramSavedItem[] = await invoke("tg_list_saved_items", {
+      filePath: savedPath,
+    });
+
+    const allItems = result.map(savedItemToFileItem);
+    setFiles(allItems);
+    setSavedItemsOffset(allItems.length);
+    setHasMoreSavedItems(false);
+    setCurrentPath(path);
+    cacheSavedPath(path, allItems, allItems.length, false);
   };
 
   const loadMoreSavedItems = async () => {
@@ -656,6 +688,10 @@ export default function ExplorerPage() {
     }
 
     if (isLoading || isLoadingMoreSavedItems) {
+      return;
+    }
+
+    if (isSavedSyncComplete) {
       return;
     }
 
@@ -686,14 +722,33 @@ export default function ExplorerPage() {
     }
   };
 
-  const loadDirectory = async (path: string) => {
-    setIsLoading(true);
+  const loadDirectory = async (path: string, options?: { force?: boolean }) => {
+    const forceReload = options?.force === true;
     setError(null);
+
+    if (path.startsWith("tg://saved") && !forceReload) {
+      const hasCache = applySavedPathCache(path);
+      if (hasCache) {
+        const cacheEntry = savedPathCacheRef.current[path];
+        if (isSavedSyncComplete && cacheEntry.hasMore) {
+          void loadAllSavedItems(path).catch((error) => {
+            console.error("Error upgrading cached saved items view to full list:", error);
+          });
+        }
+        return;
+      }
+    }
+
+    setIsLoading(true);
     try {
       if (path.startsWith("tg://saved")) {
         setSavedItemsOffset(0);
         setHasMoreSavedItems(false);
-        await loadSavedItemsPage(path, 0, false);
+        if (isSavedSyncComplete) {
+          await loadAllSavedItems(path);
+        } else {
+          await loadSavedItemsPage(path, 0, false);
+        }
       } else {
         const result: FileEntry[] = await invoke("fs_list_dir", { path });
         const convertedFiles = result.map(convertFileEntryToFileItem);
@@ -964,7 +1019,7 @@ export default function ExplorerPage() {
       });
 
       // Reload the current directory to reflect changes
-      loadDirectory(currentPath);
+      loadDirectory(currentPath, { force: true });
       setDeleteTarget(null);
       if (selectedFile?.path === deleteTarget.path) {
         setSelectedFile(null);
@@ -981,7 +1036,7 @@ export default function ExplorerPage() {
   };
 
   const handleRefresh = async () => {
-    await loadDirectory(currentPath);
+    await loadDirectory(currentPath, { force: true });
     toast({
       title: "Refreshed",
       description: "Directory contents refreshed"
@@ -1045,7 +1100,7 @@ export default function ExplorerPage() {
         description: `Created folder: ${folderName}`,
       });
       // Reload the current directory to show the new folder
-      await loadDirectory(currentPath);
+      await loadDirectory(currentPath, { force: true });
     } catch (error) {
       const typedError = error as FsError | TelegramError;
       toast({
@@ -1167,7 +1222,7 @@ export default function ExplorerPage() {
         setShowDetails(false);
       }
 
-      await loadDirectory(currentPath);
+      await loadDirectory(currentPath, { force: true });
     } catch (error) {
       const typedError = error as FsError;
       toast({
@@ -1226,7 +1281,7 @@ export default function ExplorerPage() {
       }
 
       if (uploadedCount > 0) {
-        await loadDirectory(currentPath);
+        await loadDirectory(currentPath, { force: true });
 
         const categorySummary = uploadedCategories.size
           ? ` to ${Array.from(uploadedCategories).join(", ")}`
