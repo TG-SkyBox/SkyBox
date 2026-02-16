@@ -327,6 +327,7 @@ export default function ExplorerPage() {
       console.log("Indexing summary:", result);
       if (result.total_new_messages > 0) {
         setIsSavedSyncComplete(false);
+        savedPathCacheRef.current = {};
         toast({
           title: "Saved Messages Synced",
           description: `Found ${result.total_new_messages} new item${result.total_new_messages === 1 ? "" : "s"}.`,
@@ -361,6 +362,7 @@ export default function ExplorerPage() {
       try {
         const rebuildResult: TelegramRebuildSavedItemsResult = await invoke("tg_rebuild_saved_items_index");
         if (!cancelled && rebuildResult.upserted_count > 0) {
+          savedPathCacheRef.current = {};
           setHasMoreSavedItems(true);
           if (currentPathRef.current.startsWith("tg://saved")) {
             await loadDirectory(currentPathRef.current, { force: true });
@@ -388,6 +390,7 @@ export default function ExplorerPage() {
           syncComplete = result.is_complete;
           if (result.indexed_count > 0) {
             indexedAny = true;
+            savedPathCacheRef.current = {};
             setHasMoreSavedItems(true);
           }
 
