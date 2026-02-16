@@ -1379,7 +1379,9 @@ export default function ExplorerPage() {
     event.stopPropagation();
 
     const menuWidth = 236;
-    const menuHeight = targetFile || !isEmptyArea ? 320 : 140;
+    const menuHeight = isEmptyArea
+      ? 140
+      : (targetFile && !targetFile.isDirectory ? 288 : 254);
     const clampedX = Math.max(8, Math.min(event.clientX, window.innerWidth - menuWidth - 8));
     const clampedY = Math.max(8, Math.min(event.clientY, window.innerHeight - menuHeight - 8));
 
@@ -2166,6 +2168,7 @@ export default function ExplorerPage() {
               </button>
               <button
                 className={canPaste ? contextMenuItemClassName : contextMenuDisabledItemClassName}
+                disabled={!canPaste}
                 onClick={() => {
                   if (!canPaste) {
                     return;
@@ -2234,6 +2237,7 @@ export default function ExplorerPage() {
               </button>
               <button
                 className={canPaste ? contextMenuItemClassName : contextMenuDisabledItemClassName}
+                disabled={!canPaste}
                 onClick={() => {
                   if (!canPaste) {
                     return;
