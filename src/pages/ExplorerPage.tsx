@@ -975,10 +975,6 @@ export default function ExplorerPage() {
   const handleFileOpen = async (file: FileItem) => {
     if (file.isDirectory) {
       navigateToPath(file.path);
-      toast({
-        title: "Opening folder",
-        description: file.name,
-      });
     } else {
       if (file.path.startsWith("tg://msg/")) {
         toast({
