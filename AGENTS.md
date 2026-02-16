@@ -1,39 +1,49 @@
 # SkyBox Agent Guide
 
-SkyBox is a Tauri v2 desktop app.
-- Frontend: Vite + React + TypeScript + Tailwind (shadcn/ui)
-- Backend: Rust (Tauri) in `src-tauri/`
+This file is for agentic coding tools that work in this repository.
+SkyBox is a Tauri v2 desktop app with:
+- Frontend: Vite + React + TypeScript + Tailwind + shadcn/ui
+- Backend: Rust (Tauri commands)
 - Tests: Vitest + Testing Library (jsdom)
-- Local data: SQLite (Rust `sqlite` crate)
+- Local persistence: SQLite via Rust `sqlite` crate
 
-## Cursor / Copilot Rules
-- Cursor: none found (`.cursor/rules/` and `.cursorrules` are missing).
-- Copilot: none found (`.github/copilot-instructions.md` is missing).
+## Rule Sources and Priority
+- Mandatory constraints come from `.qoder/rules/DontBuidl.md`.
+- This `AGENTS.md` is the operational playbook for implementation details.
+- If rules conflict, follow the stricter rule.
 
-## Mandatory Repo Rules (MUST FOLLOW)
-Source: `.qoder/rules/DontBuidl.md`
+## Cursor / Copilot Instructions
+- Cursor rules: none found (`.cursor/rules/` and `.cursorrules` are missing).
+- Copilot rules: none found (`.github/copilot-instructions.md` is missing).
+- If these files are added later, include and follow them.
 
-- Do NOT run the app locally (no dev servers: `npm run dev`, `tauri dev`, `cargo run`, etc.).
-- Do NOT build locally (no `vite build`, `tauri build`, installers/bundlers).
-- Treat GitHub Actions as the source of truth for builds/tests/validation.
-- Make CI-friendly changes: deterministic behavior; no machine-specific paths; guard OS-specific code.
-- Avoid adding global tooling "just to test"; prefer repo scripts and CI.
-- Use conventional commits: `feat:`, `fix:`, `refactor:`, `chore:`, `docs:` (optional scope: `feat(explorer): ...`).
-- Never commit/log secrets (Telegram creds, session data, tokens).
+## Hard Constraints (Must Follow)
+- Do not run local app/dev servers: no `npm run dev`, `npm run tauri:dev`, `cargo run`, etc.
+- Do not run local builds/bundles/installers: no `npm run build`, `npm run tauri:build`, `cargo build`.
+- Treat GitHub Actions as source of truth for validation.
+- Keep changes deterministic and CI-friendly.
+- Do not add machine-specific paths or local-environment assumptions.
+- Never expose secrets (Telegram credentials, session blobs, tokens).
+- Avoid global tooling installs only for local verification.
 
-## Repo Layout
+## Repository Layout
 - Frontend app: `src/`
-- Frontend tests: `src/test/` (setup: `src/test/setup.ts`)
+- Frontend tests: `src/test/` (setup in `src/test/setup.ts`)
 - Tauri backend: `src-tauri/src/`
 - Tauri command registry: `src-tauri/src/lib.rs`
+- Database module: `src-tauri/src/db/`
+- Telegram integration: `src-tauri/src/telegram/`
 - API docs: `docs/API_REFERENCE.md`
 
-## Commands (REFERENCE; CI runs these)
-Per `.qoder/rules/DontBuidl.md`, treat these as CI-reference; don't execute locally unless explicitly requested.
-CI uses Node 20 and Rust stable; Rust MSRV is pinned in `src-tauri/Cargo.toml` (`rust-version = "1.77.2"`).
+## Command Reference (CI-Oriented)
+Do not execute locally unless explicitly requested; use as reference for CI-compatible changes.
 
-Frontend (repo root):
+### Environment Used by CI
+- Node: 20
+- Rust: stable
+- Rust MSRV pinned in `src-tauri/Cargo.toml` (`rust-version = "1.77.2"`)
 
+### Frontend Commands (repo root)
 ```bash
 npm install
 npm run lint
@@ -43,8 +53,7 @@ npm run build
 npm run preview
 ```
 
-Run a single Vitest test:
-
+### Run a Single Frontend Test (important)
 ```bash
 # single file
 npm run test -- src/test/example.test.ts
@@ -52,100 +61,135 @@ npm run test -- src/test/example.test.ts
 # single test by name (substring/regex)
 npm run test -- -t "should pass"
 
-# watch mode + single file/name
+# watch mode + file and/or name filter
 npm run test:watch -- src/test/example.test.ts -t "should pass"
 ```
 
-Lint:
-
+### Linting
 ```bash
-# whole repo
+# whole project
 npm run lint
 
 # single file
 npx eslint src/pages/ExplorerPage.tsx
 ```
 
-Tauri (repo root):
-
+### Tauri Commands (reference only)
 ```bash
 npm run tauri:dev
 npm run tauri:build
 
-# CI uses the "tauri" script with args:
+# CI often uses:
 npm run tauri build
 ```
 
-Rust (from `src-tauri/`):
-
+### Rust Commands (from `src-tauri/`)
 ```bash
 cargo fmt
 cargo clippy
 cargo test
 
-# single Rust test (substring)
+# single Rust test (name substring)
 cargo test test_name_substring
 ```
 
-## Code Style: TypeScript / React
+## TypeScript / React Style Guide
 
-Formatting
-- 2-space indentation; semicolons; double quotes.
-- No Prettier config in repo; keep formatting consistent with nearby files.
+### Formatting
+- Use 2-space indentation, semicolons, and double quotes.
+- No Prettier config is enforced; match surrounding file style.
+- Keep diffs small and avoid unrelated formatting churn.
 
-Imports
-- Prefer `@/*` alias for app code (configured in `vite.config.ts`, `tsconfig*.json`, `vitest.config.ts`).
-- shadcn aliases (from `components.json`): `@/components`, `@/components/ui`, `@/hooks`, `@/lib`.
+### Imports
+- Prefer `@/*` alias for app code (configured in TS/Vite/Vitest config).
+- shadcn aliases from `components.json`: `@/components`, `@/components/ui`, `@/hooks`, `@/lib`.
 - Use `import type` for type-only imports.
-- Common order: React -> third-party -> `@/` -> relative -> styles.
+- Preferred order: React -> third-party -> `@/` aliases -> relative imports -> styles.
 
-Types
-- TS is non-strict (`tsconfig.app.json`); still avoid `any` (use `unknown` + narrowing).
-- Keep boundary types from Rust in `snake_case`; convert to UI models (`camelCase`) explicitly.
-- Do not rely on lint to catch unused vars (`@typescript-eslint/no-unused-vars` is off in `eslint.config.js`).
+### Types
+- TS is intentionally non-strict (`tsconfig.app.json`), but still avoid `any` when possible.
+- Use `unknown` at boundaries and narrow safely.
+- Keep Rust boundary payload keys in `snake_case`; map to UI `camelCase` explicitly.
+- ESLint does not enforce no-unused-vars here; manually clean obvious dead code.
 
-Naming
-- Components: `PascalCase` names; app component files are usually `PascalCase.tsx` (see `src/components/skybox/`).
-- shadcn/ui files use kebab-case (see `src/components/ui/`).
-- Hooks: `useXxx` functions (often in `use-xxx.ts`).
-- Variables/functions: `camelCase`; types/interfaces: `PascalCase`; constants: `SCREAMING_SNAKE_CASE`.
+### Naming
+- Components and React pages: `PascalCase`.
+- shadcn/ui component filenames: kebab-case in `src/components/ui/`.
+- Hooks: `useXxx` names.
+- Variables/functions: `camelCase`.
+- Types/interfaces: `PascalCase`.
+- Constants: `SCREAMING_SNAKE_CASE`.
 
-Error handling + logging
-- User-facing errors: `toast()` from `src/hooks/use-toast.ts`.
-- Frontend diagnostics: `console.*` and/or `logger` from `src/lib/logger.ts`.
-- Tauri `invoke()` failures are often `unknown`; extract `{ message }` defensively and fall back to a generic message.
+### State and UI Behavior
+- Keep state updates predictable and local where possible.
+- Prefer existing primitives before introducing new UI patterns.
+- Preserve established visual language in existing screens.
 
-UI/CSS
-- Tailwind is the default; tokens/utilities live in `src/index.css` + `tailwind.config.ts`.
-- Prefer existing utility classes (`bg-glass`, `text-body`, etc.) and shadcn/ui components in `src/components/ui/`.
-- Use `cn()` from `src/lib/utils.ts` for conditional className building.
+### Error Handling and Logging
+- Show user-visible failures with `toast()` (`src/hooks/use-toast.ts`).
+- Frontend diagnostics can use `console.*` and/or `logger` (`src/lib/logger.ts`).
+- For `invoke()` failures, treat errors as `unknown` and defensively extract `message`.
+- Provide clear fallback messages instead of silent failures.
 
-Testing
-- Vitest config: `vitest.config.ts` (jsdom + globals + `src/test/setup.ts`).
-- Prefer Testing Library: query by role/text; avoid implementation details; test user-visible behavior.
+### Tailwind / Styling
+- Tailwind is default; use shared tokens/utilities from `src/index.css`.
+- Reuse existing utility classes such as `bg-glass`, `text-body`, `text-small`.
+- Use `cn()` from `src/lib/utils.ts` for conditional classes.
 
-## Code Style: Rust / Tauri
+### Frontend Testing
+- Vitest config: `vitest.config.ts` (`jsdom`, globals, setup file).
+- Prefer Testing Library queries by role/text over implementation details.
+- Test user-visible behavior and flows, not internal component internals.
 
-General
-- Keep code `rustfmt`-clean.
-- Tauri commands should return `Result<T, XxxError>` where `XxxError: Serialize { message: String }`.
-- Avoid introducing new `unwrap()`/`expect()` in command paths; return structured errors instead.
+## Rust / Tauri Style Guide
 
-Tauri boundary conventions
-- Command name == Rust function name (see `src-tauri/src/lib.rs`).
-- Invoke payload keys should match Rust parameter names (prefer `snake_case` keys).
-- Keep `docs/API_REFERENCE.md` aligned when adding/renaming commands or args.
+### General
+- Keep code `rustfmt` clean.
+- Prefer explicit, structured errors over panics.
+- Avoid new `unwrap()`/`expect()` in command paths.
 
-Async + locking
-- Do not hold a mutex guard across `.await` (clone needed data, drop lock, then await).
-- For heavy blocking IO, consider `tokio::task::spawn_blocking`.
+### Tauri Command Boundary
+- Register all commands in `src-tauri/src/lib.rs`.
+- Keep command names and invoke names aligned.
+- Use `snake_case` payload keys from frontend to Rust.
+- Return `Result<T, XxxError>` where serialized errors expose `message`.
 
-Logging + secrets
-- Backend logging uses `log::debug!/info!/warn!/error!` (see `src-tauri/src/utils/logger.rs`).
-- Never log secrets or long-lived credentials:
-  - `.env` is gitignored; dev reads `TELEGRAM_API_ID/HASH` from env in debug.
-  - Release builds embed these env vars at compile time (see `src-tauri/src/telegram/mod.rs`).
+### Async and Concurrency
+- Do not hold mutex guards across `.await`.
+- Clone needed data, drop lock, then await.
+- Use `tokio::task::spawn_blocking` for heavy blocking operations.
 
-## Versioning / Release Workflows (CI)
-- Keep versions in sync: `VERSION`, `package.json`, `src-tauri/tauri.conf.json`, `src-tauri/Cargo.toml`.
-- Release flow is gated by commit message containing `new release` (see `.github/workflows/release.yml` and `.github/workflows/version.yml`).
+### Filesystem and Platform Safety
+- Avoid absolute local paths in code.
+- Guard platform-specific logic with `#[cfg(...)]` when needed.
+- Keep behavior deterministic across CI environments.
+
+### Logging and Secrets
+- Use backend logging macros: `log::debug!`, `log::info!`, `log::warn!`, `log::error!`.
+- Never log API keys, auth tokens, session data, or other credentials.
+- `.env` is gitignored; do not commit secret-bearing files.
+
+## API and Docs Sync
+- Update `docs/API_REFERENCE.md` when adding/renaming Tauri commands or payload fields.
+- Keep TS interfaces and Rust structs aligned at API boundaries.
+
+## Versioning and Releases
+- Keep versions synchronized across:
+  - `VERSION`
+  - `package.json`
+  - `src-tauri/tauri.conf.json`
+  - `src-tauri/Cargo.toml`
+- Release automation is gated by commit message containing `new release`.
+
+## Commit and PR Guidance
+- Use conventional commits: `feat:`, `fix:`, `refactor:`, `chore:`, `docs:`.
+- Optional scope format is encouraged: `feat(explorer): ...`.
+- Keep commits focused and reviewable.
+- Do not mix broad refactors with unrelated feature work.
+
+## Definition of Done
+- Changes are scoped and follow naming/style rules.
+- Error paths are handled with actionable messages.
+- Tests/lint implications are considered and CI-oriented commands documented.
+- No secrets are introduced.
+- Related docs are updated when APIs or workflows change.
