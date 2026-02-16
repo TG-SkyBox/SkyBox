@@ -121,6 +121,13 @@ jobs:
           echo "TAURI_SIGNING_PASSWORD=" >> $GITHUB_ENV
         shell: bash
 
+      # macOS needs create-dmg for bundling DMG files
+      - name: Install macOS dependencies
+        if: matrix.os == 'macos-latest'
+        run: |
+          brew install create-dmg
+        shell: bash
+
       - name: Build Tauri app
         run: npm run tauri build
         shell: bash
