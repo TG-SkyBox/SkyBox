@@ -1,0 +1,126 @@
+name: Bump Version
+
+on:
+  push:
+    branches: [ main, master ]
+
+permissions:
+  contents: write
+
+jobs:
+  bump-version:
+    # Only run if commit message contains 'new release' and NOT from github-actions bot
+    if: |
+      contains(github.event.head_commit.message, 'new release') &&
+      github.event.head_commit.author.name != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.PERSONAL_ACCESS_TOKEN }}
+
+      - name: Bump version
+        id: get_version
+        run: |
+          python - <<'PY'
+          import json, os, re
+
+          def increment_version(v):
+              parts = [int(x) for x in v.split('.')]
+              parts[-1] += 1
+              return ".".join(map(str, parts))
+
+          # 1. Read current version
+          try:
+              with open('VERSION', 'r') as f:
+                  current_version = f.read().strip()
+          except FileNotFoundError:
+              current_version = "1.0.0"
+
+          new_version = increment_version(current_version)
+          print(f"Bumping version: {current_version} -> {new_version}")
+
+          # 2. Update VERSION
+          with open('VERSION', 'w') as f:
+              f.write(new_version)
+
+          # 3. Update package.json
+          if os.path.exists('package.json'):
+              with open('package.json', 'r') as f:
+                  pkg = json.load(f)
+              pkg['version'] = new_version
+              with open('package.json', 'w') as f:
+                  json.dump(pkg, f, indent=2)
+
+          # 4. Update tauri.conf.json
+          tauri_path = 'src-tauri/tauri.conf.json'
+          if os.path.exists(tauri_path):
+              with open(tauri_path, 'r') as f:
+                  tauri = json.load(f)
+              tauri['version'] = new_version
+              with open(tauri_path, 'w') as f:
+                  json.dump(tauri, f, indent=2)
+
+          # 5. Update Cargo.toml
+          cargo_path = 'src-tauri/Cargo.toml'
+          if os.path.exists(cargo_path):
+              with open(cargo_path, 'r') as f:
+                  cargo = f.read()
+              cargo = re.sub(r'^version = "[^"]+"', f'version = "{new_version}"', cargo, count=1, flags=re.MULTILINE)
+              with open(cargo_path, 'w') as f:
+                  f.write(cargo)
+
+          # 6. Set Output
+          out_path = os.environ.get('GITHUB_OUTPUT')
+          if out_path:
+              with open(out_path, 'a') as f:
+                  f.write(f"version={new_version}\n")
+          PY
+        shell: bash
+
+      - name: Extract release notes from commit message
+        id: get_release_notes
+        run: |
+          python - <<'PY'
+          import json, os
+
+          ev_path = os.environ.get('GITHUB_EVENT_PATH')
+          if not ev_path:
+              raise SystemExit('GITHUB_EVENT_PATH not set')
+
+          with open(ev_path, 'r', encoding='utf-8') as f:
+              ev = json.load(f)
+
+          msg = ev.get('head_commit', {}).get('message') or ''
+          lines = msg.splitlines()
+          release = '\n'.join(lines[1:]).strip()
+
+          out_path = os.environ.get('GITHUB_OUTPUT')
+          if not out_path:
+              raise SystemExit('GITHUB_OUTPUT not set')
+
+          with open(out_path, 'a', encoding='utf-8') as out:
+              out.write('release_notes<<EOF\n')
+              out.write(release + '\n')
+              out.write('EOF\n')
+          PY
+        shell: bash
+
+      - name: Commit and Push Version Bump
+        run: |
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "github-actions[bot]@users.noreply.github.com"
+          git add VERSION package.json src-tauri/tauri.conf.json src-tauri/Cargo.toml
+          
+          # Include release notes in commit message
+          RELEASE_NOTES=$(cat <<'EOF'
+          ${{ steps.get_release_notes.outputs.release_notes }}
+          EOF
+          )
+          
+          # Create commit message with release notes
+          git commit -m "chore: bump version to ${{ steps.get_version.outputs.version }}" -m "${RELEASE_NOTES}"
+          git push origin HEAD:main
+        shell: bash

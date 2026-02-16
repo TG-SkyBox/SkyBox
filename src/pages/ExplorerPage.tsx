@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo } from "react";
+import { useState, useEffect, useMemo, useCallback, useRef } from "react";
 import { ExplorerSidebar } from "@/components/skybox/ExplorerSidebar";
 import { SearchBar } from "@/components/skybox/SearchBar";
 import { Breadcrumbs } from "@/components/skybox/Breadcrumbs";
@@ -7,10 +7,11 @@ import { FileGrid } from "@/components/skybox/FileGrid";
 import { DetailsPanel } from "@/components/skybox/DetailsPanel";
 import { ConfirmDialog } from "@/components/skybox/ConfirmDialog";
 import { TelegramButton } from "@/components/skybox/TelegramButton";
-import { FolderPlus, Grid, List, SortAsc, RefreshCw, Copy, Trash2, Edit3, LogOut } from "lucide-react";
+import { FolderPlus, Grid, List, SortAsc, RefreshCw, Copy, Trash2, Edit3, ChevronLeft, ChevronRight } from "lucide-react";
 import { useNavigate, useLocation } from "react-router-dom";
 import { toast } from "@/hooks/use-toast";
 import { invoke } from "@tauri-apps/api/core";
+import { resolveThumbnailSrc } from "@/lib/thumbnail-src";
 
 interface FsError {
   message: string;
@@ -89,6 +90,38 @@ interface TelegramMessage {
   file_reference: string;
 }
 
+interface TelegramSavedItem {
+  chat_id: number;
+  message_id: number;
+  thumbnail?: string;
+  file_type: string;
+  file_unique_id: string;
+  file_size: number;
+  file_name: string;
+  file_caption?: string;
+  file_path: string;
+  modified_date: string;
+  owner_id: string;
+}
+
+interface TelegramSavedItemsPage {
+  items: TelegramSavedItem[];
+  has_more: boolean;
+  next_offset: number;
+}
+
+interface TelegramIndexSavedMessagesResult {
+  total_new_messages: number;
+  started_from_empty_db?: boolean;
+}
+
+interface SavedPathCacheEntry {
+  items: FileItem[];
+  nextOffset: number;
+  hasMore: boolean;
+  isCompleteSnapshot: boolean;
+}
+
 // Convert Rust FileEntry to our FileItem type
 const convertFileEntryToFileItem = (entry: FileEntry): FileItem => {
   return {
@@ -106,6 +139,115 @@ const mockRoots = [
   { id: "2", path: "/media/external", name: "External Drive" },
 ];
 
+const INTERNAL_DRAG_MIME = "application/x-skybox-item-path";
+const SAVED_ITEMS_PAGE_SIZE = 50;
+
+const isVirtualPath = (path: string): boolean => path.startsWith("tg://");
+const isSavedVirtualFolderPath = (path: string): boolean => path === "tg://saved" || path.startsWith("tg://saved/");
+const isSavedVirtualFilePath = (path: string): boolean => path.startsWith("tg://msg/");
+
+const normalizePath = (path: string): string => path.replace(/\\/g, "/");
+
+const getPathName = (path: string): string => {
+  const normalized = normalizePath(path).replace(/\/+$/, "");
+  const parts = normalized.split("/").filter(Boolean);
+  return parts[parts.length - 1] || normalized;
+};
+
+const getParentPath = (path: string): string => {
+  const normalized = normalizePath(path).replace(/\/+$/, "");
+  const index = normalized.lastIndexOf("/");
+  if (index <= 0) {
+    return "";
+  }
+
+  return normalized.slice(0, index);
+};
+
+const joinPath = (base: string, name: string): string => {
+  const normalizedBase = normalizePath(base).replace(/\/+$/, "");
+  if (!normalizedBase) {
+    return name;
+  }
+
+  return `${normalizedBase}/${name}`;
+};
+
+const isTextInputElement = (target: EventTarget | null): boolean => {
+  if (!(target instanceof HTMLElement)) {
+    return false;
+  }
+
+  const tagName = target.tagName;
+  return (
+    target.isContentEditable ||
+    tagName === "INPUT" ||
+    tagName === "TEXTAREA" ||
+    tagName === "SELECT"
+  );
+};
+
+const extensionFromFileName = (fileName: string): string | undefined => {
+  const parts = fileName.split(".");
+  if (parts.length < 2) {
+    return undefined;
+  }
+
+  return parts[parts.length - 1]?.toLowerCase();
+};
+
+const virtualToSavedPath = (virtualPath: string): string => {
+  if (virtualPath === "tg://saved") {
+    return "/Home";
+  }
+
+  const relativePath = virtualPath.replace(/^tg:\/\/saved\/?/, "").replace(/\/+$/, "");
+  return relativePath ? `/Home/${relativePath}` : "/Home";
+};
+
+const savedToVirtualPath = (savedPath: string): string => {
+  const normalized = normalizePath(savedPath).replace(/\/+$/, "");
+  if (normalized === "/Home") {
+    return "tg://saved";
+  }
+
+  if (normalized.startsWith("/Home/")) {
+    return `tg://saved/${normalized.slice(6)}`;
+  }
+
+  return "tg://saved";
+};
+
+const savedItemToFileItem = (item: TelegramSavedItem): FileItem => {
+  const resolvedName = item.file_name?.trim()
+    ? item.file_name
+    : (["image", "video", "audio"].includes(item.file_type)
+      ? `${item.file_type}_${item.file_unique_id}`
+      : `message_${item.message_id || item.file_unique_id}`);
+
+  const isDirectory = item.file_type === "folder";
+  if (isDirectory) {
+    const folderPath = savedToVirtualPath(joinPath(item.file_path, resolvedName));
+    return {
+      name: resolvedName,
+      path: folderPath,
+      isDirectory: true,
+      modifiedAt: item.modified_date,
+    };
+  }
+
+  return {
+    name: resolvedName,
+    path: `tg://msg/${item.message_id}`,
+    isDirectory: false,
+    size: item.file_size,
+    modifiedAt: item.modified_date,
+    extension: extensionFromFileName(resolvedName),
+    messageId: item.message_id > 0 ? item.message_id : undefined,
+    thumbnail: resolveThumbnailSrc(item.thumbnail),
+  };
+};
+
 export default function ExplorerPage() {
   const navigate = useNavigate();
   const location = useLocation();
@@ -122,6 +264,31 @@ export default function ExplorerPage() {
   const [userInfo, setUserInfo] = useState<UserInfo | null>(null);
   const [avatarUrl, setAvatarUrl] = useState<string | null>(null);
   const [phoneNumber, setPhoneNumber] = useState<string | null>(null);
+  const [draggedPath, setDraggedPath] = useState<string | null>(null);
+  const [dropTargetPath, setDropTargetPath] = useState<string | null>(null);
+  const [isExternalDragging, setIsExternalDragging] = useState(false);
+  const [isUploadingFiles, setIsUploadingFiles] = useState(false);
+  const [savedItemsOffset, setSavedItemsOffset] = useState(0);
+  const [hasMoreSavedItems, setHasMoreSavedItems] = useState(false);
+  const [isLoadingMoreSavedItems, setIsLoadingMoreSavedItems] = useState(false);
+  const [isSavedBackfillSyncing, setIsSavedBackfillSyncing] = useState(false);
+  const [isSavedSyncComplete, setIsSavedSyncComplete] = useState(false);
+  const [savedSyncProgress, setSavedSyncProgress] = useState(0);
+  const [backHistory, setBackHistory] = useState<string[]>([]);
+  const [forwardHistory, setForwardHistory] = useState<string[]>([]);
+  const filesRef = useRef<FileItem[]>([]);
+  const currentPathRef = useRef("tg://saved");
+  const savedLoadMoreLastAttemptRef = useRef(0);
+  const startupSyncRanRef = useRef(false);
+  const lastNavigationAtRef = useRef(Date.now());
+  const prefetchedThumbnailIdsRef = useRef<Set<number>>(new Set());
+  const savedPathCacheRef = useRef<Record<string, SavedPathCacheEntry>>({});
+  const navigationStateRef = useRef({
+    backHistory: [] as string[],
+    forwardHistory: [] as string[],
+    currentPath: "tg://saved",
+    isLoading: false,
+  });
 
   // Initialize with home directory and user info
   useEffect(() => {
@@ -141,28 +308,117 @@ export default function ExplorerPage() {
       });
     }
 
-    // Trigger indexing
-    indexSavedMessages();
   }, [location.state]);
 
-  const indexSavedMessages = async () => {
+  useEffect(() => {
+    navigationStateRef.current = {
+      backHistory,
+      forwardHistory,
+      currentPath,
+      isLoading,
+    };
+    currentPathRef.current = currentPath;
+  }, [backHistory, forwardHistory, currentPath, isLoading]);
+
+  useEffect(() => {
+    filesRef.current = files;
+  }, [files]);
+
+  useEffect(() => {
+    if (!isSavedBackfillSyncing) {
+      return;
+    }
+
+    setSavedSyncProgress((prev) => (prev > 0 && prev <= 100 ? prev : 5));
+
+    const timer = window.setInterval(() => {
+      setSavedSyncProgress((prev) => {
+        if (prev >= 95) {
+          return 95;
+        }
+        if (prev < 50) {
+          return prev + 5;
+        }
+        if (prev < 80) {
+          return prev + 3;
+        }
+        return prev + 1;
+      });
+    }, 350);
+
+    return () => {
+      window.clearInterval(timer);
+    };
+  }, [isSavedBackfillSyncing]);
+
+  const markNavigationActivity = useCallback(() => {
+    lastNavigationAtRef.current = Date.now();
+  }, []);
+
+  const indexSavedMessages = async (): Promise<TelegramIndexSavedMessagesResult | null> => {
     try {
-      const result: any = await invoke("tg_index_saved_messages");
+      const result: TelegramIndexSavedMessagesResult = await invoke("tg_index_saved_messages");
+
       console.log("Indexing summary:", result);
       if (result.total_new_messages > 0) {
+        setIsSavedSyncComplete(false);
         toast({
-          title: "Saved Messages Indexed",
-          description: `Found ${result.total_new_messages} new messages.`,
+          title: "Saved Messages Synced",
+          description: `Found ${result.total_new_messages} new item${result.total_new_messages === 1 ? "" : "s"}.`,
         });
-        // If we are currently viewing a Saved Messages path, refresh it
-        if (currentPath.startsWith("tg://saved")) {
-          loadDirectory(currentPath);
+
+        if (currentPathRef.current.startsWith("tg://saved")) {
+          loadDirectory(currentPathRef.current, { force: true });
         }
       }
+
+      return result;
     } catch (error) {
       console.error("Error indexing saved messages:", error);
+      return null;
     }
   };
+
+  useEffect(() => {
+    if (startupSyncRanRef.current) {
+      return;
+    }
+    startupSyncRanRef.current = true;
+
+    let cancelled = false;
+
+    const runSavedMessageSync = async () => {
+      setIsSavedBackfillSyncing(true);
+      setSavedSyncProgress(5);
+      try {
+        await indexSavedMessages();
+        setSavedSyncProgress((prev) => (prev < 85 ? 85 : prev));
+
+        if (!cancelled) {
+          setIsSavedSyncComplete(true);
+          setHasMoreSavedItems(false);
+
+          if (currentPathRef.current.startsWith("tg://saved")) {
+            await loadDirectory(currentPathRef.current, { force: true });
+          }
+
+          setSavedSyncProgress(100);
+        }
+      } catch (error) {
+        console.error("Error syncing saved messages:", error);
+        setSavedSyncProgress(0);
+      } finally {
+        if (!cancelled) {
+          setIsSavedBackfillSyncing(false);
+        }
+      }
+    };
+
+    void runSavedMessageSync();
+    return () => {
+      cancelled = true;
+    };
+  }, [indexSavedMessages]);
 
   // Load user info from session
   const loadUserInfo = async () => {
@@ -238,7 +494,21 @@ export default function ExplorerPage() {
   // Listen for navigation events from sidebar
   useEffect(() => {
     const handleNavigateEvent = (event: CustomEvent) => {
-      loadDirectory(event.detail);
+      const nextPath = event.detail;
+      if (!nextPath) {
+        return;
+      }
+
+      if (nextPath === currentPath) {
+        markNavigationActivity();
+        loadDirectory(nextPath, { force: true });
+        return;
+      }
+
+      setBackHistory((prev) => [...prev, currentPath]);
+      setForwardHistory([]);
+      markNavigationActivity();
+      loadDirectory(nextPath);
     };
 
     window.addEventListener('navigate-to-path', handleNavigateEvent as EventListener);
@@ -246,7 +516,7 @@ export default function ExplorerPage() {
     return () => {
       window.removeEventListener('navigate-to-path', handleNavigateEvent as EventListener);
     };
-  }, []);
+  }, [currentPath, markNavigationActivity]);
 
   // Listen for logout events from sidebar
   useEffect(() => {
@@ -264,6 +534,34 @@ export default function ExplorerPage() {
   // Handle keyboard shortcuts
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
+      const canNavigateByKeyboard = !isTextInputElement(e.target);
+      const isBackShortcut = e.key === "BrowserBack" || (e.altKey && e.key === "ArrowLeft");
+      const isForwardShortcut = e.key === "BrowserForward" || (e.altKey && e.key === "ArrowRight");
+
+      if (canNavigateByKeyboard && isBackShortcut) {
+        e.preventDefault();
+        if (backHistory.length) {
+          const previousPath = backHistory[backHistory.length - 1];
+          setBackHistory((prev) => prev.slice(0, -1));
+          setForwardHistory((prev) => [...prev, currentPath]);
+          markNavigationActivity();
+          loadDirectory(previousPath);
+        }
+        return;
+      }
+
+      if (canNavigateByKeyboard && isForwardShortcut) {
+        e.preventDefault();
+        if (forwardHistory.length) {
+          const nextPath = forwardHistory[forwardHistory.length - 1];
+          setForwardHistory((prev) => prev.slice(0, -1));
+          setBackHistory((prev) => [...prev, currentPath]);
+          markNavigationActivity();
+          loadDirectory(nextPath);
+        }
+        return;
+      }
+
       // Ctrl/Cmd + R to refresh
       if ((e.ctrlKey || e.metaKey) && e.key === 'r') {
         e.preventDefault();
@@ -285,42 +583,214 @@ export default function ExplorerPage() {
     return () => {
       window.removeEventListener('keydown', handleKeyDown);
     };
-  }, [selectedFile, showDetails]);
+  }, [selectedFile, showDetails, backHistory, forwardHistory, currentPath, isLoading, markNavigationActivity]);
 
-  const loadDirectory = async (path: string) => {
-    setIsLoading(true);
-    setError(null);
+  useEffect(() => {
+    const suppressDefaultMouseNavigation = (event: MouseEvent) => {
+      if (event.button === 3 || event.button === 4) {
+        event.preventDefault();
+        event.stopPropagation();
+      }
+    };
+
+    const handleMouseNavigationButtons = (event: MouseEvent) => {
+      if (isTextInputElement(event.target)) {
+        return;
+      }
+
+      if (event.button === 3) {
+        event.preventDefault();
+        event.stopPropagation();
+        if (backHistory.length) {
+          const previousPath = backHistory[backHistory.length - 1];
+          setBackHistory((prev) => prev.slice(0, -1));
+          setForwardHistory((prev) => [...prev, currentPath]);
+          markNavigationActivity();
+          void loadDirectory(previousPath);
+        }
+      }
+
+      if (event.button === 4) {
+        event.preventDefault();
+        event.stopPropagation();
+        if (forwardHistory.length) {
+          const nextPath = forwardHistory[forwardHistory.length - 1];
+          setForwardHistory((prev) => prev.slice(0, -1));
+          setBackHistory((prev) => [...prev, currentPath]);
+          markNavigationActivity();
+          void loadDirectory(nextPath);
+        }
+      }
+    };
+
+    window.addEventListener("mousedown", suppressDefaultMouseNavigation, true);
+    window.addEventListener("mouseup", handleMouseNavigationButtons, true);
+    return () => {
+      window.removeEventListener("mousedown", suppressDefaultMouseNavigation, true);
+      window.removeEventListener("mouseup", handleMouseNavigationButtons, true);
+    };
+  }, [backHistory, currentPath, forwardHistory, isLoading, markNavigationActivity]);
+
+  const applySavedPathCache = (path: string): boolean => {
+    const cacheEntry = savedPathCacheRef.current[path];
+    if (!cacheEntry) {
+      return false;
+    }
+
+    setFiles(cacheEntry.items);
+    setSavedItemsOffset(cacheEntry.nextOffset);
+    setHasMoreSavedItems(cacheEntry.hasMore);
+    setCurrentPath(path);
+    prefetchThumbnailsForItems(cacheEntry.items);
+    return true;
+  };
+
+  const cacheSavedPath = (
+    path: string,
+    items: FileItem[],
+    nextOffset: number,
+    hasMore: boolean,
+    isCompleteSnapshot: boolean,
+  ) => {
+    savedPathCacheRef.current[path] = {
+      items,
+      nextOffset,
+      hasMore,
+      isCompleteSnapshot,
+    };
+  };
+
+  const prefetchThumbnailsForItems = (items: FileItem[]) => {
+    const messageIds = items
+      .map((item) => item.messageId)
+      .filter((id): id is number => !!id && id > 0)
+      .filter((id) => !prefetchedThumbnailIdsRef.current.has(id));
+
+    if (!messageIds.length) {
+      return;
+    }
+
+    messageIds.forEach((id) => prefetchedThumbnailIdsRef.current.add(id));
+
+    invoke("tg_prefetch_message_thumbnails", { messageIds }).catch((error) => {
+      console.error("Failed to prefetch message thumbnails:", error);
+      messageIds.forEach((id) => prefetchedThumbnailIdsRef.current.delete(id));
+    });
+  };
+
+  const loadSavedItemsPage = async (path: string, offset: number, append: boolean) => {
+    const savedPath = virtualToSavedPath(path);
+    const result: TelegramSavedItemsPage = await invoke("tg_list_saved_items_page", {
+      filePath: savedPath,
+      offset,
+      limit: SAVED_ITEMS_PAGE_SIZE,
+    });
+
+    const pageItems = result.items.map(savedItemToFileItem);
+    const mergedItems = append ? [...filesRef.current, ...pageItems] : pageItems;
+    setFiles(mergedItems);
+    setSavedItemsOffset(result.next_offset);
+    setHasMoreSavedItems(result.has_more);
+    setCurrentPath(path);
+    cacheSavedPath(path, mergedItems, result.next_offset, result.has_more, false);
+    prefetchThumbnailsForItems(mergedItems);
+  };
+
+  const loadAllSavedItems = async (path: string) => {
+    const savedPath = virtualToSavedPath(path);
+    const result: TelegramSavedItem[] = await invoke("tg_list_saved_items", {
+      filePath: savedPath,
+    });
+
+    const allItems = result.map(savedItemToFileItem);
+    setFiles(allItems);
+    setSavedItemsOffset(allItems.length);
+    setHasMoreSavedItems(false);
+    setCurrentPath(path);
+    cacheSavedPath(path, allItems, allItems.length, false, true);
+    prefetchThumbnailsForItems(allItems);
+  };
+
+  const loadMoreSavedItems = async () => {
+    if (!currentPath.startsWith("tg://saved")) {
+      return;
+    }
+
+    const now = Date.now();
+    if (now - savedLoadMoreLastAttemptRef.current < 250) {
+      return;
+    }
+    savedLoadMoreLastAttemptRef.current = now;
+
+    if (isLoading || isLoadingMoreSavedItems) {
+      return;
+    }
+
+    if (isSavedSyncComplete) {
+      return;
+    }
+
+    if (!hasMoreSavedItems && !isSavedBackfillSyncing) {
+      return;
+    }
+
+    setIsLoadingMoreSavedItems(true);
     try {
-      if (path === "tg://saved") {
-        const categories = ["Images", "Videos", "Audios", "Documents", "Notes"];
-        const virtualFolders: FileItem[] = categories.map(cat => ({
-          name: cat,
-          path: `tg://saved/${cat}`,
-          isDirectory: true,
-        }));
-        setFiles(virtualFolders);
-        setCurrentPath(path);
-      } else if (path.startsWith("tg://saved/")) {
-        const cat = path.replace("tg://saved/", "");
-        const result: TelegramMessage[] = await invoke("tg_get_indexed_saved_messages", { category: cat });
+      await loadSavedItemsPage(currentPath, savedItemsOffset, true);
+    } catch (error) {
+      console.error("Error loading more saved items:", error);
+      setHasMoreSavedItems(false);
+    } finally {
+      setIsLoadingMoreSavedItems(false);
+    }
+  };
 
-        const messageFiles: FileItem[] = result.map(msg => ({
-          name: msg.filename || (msg.text ? (msg.text.length > 30 ? msg.text.substring(0, 30) + "..." : msg.text) : `Message ${msg.message_id}`),
-          path: `tg://msg/${msg.message_id}`,
-          isDirectory: false,
-          size: msg.size,
-          modifiedAt: msg.timestamp,
-          extension: msg.extension || (msg.category === "Notes" ? "txt" : ""),
-          messageId: msg.message_id,
-          thumbnail: msg.thumbnail || undefined,
-        }));
-        setFiles(messageFiles);
-        setCurrentPath(path);
+  const handleDirectoryScroll = (event: React.UIEvent<HTMLDivElement>) => {
+    if (!currentPath.startsWith("tg://saved")) {
+      return;
+    }
+
+    const target = event.currentTarget;
+    const reachedBottom = target.scrollTop + target.clientHeight >= target.scrollHeight - 120;
+    if (reachedBottom) {
+      void loadMoreSavedItems();
+    }
+  };
+
+  const loadDirectory = async (path: string, options?: { force?: boolean }) => {
+    const forceReload = options?.force === true;
+    setError(null);
+
+    if (path.startsWith("tg://saved") && !forceReload) {
+      const hasCache = applySavedPathCache(path);
+      if (hasCache) {
+        const cacheEntry = savedPathCacheRef.current[path];
+        if (isSavedSyncComplete && !cacheEntry.isCompleteSnapshot) {
+          void loadAllSavedItems(path).catch((error) => {
+            console.error("Error upgrading cached saved items view to full list:", error);
+          });
+        }
+        return;
+      }
+    }
+
+    setIsLoading(true);
+    try {
+      if (path.startsWith("tg://saved")) {
+        setSavedItemsOffset(0);
+        setHasMoreSavedItems(false);
+        if (isSavedSyncComplete) {
+          await loadAllSavedItems(path);
+        } else {
+          await loadSavedItemsPage(path, 0, false);
+        }
       } else {
         const result: FileEntry[] = await invoke("fs_list_dir", { path });
         const convertedFiles = result.map(convertFileEntryToFileItem);
         setFiles(convertedFiles);
         setCurrentPath(path);
+        setSavedItemsOffset(0);
+        setHasMoreSavedItems(false);
       }
 
       // Add to recent paths (only for real FS paths for now, or decide if virtual paths should be saved)
@@ -345,6 +815,83 @@ export default function ExplorerPage() {
     }
   };
 
+  const navigateToPath = useCallback(async (path: string) => {
+    if (!path) {
+      return;
+    }
+
+    if (path === currentPath) {
+      await loadDirectory(path);
+      return;
+    }
+
+    setBackHistory((prev) => [...prev, currentPath]);
+    setForwardHistory([]);
+    markNavigationActivity();
+    await loadDirectory(path);
+  }, [currentPath, markNavigationActivity]);
+
+  const handleGoBack = useCallback(async () => {
+    if (!backHistory.length) {
+      return;
+    }
+
+    const previousPath = backHistory[backHistory.length - 1];
+    setBackHistory((prev) => prev.slice(0, -1));
+    setForwardHistory((prev) => [...prev, currentPath]);
+    markNavigationActivity();
+    await loadDirectory(previousPath);
+  }, [backHistory, currentPath, markNavigationActivity]);
+
+  const handleGoForward = useCallback(async () => {
+    if (!forwardHistory.length) {
+      return;
+    }
+
+    const nextPath = forwardHistory[forwardHistory.length - 1];
+    setForwardHistory((prev) => prev.slice(0, -1));
+    setBackHistory((prev) => [...prev, currentPath]);
+    markNavigationActivity();
+    await loadDirectory(nextPath);
+  }, [currentPath, forwardHistory, markNavigationActivity]);
+
+  useEffect(() => {
+    const explorerUrl = window.location.href;
+    const guardState = {
+      ...(window.history.state || {}),
+      __skyboxExplorerGuard: true,
+    };
+
+    const hasGuardState =
+      typeof window.history.state === "object" &&
+      window.history.state !== null &&
+      "__skyboxExplorerGuard" in window.history.state;
+
+    if (!hasGuardState) {
+      window.history.pushState(guardState, "", explorerUrl);
+    }
+
+    const handlePopState = () => {
+      window.history.pushState(guardState, "", explorerUrl);
+
+      const { backHistory: stack, currentPath: activePath, isLoading: loading } = navigationStateRef.current;
+      if (!stack.length || loading) {
+        return;
+      }
+
+      const previousPath = stack[stack.length - 1];
+      setBackHistory((prev) => prev.slice(0, -1));
+      setForwardHistory((prev) => [...prev, activePath]);
+      markNavigationActivity();
+      void loadDirectory(previousPath);
+    };
+
+    window.addEventListener("popstate", handlePopState);
+    return () => {
+      window.removeEventListener("popstate", handlePopState);
+    };
+  }, [markNavigationActivity]);
+
   const loadFavorites = async () => {
     try {
       const result: Favorite[] = await invoke("db_get_favorites");
@@ -357,18 +904,28 @@ export default function ExplorerPage() {
   };
 
   const handleNavigateToPath = (path: string) => {
-    loadDirectory(path);
+    navigateToPath(path);
   };
 
   const breadcrumbItems = useMemo(() => {
     if (!currentPath) return [];
 
     if (currentPath.startsWith("tg://saved")) {
-      const part = currentPath.replace("tg://saved/", "");
-      if (part !== "tg://saved" && part !== "") {
-        return [{ name: part, path: currentPath }];
+      const relativePath = currentPath.replace(/^tg:\/\/saved\/?/, "");
+      if (!relativePath) {
+        return [];
       }
-      return [];
+
+      const parts = relativePath.split("/").filter(Boolean);
+      const breadcrumbs: { name: string; path: string }[] = [];
+      let runningPath = "tg://saved";
+
+      parts.forEach((part) => {
+        runningPath = `${runningPath}/${part}`;
+        breadcrumbs.push({ name: part, path: runningPath });
+      });
+
+      return breadcrumbs;
     }
 
     const parts = currentPath.split('/').filter(p => p);
@@ -391,12 +948,24 @@ export default function ExplorerPage() {
 
   // Sort: directories first, then by name
   const sortedFiles = useMemo(() => {
+    if (currentPath.startsWith("tg://saved")) {
+      return filteredFiles;
+    }
+
     return [...filteredFiles].sort((a, b) => {
       if (a.isDirectory && !b.isDirectory) return -1;
       if (!a.isDirectory && b.isDirectory) return 1;
       return a.name.localeCompare(b.name);
     });
-  }, [filteredFiles]);
+  }, [currentPath, filteredFiles]);
+
+  const isLoadingSavedFiles =
+    currentPath.startsWith("tg://saved") &&
+    isSavedBackfillSyncing &&
+    !search.trim() &&
+    sortedFiles.length === 0;
+
+  const syncProgressLabel = `${Math.min(100, Math.max(0, Math.round(savedSyncProgress)))}%`;
 
   const handleFileSelect = (file: FileItem) => {
     setSelectedFile(file);
@@ -405,12 +974,16 @@ export default function ExplorerPage() {
 
   const handleFileOpen = async (file: FileItem) => {
     if (file.isDirectory) {
-      loadDirectory(file.path);
-      toast({
-        title: "Opening folder",
-        description: file.name,
-      });
+      navigateToPath(file.path);
     } else {
+      if (file.path.startsWith("tg://msg/")) {
+        toast({
+          title: "Cloud file selected",
+          description: "Direct open for Saved Messages files is not available yet.",
+        });
+        return;
+      }
+
       try {
         await invoke("fs_open_path", { path: file.path });
         toast({
@@ -489,7 +1062,7 @@ export default function ExplorerPage() {
       });
 
       // Reload the current directory to reflect changes
-      loadDirectory(currentPath);
+      loadDirectory(currentPath, { force: true });
       setDeleteTarget(null);
       if (selectedFile?.path === deleteTarget.path) {
         setSelectedFile(null);
@@ -506,9 +1079,7 @@ export default function ExplorerPage() {
   };
 
   const handleRefresh = async () => {
-    setIsLoading(true);
-    await loadDirectory(currentPath);
-    setIsLoading(false);
+    await loadDirectory(currentPath, { force: true });
     toast({
       title: "Refreshed",
       description: "Directory contents refreshed"
@@ -556,19 +1127,26 @@ export default function ExplorerPage() {
     const folderName = prompt("Enter folder name:");
     if (!folderName) return;
 
-    // Construct the new path
-    const newPath = `${currentPath}/${folderName}`.replace("//", "/");
-
     try {
-      await invoke("fs_create_dir", { path: newPath });
+      if (currentPath.startsWith("tg://saved")) {
+        await invoke("tg_create_saved_folder", {
+          parentPath: virtualToSavedPath(currentPath),
+          folderName,
+        });
+        savedPathCacheRef.current = {};
+      } else {
+        const newPath = `${currentPath}/${folderName}`.replace("//", "/");
+        await invoke("fs_create_dir", { path: newPath });
+      }
+
       toast({
         title: "Folder created",
         description: `Created folder: ${folderName}`,
       });
       // Reload the current directory to show the new folder
-      loadDirectory(currentPath);
+      await loadDirectory(currentPath, { force: true });
     } catch (error) {
-      const typedError = error as FsError;
+      const typedError = error as FsError | TelegramError;
       toast({
         title: "Error creating folder",
         description: typedError.message || "An unknown error occurred",
@@ -593,6 +1171,296 @@ export default function ExplorerPage() {
     });
   };
 
+  const isDraggableItem = (file: FileItem) => {
+    if (isSavedVirtualFolderPath(file.path)) {
+      return file.path !== "tg://saved";
+    }
+
+    if (isSavedVirtualFilePath(file.path)) {
+      return true;
+    }
+
+    return !isVirtualPath(file.path);
+  };
+
+  const getDraggedSourcePath = (event: React.DragEvent): string | null => {
+    const fromTransfer = event.dataTransfer.getData(INTERNAL_DRAG_MIME);
+    if (fromTransfer) {
+      return fromTransfer;
+    }
+
+    return draggedPath;
+  };
+
+  const canDropToTarget = (sourcePath: string, target: FileItem): boolean => {
+    if (!target.isDirectory) {
+      return false;
+    }
+
+    const sourceItem = files.find((file) => file.path === sourcePath);
+
+    const sourceIsSavedVirtual = isSavedVirtualFolderPath(sourcePath) || isSavedVirtualFilePath(sourcePath);
+    const targetIsSavedVirtualFolder = isSavedVirtualFolderPath(target.path);
+
+    if (sourceIsSavedVirtual || targetIsSavedVirtualFolder) {
+      if (!sourceIsSavedVirtual || !targetIsSavedVirtualFolder) {
+        return false;
+      }
+
+      if (sourcePath === target.path) {
+        return false;
+      }
+
+      if (isSavedVirtualFolderPath(sourcePath)) {
+        const sourceParentPath = getParentPath(sourcePath);
+        if (sourceParentPath === target.path) {
+          return false;
+        }
+
+        if (target.path.startsWith(`${sourcePath}/`)) {
+          return false;
+        }
+      }
+
+      if (isSavedVirtualFilePath(sourcePath) && currentPath === target.path) {
+        return false;
+      }
+
+      if (!sourceItem && !isSavedVirtualFilePath(sourcePath)) {
+        return false;
+      }
+
+      return true;
+    }
+
+    if (isVirtualPath(sourcePath) || isVirtualPath(target.path)) {
+      return false;
+    }
+
+    const normalizedSourcePath = normalizePath(sourcePath);
+    const normalizedTargetPath = normalizePath(target.path);
+
+    if (normalizedSourcePath === normalizedTargetPath) {
+      return false;
+    }
+
+    const sourceParentPath = getParentPath(normalizedSourcePath);
+    if (sourceParentPath === normalizedTargetPath) {
+      return false;
+    }
+
+    if (sourceItem?.isDirectory && normalizedTargetPath.startsWith(`${normalizedSourcePath}/`)) {
+      return false;
+    }
+
+    return true;
+  };
+
+  const handleItemDragStart = (event: React.DragEvent, file: FileItem) => {
+    if (!isDraggableItem(file)) {
+      return;
+    }
+
+    event.dataTransfer.effectAllowed = "move";
+    event.dataTransfer.setData(INTERNAL_DRAG_MIME, file.path);
+    setDraggedPath(file.path);
+  };
+
+  const handleItemDragEnd = () => {
+    setDraggedPath(null);
+    setDropTargetPath(null);
+  };
+
+  const handleItemDragOver = (event: React.DragEvent, target: FileItem) => {
+    const sourcePath = getDraggedSourcePath(event);
+    if (!sourcePath || !canDropToTarget(sourcePath, target)) {
+      return;
+    }
+
+    event.preventDefault();
+    event.dataTransfer.dropEffect = "move";
+    setDropTargetPath(target.path);
+  };
+
+  const handleItemDragLeave = (target: FileItem) => {
+    if (dropTargetPath === target.path) {
+      setDropTargetPath(null);
+    }
+  };
+
+  const handleItemDrop = async (event: React.DragEvent, target: FileItem) => {
+    const sourcePath = getDraggedSourcePath(event);
+    if (!sourcePath || !canDropToTarget(sourcePath, target)) {
+      return;
+    }
+
+    const sourceItem = files.find((file) => file.path === sourcePath);
+    const sourceDisplayName = sourceItem?.name || getPathName(sourcePath);
+
+    event.preventDefault();
+    event.stopPropagation();
+
+    if ((isSavedVirtualFolderPath(sourcePath) || isSavedVirtualFilePath(sourcePath)) && isSavedVirtualFolderPath(target.path)) {
+      try {
+        await invoke("tg_move_saved_item", {
+          sourcePath,
+          destinationPath: target.path,
+        });
+
+        toast({
+          title: "Moved",
+          description: `${sourceDisplayName} moved to ${target.name}`,
+        });
+
+        if (selectedFile?.path === sourcePath) {
+          setSelectedFile(null);
+          setShowDetails(false);
+        }
+
+        savedPathCacheRef.current = {};
+        await loadDirectory(currentPath, { force: true });
+      } catch (error) {
+        const typedError = error as TelegramError;
+        toast({
+          title: "Move failed",
+          description: typedError.message || "Unable to move item",
+          variant: "destructive",
+        });
+      } finally {
+        setDraggedPath(null);
+        setDropTargetPath(null);
+      }
+      return;
+    }
+
+    const destinationPath = joinPath(target.path, getPathName(sourcePath));
+
+    try {
+      await invoke("move_file", { source: sourcePath, destination: destinationPath });
+      toast({
+        title: "Moved",
+        description: `${sourceDisplayName} moved to ${target.name}`,
+      });
+
+      if (selectedFile?.path === sourcePath) {
+        setSelectedFile(null);
+        setShowDetails(false);
+      }
+
+      await loadDirectory(currentPath, { force: true });
+    } catch (error) {
+      const typedError = error as FsError;
+      toast({
+        title: "Move failed",
+        description: typedError.message || "Unable to move item",
+        variant: "destructive",
+      });
+    } finally {
+      setDraggedPath(null);
+      setDropTargetPath(null);
+    }
+  };
+
+  const isExternalFileDrag = (event: React.DragEvent): boolean => {
+    const dragTypes = Array.from(event.dataTransfer.types || []);
+    const hasFiles = dragTypes.includes("Files");
+    const hasInternalFile = dragTypes.includes(INTERNAL_DRAG_MIME);
+    return hasFiles && !hasInternalFile;
+  };
+
+  const handleUploadFiles = async (droppedFiles: File[]) => {
+    if (!droppedFiles.length) {
+      return;
+    }
+
+    if (!currentPath.startsWith("tg://saved")) {
+      toast({
+        title: "Upload unavailable",
+        description: "Drag-and-drop upload is available in Saved Messages only.",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    setIsUploadingFiles(true);
+    try {
+      let uploadedCount = 0;
+      let failedCount = 0;
+      const uploadedCategories = new Set<string>();
+
+      for (const droppedFile of droppedFiles) {
+        try {
+          const fileBytes = Array.from(new Uint8Array(await droppedFile.arrayBuffer()));
+          const uploadedMessage: TelegramMessage = await invoke("tg_upload_file_to_saved_messages", {
+            fileName: droppedFile.name,
+            fileBytes,
+            filePath: virtualToSavedPath(currentPath),
+          });
+
+          uploadedCount += 1;
+          uploadedCategories.add(uploadedMessage.category);
+        } catch (error) {
+          failedCount += 1;
+          console.error("Failed to upload file:", droppedFile.name, error);
+        }
+      }
+
+      if (uploadedCount > 0) {
+        savedPathCacheRef.current = {};
+        await loadDirectory(currentPath, { force: true });
+
+        const categorySummary = uploadedCategories.size
+          ? ` to ${Array.from(uploadedCategories).join(", ")}`
+          : "";
+
+        toast({
+          title: "Upload complete",
+          description: `Uploaded ${uploadedCount} file${uploadedCount === 1 ? "" : "s"}${categorySummary}`,
+        });
+      }
+
+      if (failedCount > 0) {
+        toast({
+          title: "Some uploads failed",
+          description: `${failedCount} file${failedCount === 1 ? "" : "s"} could not be uploaded`,
+          variant: "destructive",
+        });
+      }
+    } finally {
+      setIsUploadingFiles(false);
+    }
+  };
+
+  const handleExplorerDragOver = (event: React.DragEvent) => {
+    if (!isExternalFileDrag(event)) {
+      return;
+    }
+
+    event.preventDefault();
+    event.dataTransfer.dropEffect = "copy";
+    setIsExternalDragging(true);
+  };
+
+  const handleExplorerDragLeave = (event: React.DragEvent<HTMLDivElement>) => {
+    const nextTarget = event.relatedTarget as Node | null;
+    if (nextTarget && event.currentTarget.contains(nextTarget)) {
+      return;
+    }
+
+    setIsExternalDragging(false);
+  };
+
+  const handleExplorerDrop = async (event: React.DragEvent) => {
+    if (!isExternalFileDrag(event)) {
+      return;
+    }
+
+    event.preventDefault();
+    setIsExternalDragging(false);
+
+    await handleUploadFiles(Array.from(event.dataTransfer.files));
+  };
+
   return (
     <div className="h-screen flex overflow-hidden">
       {/* Sidebar */}
@@ -608,6 +1476,22 @@ export default function ExplorerPage() {
         {/* Top bar */}
         <div className="h-14 bg-glass border-b border-border flex items-center justify-between px-4 gap-4">
           <div className="flex items-center gap-2 min-w-0">
+            <button
+              onClick={handleGoBack}
+              className="p-2 rounded text-muted-foreground hover:text-foreground hover:bg-secondary transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+              disabled={!backHistory.length}
+              title="Back (Mouse Back / Alt+Left)"
+            >
+              <ChevronLeft className="w-4 h-4" />
+            </button>
+            <button
+              onClick={handleGoForward}
+              className="p-2 rounded text-muted-foreground hover:text-foreground hover:bg-secondary transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+              disabled={!forwardHistory.length}
+              title="Forward (Mouse Forward / Alt+Right)"
+            >
+              <ChevronRight className="w-4 h-4" />
+            </button>
             <button
               onClick={handleRefresh}
               className="p-2 rounded text-muted-foreground hover:text-foreground hover:bg-secondary transition-colors"
@@ -700,18 +1584,45 @@ export default function ExplorerPage() {
             <span className="text-small text-muted-foreground">
               {sortedFiles.length} {sortedFiles.length === 1 ? 'item' : 'items'}
             </span>
+            {isLoadingSavedFiles ? (
+              <span className="text-small text-muted-foreground inline-flex items-center gap-1">
+                <div className="animate-spin rounded-full h-3 w-3 border-b border-primary" />
+                Loading files... {syncProgressLabel}
+              </span>
+            ) : currentPath.startsWith("tg://saved") && isSavedBackfillSyncing && (
+              <span className="text-small text-muted-foreground inline-flex items-center gap-1">
+                <span className="inline-block w-2 h-2 rounded-full bg-primary animate-pulse" />
+                Syncing... {syncProgressLabel}
+              </span>
+            )}
           </div>
         </div>
 
         {/* File list */}
         <div className="flex-1 flex min-h-0">
-          <div className="flex-1 overflow-y-auto p-4">
+          <div
+            className="relative flex-1 overflow-y-auto p-4"
+            onDragOver={handleExplorerDragOver}
+            onDragLeave={handleExplorerDragLeave}
+            onDrop={handleExplorerDrop}
+            onScroll={handleDirectoryScroll}
+          >
+            {(isExternalDragging || isUploadingFiles) && (
+              <div className="pointer-events-none absolute inset-4 z-20 rounded-xl border-2 border-dashed border-primary/60 bg-primary/10 flex items-center justify-center">
+                <p className="text-body font-medium text-foreground">
+                  {isUploadingFiles
+                    ? "Uploading files to Saved Messages..."
+                    : "Drop files here to upload to Saved Messages"}
+                </p>
+              </div>
+            )}
+
             {error ? (
               <div className="flex flex-col items-center justify-center h-full text-center">
                 <p className="text-body text-destructive mb-2">
                   Error: {error}
                 </p>
-                <TelegramButton onClick={() => loadDirectory(currentPath)}>
+                <TelegramButton onClick={() => loadDirectory(currentPath, { force: true })}>
                   Retry
                 </TelegramButton>
               </div>
@@ -721,6 +1632,11 @@ export default function ExplorerPage() {
                 <p className="text-body text-muted-foreground">
                   Loading directory contents...
                 </p>
+              </div>
+            ) : isLoadingSavedFiles ? (
+              <div className="flex flex-col items-center justify-center h-full text-center">
+                <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary mb-2"></div>
+                <p className="text-body text-muted-foreground">Loading files... {syncProgressLabel}</p>
               </div>
             ) : sortedFiles.length === 0 ? (
               <div className="flex flex-col items-center justify-center h-full text-center">
@@ -755,6 +1671,13 @@ export default function ExplorerPage() {
                         e.preventDefault();
                         handleFileSelect(file);
                       }}
+                      draggable={isDraggableItem(file)}
+                      isDropTarget={dropTargetPath === file.path}
+                      onDragStart={(event) => handleItemDragStart(event, file)}
+                      onDragEnd={handleItemDragEnd}
+                      onDragOver={(event) => handleItemDragOver(event, file)}
+                      onDragLeave={() => handleItemDragLeave(file)}
+                      onDrop={(event) => handleItemDrop(event, file)}
                     />
                   ))
                 ) : (
@@ -767,7 +1690,20 @@ export default function ExplorerPage() {
                       e.preventDefault();
                       handleFileSelect(file);
                     }}
+                    isDraggable={isDraggableItem}
+                    isDropTarget={(file) => dropTargetPath === file.path}
+                    onDragStart={(event, file) => handleItemDragStart(event, file)}
+                    onDragEnd={handleItemDragEnd}
+                    onDragOver={(event, file) => handleItemDragOver(event, file)}
+                    onDragLeave={(_, file) => handleItemDragLeave(file)}
+                    onDrop={(event, file) => handleItemDrop(event, file)}
                   />
+                )}
+
+                {isLoadingMoreSavedItems && (
+                  <div className="flex items-center justify-center py-4">
+                    <div className="animate-spin rounded-full h-5 w-5 border-b-2 border-primary" />
+                  </div>
                 )}
               </div>
             )}

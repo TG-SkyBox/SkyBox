@@ -1,7 +1,7 @@
 {
   "$schema": "../node_modules/@tauri-apps/cli/config.schema.json",
   "productName": "SkyBox",
-  "version": "1.0.2",
+  "version": "1.0.7",
   "identifier": "com.skybox.app",
   "build": {
     "frontendDist": "../dist",
@@ -20,12 +20,20 @@
         "minWidth": 800,
         "minHeight": 600,
         "visible": true,
+        "dragDropEnabled": false,
         "decorations": true,
         "transparent": false
       }
     ],
     "security": {
-      "csp": null
+      "csp": null,
+      "assetProtocol": {
+        "enable": true,
+        "scope": [
+          "$LOCALDATA/Skybox/.thumbnails/**",
+          "$APPLOCALDATA/.thumbnails/**"
+        ]
+      }
     }
   },
   "bundle": {

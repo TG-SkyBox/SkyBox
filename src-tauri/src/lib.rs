@@ -70,7 +70,15 @@ pub fn run() {
             telegram::tg_get_my_profile_photo,
             telegram::tg_index_saved_messages,
             telegram::tg_get_indexed_saved_messages,
+            telegram::tg_list_saved_items,
+            telegram::tg_list_saved_items_page,
+            telegram::tg_backfill_saved_messages_batch,
+            telegram::tg_rebuild_saved_items_index,
+            telegram::tg_create_saved_folder,
+            telegram::tg_move_saved_item,
             telegram::tg_get_message_thumbnail,
+            telegram::tg_prefetch_message_thumbnails,
+            telegram::tg_upload_file_to_saved_messages,
 
             // Logger Commands
             utils::logger::log_debug,

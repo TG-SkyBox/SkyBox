@@ -12,6 +12,7 @@ import {
 import { LucideIcon } from "lucide-react";
 import { useState, useEffect } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import { resolveThumbnailSrc } from "@/lib/thumbnail-src";
 
 export interface FileItem {
   name: string;
@@ -30,6 +31,13 @@ interface FileRowProps {
   onSelect?: () => void;
   onOpen?: () => void;
   onContextMenu?: (e: React.MouseEvent) => void;
+  draggable?: boolean;
+  onDragStart?: (e: React.DragEvent) => void;
+  onDragEnd?: (e: React.DragEvent) => void;
+  onDragOver?: (e: React.DragEvent) => void;
+  onDragLeave?: (e: React.DragEvent) => void;
+  onDrop?: (e: React.DragEvent) => void;
+  isDropTarget?: boolean;
 }
 
 const getFileIcon = (file: FileItem): LucideIcon => {
@@ -125,18 +133,67 @@ const formatDate = (dateStr?: string): string => {
   }
 };
 
-export function FileRow({ file, isSelected, onSelect, onOpen, onContextMenu }: FileRowProps) {
-  const [thumbUrl, setThumbUrl] = useState<string | undefined>(file.thumbnail);
+export function FileRow({
+  file,
+  isSelected,
+  onSelect,
+  onOpen,
+  onContextMenu,
+  draggable,
+  onDragStart,
+  onDragEnd,
+  onDragOver,
+  onDragLeave,
+  onDrop,
+  isDropTarget,
+}: FileRowProps) {
+  const [thumbUrl, setThumbUrl] = useState<string | undefined>(resolveThumbnailSrc(file.thumbnail));
+  const [hasRetriedBrokenThumbnail, setHasRetriedBrokenThumbnail] = useState(false);
   const Icon = getFileIcon(file);
 
   useEffect(() => {
+    setThumbUrl(resolveThumbnailSrc(file.thumbnail));
+    setHasRetriedBrokenThumbnail(false);
+  }, [file.messageId, file.thumbnail]);
+
+  const refetchThumbnail = async () => {
+    if (!file.messageId) {
+      setThumbUrl(undefined);
+      return;
+    }
+
+    if (hasRetriedBrokenThumbnail) {
+      setThumbUrl(undefined);
+      return;
+    }
+
+    setHasRetriedBrokenThumbnail(true);
+
+    try {
+      const result: string | null = await invoke("tg_get_message_thumbnail", { messageId: file.messageId });
+      const resolved = resolveThumbnailSrc(result);
+      if (resolved) {
+        setThumbUrl(resolved);
+        return;
+      }
+    } catch (e) {
+      console.error("Failed to refetch missing thumbnail for message:", file.messageId, e);
+    }
+
+    setThumbUrl(undefined);
+  };
+
+  useEffect(() => {
     // If we have a messageId but no thumbnail, try to fetch it
-    if (file.messageId && !thumbUrl) {
+    if (file.messageId && !thumbUrl && !hasRetriedBrokenThumbnail) {
+      setHasRetriedBrokenThumbnail(true);
+
       const fetchThumb = async () => {
         try {
           const result: string | null = await invoke("tg_get_message_thumbnail", { messageId: file.messageId });
-          if (result) {
-            setThumbUrl(result);
+          const resolved = resolveThumbnailSrc(result);
+          if (resolved) {
+            setThumbUrl(resolved);
           }
         } catch (e) {
           console.error("Failed to fetch thumbnail for message:", file.messageId, e);
@@ -144,19 +201,32 @@ export function FileRow({ file, isSelected, onSelect, onOpen, onContextMenu }: F
       };
       fetchThumb();
     }
-  }, [file.messageId, thumbUrl]);
+  }, [file.messageId, hasRetriedBrokenThumbnail, thumbUrl]);
 
   return (
     <div
       onClick={onSelect}
       onDoubleClick={onOpen}
       onContextMenu={onContextMenu}
+      draggable={draggable}
+      onDragStart={onDragStart}
+      onDragEnd={onDragEnd}
+      onDragOver={onDragOver}
+      onDragLeave={onDragLeave}
+      onDrop={onDrop}
       className={`flex items-center gap-3 px-3 py-1 rounded-lg cursor-pointer transition-all duration-150 ${isSelected ? "bg-sidebar-accent text-foreground" : "hover:bg-sidebar-accent/50"
-        }`}
+        } ${isDropTarget ? "ring-1 ring-primary/60 bg-primary/10" : ""}`}
     >
       <div className="w-8 h-8 flex-shrink-0 flex items-center justify-center rounded-md overflow-hidden bg-secondary/50">
         {thumbUrl ? (
-          <img src={thumbUrl} alt={file.name} className="w-full h-full object-cover" />
+          <img
+            src={thumbUrl}
+            alt={file.name}
+            className="w-5 h-5 rounded-sm object-cover"
+            onError={() => {
+              void refetchThumbnail();
+            }}
+          />
         ) : (
           <Icon
             className={`w-5 h-5 ${file.isDirectory ? "text-primary" : "text-muted-foreground"

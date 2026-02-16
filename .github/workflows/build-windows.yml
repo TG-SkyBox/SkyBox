@@ -8,7 +8,10 @@ on:
 jobs:
   build-tauri-windows:
     runs-on: windows-latest
-    if: "!contains(github.event.head_commit.message, 'new release')"
+    # Skip if commit is "new release" trigger OR version bump from github-actions bot
+    if: |
+      !contains(github.event.head_commit.message, 'new release') &&
+      !startsWith(github.event.head_commit.message, 'chore: bump version to')
     env:
         TAURI_PRIVATE_KEY: ${{ secrets.TAURI_PRIVATE_KEY }}
         TAURI_KEY_PASSWORD: ${{ secrets.TAURI_KEY_PASSWORD }}

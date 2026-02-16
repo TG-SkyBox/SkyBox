@@ -12,6 +12,9 @@ import {
   Edit2,
 } from "lucide-react";
 import { TelegramButton } from "./TelegramButton";
+import { resolveThumbnailSrc } from "@/lib/thumbnail-src";
+import { useEffect, useState } from "react";
+import { invoke } from "@tauri-apps/api/core";
 
 interface DetailsPanelProps {
   file: FileItem | null;
@@ -34,6 +37,65 @@ export function DetailsPanel({
   onOpenLocation,
   isFavorite = false,
 }: DetailsPanelProps) {
+  const [previewThumb, setPreviewThumb] = useState<string | undefined>(resolveThumbnailSrc(file?.thumbnail));
+  const [hasRetriedBrokenThumbnail, setHasRetriedBrokenThumbnail] = useState(false);
+
+  useEffect(() => {
+    setPreviewThumb(resolveThumbnailSrc(file?.thumbnail));
+    setHasRetriedBrokenThumbnail(false);
+  }, [file?.messageId, file?.thumbnail]);
+
+  useEffect(() => {
+    const messageId = file?.messageId;
+    if (!messageId || previewThumb || hasRetriedBrokenThumbnail) {
+      return;
+    }
+
+    setHasRetriedBrokenThumbnail(true);
+
+    const fetchThumbnail = async () => {
+      try {
+        const result: string | null = await invoke("tg_get_message_thumbnail", { messageId });
+        const resolved = resolveThumbnailSrc(result);
+        if (resolved) {
+          setPreviewThumb(resolved);
+        }
+      } catch (e) {
+        console.error("Failed to fetch thumbnail for message:", messageId, e);
+      }
+    };
+
+    void fetchThumbnail();
+  }, [file?.messageId, hasRetriedBrokenThumbnail, previewThumb]);
+
+  const refetchThumbnail = async () => {
+    const messageId = file?.messageId;
+    if (!messageId) {
+      setPreviewThumb(undefined);
+      return;
+    }
+
+    if (hasRetriedBrokenThumbnail) {
+      setPreviewThumb(undefined);
+      return;
+    }
+
+    setHasRetriedBrokenThumbnail(true);
+
+    try {
+      const result: string | null = await invoke("tg_get_message_thumbnail", { messageId });
+      const resolved = resolveThumbnailSrc(result);
+      if (resolved) {
+        setPreviewThumb(resolved);
+        return;
+      }
+    } catch (e) {
+      console.error("Failed to refetch missing thumbnail for message:", messageId, e);
+    }
+
+    setPreviewThumb(undefined);
+  };
+
   if (!file) {
     return (
       <div className="w-72 h-full glass-sidebar flex flex-col items-center justify-center p-6">
@@ -63,11 +125,14 @@ export function DetailsPanel({
       {/* Preview area */}
       <div className="p-6 border-b border-border flex flex-col items-center">
         <div className="w-48 h-48 rounded-lg bg-secondary flex items-center justify-center mb-4 overflow-hidden border border-border/50 shadow-sm transition-all">
-          {file.thumbnail ? (
+          {previewThumb ? (
             <img
-              src={file.thumbnail}
+              src={previewThumb}
               alt={file.name}
               className="w-full h-full object-cover animate-in fade-in zoom-in-95 duration-300"
+              onError={() => {
+                void refetchThumbnail();
+              }}
             />
           ) : (
             <Icon
