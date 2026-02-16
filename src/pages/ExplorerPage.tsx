@@ -592,7 +592,7 @@ export default function ExplorerPage() {
     setCurrentPath(path);
   };
 
-  const loadMoreSavedItems = useCallback(async () => {
+  const loadMoreSavedItems = async () => {
     if (!currentPath.startsWith("tg://saved")) {
       return;
     }
@@ -614,7 +614,7 @@ export default function ExplorerPage() {
     } finally {
       setIsLoadingMoreSavedItems(false);
     }
-  }, [currentPath, hasMoreSavedItems, isLoading, isLoadingMoreSavedItems, isSavedBackfillSyncing, savedItemsOffset]);
+  };
 
   const handleDirectoryScroll = (event: React.UIEvent<HTMLDivElement>) => {
     if (!currentPath.startsWith("tg://saved")) {
