@@ -277,6 +277,7 @@ export default function ExplorerPage() {
   const filesRef = useRef<FileItem[]>([]);
   const currentPathRef = useRef("tg://saved");
   const savedLoadMoreLastAttemptRef = useRef(0);
+  const lastNavigationAtRef = useRef(Date.now());
   const savedPathCacheRef = useRef<Record<string, SavedPathCacheEntry>>({});
   const navigationStateRef = useRef({
     backHistory: [] as string[],
@@ -318,6 +319,10 @@ export default function ExplorerPage() {
   useEffect(() => {
     filesRef.current = files;
   }, [files]);
+
+  const markNavigationActivity = () => {
+    lastNavigationAtRef.current = Date.now();
+  };
 
   const indexSavedMessages = async (): Promise<{ total_new_messages: number; bootstrap_limited?: boolean } | null> => {
     try {
@@ -511,12 +516,14 @@ export default function ExplorerPage() {
       }
 
       if (nextPath === currentPath) {
+        markNavigationActivity();
         loadDirectory(nextPath, { force: true });
         return;
       }
 
       setBackHistory((prev) => [...prev, currentPath]);
       setForwardHistory([]);
+      markNavigationActivity();
       loadDirectory(nextPath);
     };
 
@@ -553,6 +560,7 @@ export default function ExplorerPage() {
           const previousPath = backHistory[backHistory.length - 1];
           setBackHistory((prev) => prev.slice(0, -1));
           setForwardHistory((prev) => [...prev, currentPath]);
+          markNavigationActivity();
           loadDirectory(previousPath);
         }
         return;
@@ -564,6 +572,7 @@ export default function ExplorerPage() {
           const nextPath = forwardHistory[forwardHistory.length - 1];
           setForwardHistory((prev) => prev.slice(0, -1));
           setBackHistory((prev) => [...prev, currentPath]);
+          markNavigationActivity();
           loadDirectory(nextPath);
         }
         return;
@@ -612,6 +621,7 @@ export default function ExplorerPage() {
           const previousPath = backHistory[backHistory.length - 1];
           setBackHistory((prev) => prev.slice(0, -1));
           setForwardHistory((prev) => [...prev, currentPath]);
+          markNavigationActivity();
           void loadDirectory(previousPath);
         }
       }
@@ -623,6 +633,7 @@ export default function ExplorerPage() {
           const nextPath = forwardHistory[forwardHistory.length - 1];
           setForwardHistory((prev) => prev.slice(0, -1));
           setBackHistory((prev) => [...prev, currentPath]);
+          markNavigationActivity();
           void loadDirectory(nextPath);
         }
       }
@@ -811,6 +822,7 @@ export default function ExplorerPage() {
 
     setBackHistory((prev) => [...prev, currentPath]);
     setForwardHistory([]);
+    markNavigationActivity();
     await loadDirectory(path);
   }, [currentPath]);
 
@@ -822,6 +834,7 @@ export default function ExplorerPage() {
     const previousPath = backHistory[backHistory.length - 1];
     setBackHistory((prev) => prev.slice(0, -1));
     setForwardHistory((prev) => [...prev, currentPath]);
+    markNavigationActivity();
     await loadDirectory(previousPath);
   }, [backHistory, currentPath]);
 
@@ -833,6 +846,7 @@ export default function ExplorerPage() {
     const nextPath = forwardHistory[forwardHistory.length - 1];
     setForwardHistory((prev) => prev.slice(0, -1));
     setBackHistory((prev) => [...prev, currentPath]);
+    markNavigationActivity();
     await loadDirectory(nextPath);
   }, [currentPath, forwardHistory]);
 
@@ -863,6 +877,7 @@ export default function ExplorerPage() {
       const previousPath = stack[stack.length - 1];
       setBackHistory((prev) => prev.slice(0, -1));
       setForwardHistory((prev) => [...prev, activePath]);
+      markNavigationActivity();
       void loadDirectory(previousPath);
     };
 
