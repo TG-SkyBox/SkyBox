@@ -119,12 +119,12 @@ function FileGridItem({
                     : "hover:bg-sidebar-accent/50 border-transparent hover:border-border"
                 } ${isDropTarget ? "ring-1 ring-primary/60 bg-primary/10" : ""}`}
         >
-            <div className="w-full aspect-square mb-3 flex items-center justify-center rounded-lg overflow-hidden bg-secondary/30 group-hover:bg-secondary/50 transition-colors relative">
+            <div className="w-full max-w-24 max-h-24 aspect-square mb-3 mx-auto flex items-center justify-center rounded-lg overflow-hidden bg-secondary/30 group-hover:bg-secondary/50 transition-colors relative">
                 {thumbUrl ? (
                     <img src={thumbUrl} alt={file.name} className="w-full h-full object-cover transition-transform duration-300 group-hover:scale-105" />
                 ) : (
                     <Icon
-                        className={`w-12 h-12 transition-transform duration-200 group-hover:scale-110 ${file.isDirectory ? "text-primary" : "text-muted-foreground"
+                        className={`w-10 h-10 transition-transform duration-200 group-hover:scale-110 ${file.isDirectory ? "text-primary" : "text-muted-foreground"
                             }`}
                     />
                 )}
