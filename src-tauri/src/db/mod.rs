@@ -1056,6 +1056,46 @@ impl Database {
         }
     }
 
+    pub fn count_telegram_generated_names_missing_extension(&self, owner_id: &str) -> Result<i64, DbError> {
+        let conn = self.0.lock().unwrap();
+
+        let mut statement = conn
+            .prepare(
+                "SELECT COUNT(*)
+                 FROM telegram_saved_items
+                 WHERE owner_id = ?
+                   AND file_type != 'folder'
+                   AND file_name IS NOT NULL
+                   AND TRIM(file_name) != ''
+                   AND file_name NOT LIKE '%.%'
+                   AND (
+                     (file_type = 'image' AND LOWER(file_name) LIKE 'image_%')
+                     OR (file_type = 'video' AND LOWER(file_name) LIKE 'video_%')
+                     OR (file_type = 'audio' AND LOWER(file_name) LIKE 'audio_%')
+                     OR (file_type = 'text' AND LOWER(file_name) LIKE 'text_%')
+                     OR (file_type = 'document' AND LOWER(file_name) LIKE 'document_%')
+                   )",
+            )
+            .map_err(|e| DbError {
+                message: format!("Failed to prepare statement: {}", e),
+            })?;
+
+        statement.bind((1, owner_id)).map_err(|e| DbError {
+            message: format!("Failed to bind owner_id: {}", e),
+        })?;
+
+        match statement.next() {
+            Ok(SqliteState::Row) => {
+                let count: i64 = statement.read::<i64, usize>(0).unwrap_or(0);
+                Ok(count)
+            }
+            Ok(SqliteState::Done) => Ok(0),
+            Err(e) => Err(DbError {
+                message: format!("Failed to count generated names without extension: {}", e),
+            }),
+        }
+    }
+
     pub fn get_telegram_saved_items_by_path_paginated(
         &self,
         owner_id: &str,

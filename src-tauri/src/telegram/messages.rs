@@ -316,21 +316,29 @@ fn hydrate_saved_items_from_cached_messages(
             message: format!("Failed to count unnamed saved items: {}", e.message),
         })?;
 
-    if existing_items >= indexed_messages_count && unnamed_items == 0 {
+    let generated_without_extension = db
+        .count_telegram_generated_names_missing_extension(owner_id)
+        .map_err(|e| TelegramError {
+            message: format!("Failed to count generated names without extension: {}", e.message),
+        })?;
+
+    if existing_items >= indexed_messages_count && unnamed_items == 0 && generated_without_extension == 0 {
         log::debug!(
-            "Saved-item hydration already up-to-date (saved_items={}, indexed_messages={}, unnamed_items={})",
+            "Saved-item hydration already up-to-date (saved_items={}, indexed_messages={}, unnamed_items={}, generated_without_extension={})",
             existing_items,
             indexed_messages_count,
-            unnamed_items
+            unnamed_items,
+            generated_without_extension
         );
         return Ok(0);
     }
 
     log::info!(
-        "Hydrating saved-item metadata from cache (saved_items={}, indexed_messages={}, unnamed_items={})",
+        "Hydrating saved-item metadata from cache (saved_items={}, indexed_messages={}, unnamed_items={}, generated_without_extension={})",
         existing_items,
         indexed_messages_count,
-        unnamed_items
+        unnamed_items,
+        generated_without_extension
     );
 
     let cached_messages = db.get_all_indexed_messages(chat_id).map_err(|e| TelegramError {
