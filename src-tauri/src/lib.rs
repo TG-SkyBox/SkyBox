@@ -71,6 +71,7 @@ pub fn run() {
             telegram::tg_index_saved_messages,
             telegram::tg_get_indexed_saved_messages,
             telegram::tg_get_message_thumbnail,
+            telegram::tg_upload_file_to_saved_messages,
 
             // Logger Commands
             utils::logger::log_debug,
