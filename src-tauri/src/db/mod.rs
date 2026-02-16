@@ -785,6 +785,38 @@ impl Database {
         Ok(messages)
     }
 
+    pub fn get_all_indexed_messages(&self, chat_id: i64) -> Result<Vec<TelegramMessage>, DbError> {
+        let conn = self.0.lock().unwrap();
+
+        let mut statement = conn.prepare("SELECT message_id, chat_id, category, filename, extension, mime_type, timestamp, size, text, thumbnail, file_reference FROM telegram_messages WHERE chat_id = ? ORDER BY message_id DESC")
+            .map_err(|e| DbError {
+                message: format!("Failed to prepare statement: {}", e),
+            })?;
+
+        statement.bind((1, chat_id)).map_err(|e| DbError {
+            message: format!("Failed to bind chat_id: {}", e),
+        })?;
+
+        let mut messages = Vec::new();
+        while let Ok(SqliteState::Row) = statement.next() {
+            messages.push(TelegramMessage {
+                message_id: statement.read::<i64, usize>(0).unwrap_or(0) as i32,
+                chat_id: statement.read::<i64, usize>(1).unwrap_or(chat_id),
+                category: statement.read::<String, usize>(2).unwrap_or_else(|_| "Documents".to_string()),
+                filename: statement.read::<Option<String>, usize>(3).unwrap_or(None),
+                extension: statement.read::<Option<String>, usize>(4).unwrap_or(None),
+                mime_type: statement.read::<Option<String>, usize>(5).unwrap_or(None),
+                timestamp: statement.read::<String, usize>(6).unwrap_or_default(),
+                size: statement.read::<Option<i64>, usize>(7).unwrap_or(None),
+                text: statement.read::<Option<String>, usize>(8).unwrap_or(None),
+                thumbnail: statement.read::<Option<String>, usize>(9).unwrap_or(None),
+                file_reference: statement.read::<String, usize>(10).unwrap_or_default(),
+            });
+        }
+
+        Ok(messages)
+    }
+
     pub fn get_last_indexed_message_id(&self, chat_id: i64) -> Result<i32, DbError> {
         let conn = self.0.lock().unwrap();
         
@@ -939,6 +971,31 @@ impl Database {
         }
 
         Ok(items)
+    }
+
+    pub fn count_telegram_saved_non_folder_items(&self, owner_id: &str) -> Result<i64, DbError> {
+        let conn = self.0.lock().unwrap();
+
+        let mut statement = conn
+            .prepare("SELECT COUNT(*) FROM telegram_saved_items WHERE owner_id = ? AND file_type != 'folder'")
+            .map_err(|e| DbError {
+                message: format!("Failed to prepare statement: {}", e),
+            })?;
+
+        statement.bind((1, owner_id)).map_err(|e| DbError {
+            message: format!("Failed to bind owner_id: {}", e),
+        })?;
+
+        match statement.next() {
+            Ok(SqliteState::Row) => {
+                let count: i64 = statement.read::<i64, usize>(0).unwrap_or(0);
+                Ok(count)
+            }
+            Ok(SqliteState::Done) => Ok(0),
+            Err(e) => Err(DbError {
+                message: format!("Failed to count saved items: {}", e),
+            }),
+        }
     }
 
     pub fn get_telegram_saved_items_by_path_paginated(
