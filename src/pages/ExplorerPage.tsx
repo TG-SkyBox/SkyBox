@@ -273,6 +273,7 @@ export default function ExplorerPage() {
   const [isLoadingMoreSavedItems, setIsLoadingMoreSavedItems] = useState(false);
   const [isSavedBackfillSyncing, setIsSavedBackfillSyncing] = useState(false);
   const [isSavedSyncComplete, setIsSavedSyncComplete] = useState(false);
+  const [savedSyncProgress, setSavedSyncProgress] = useState(0);
   const [backHistory, setBackHistory] = useState<string[]>([]);
   const [forwardHistory, setForwardHistory] = useState<string[]>([]);
   const filesRef = useRef<FileItem[]>([]);
@@ -323,6 +324,33 @@ export default function ExplorerPage() {
     filesRef.current = files;
   }, [files]);
 
+  useEffect(() => {
+    if (!isSavedBackfillSyncing) {
+      return;
+    }
+
+    setSavedSyncProgress((prev) => (prev > 0 && prev <= 100 ? prev : 5));
+
+    const timer = window.setInterval(() => {
+      setSavedSyncProgress((prev) => {
+        if (prev >= 95) {
+          return 95;
+        }
+        if (prev < 50) {
+          return prev + 5;
+        }
+        if (prev < 80) {
+          return prev + 3;
+        }
+        return prev + 1;
+      });
+    }, 350);
+
+    return () => {
+      window.clearInterval(timer);
+    };
+  }, [isSavedBackfillSyncing]);
+
   const markNavigationActivity = useCallback(() => {
     lastNavigationAtRef.current = Date.now();
   }, []);
@@ -361,8 +389,10 @@ export default function ExplorerPage() {
 
     const runSavedMessageSync = async () => {
       setIsSavedBackfillSyncing(true);
+      setSavedSyncProgress(5);
       try {
         await indexSavedMessages();
+        setSavedSyncProgress((prev) => (prev < 85 ? 85 : prev));
 
         if (!cancelled) {
           setIsSavedSyncComplete(true);
@@ -371,9 +401,12 @@ export default function ExplorerPage() {
           if (currentPathRef.current.startsWith("tg://saved")) {
             await loadDirectory(currentPathRef.current, { force: true });
           }
+
+          setSavedSyncProgress(100);
         }
       } catch (error) {
         console.error("Error syncing saved messages:", error);
+        setSavedSyncProgress(0);
       } finally {
         if (!cancelled) {
           setIsSavedBackfillSyncing(false);
@@ -931,6 +964,8 @@ export default function ExplorerPage() {
     isSavedBackfillSyncing &&
     !search.trim() &&
     sortedFiles.length === 0;
+
+  const syncProgressLabel = `${Math.min(100, Math.max(0, Math.round(savedSyncProgress)))}%`;
 
   const handleFileSelect = (file: FileItem) => {
     setSelectedFile(file);
@@ -1556,12 +1591,12 @@ export default function ExplorerPage() {
             {isLoadingSavedFiles ? (
               <span className="text-small text-muted-foreground inline-flex items-center gap-1">
                 <div className="animate-spin rounded-full h-3 w-3 border-b border-primary" />
-                Loading files...
+                Loading files... {syncProgressLabel}
               </span>
             ) : currentPath.startsWith("tg://saved") && isSavedBackfillSyncing && (
               <span className="text-small text-muted-foreground inline-flex items-center gap-1">
                 <span className="inline-block w-2 h-2 rounded-full bg-primary animate-pulse" />
-                Syncing...
+                Syncing... {syncProgressLabel}
               </span>
             )}
           </div>
@@ -1605,7 +1640,7 @@ export default function ExplorerPage() {
             ) : isLoadingSavedFiles ? (
               <div className="flex flex-col items-center justify-center h-full text-center">
                 <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary mb-2"></div>
-                <p className="text-body text-muted-foreground">Loading files...</p>
+                <p className="text-body text-muted-foreground">Loading files... {syncProgressLabel}</p>
               </div>
             ) : sortedFiles.length === 0 ? (
               <div className="flex flex-col items-center justify-center h-full text-center">
