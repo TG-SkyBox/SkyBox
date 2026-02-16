@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo } from "react";
+import { useState, useEffect, useMemo, useCallback } from "react";
 import { ExplorerSidebar } from "@/components/skybox/ExplorerSidebar";
 import { SearchBar } from "@/components/skybox/SearchBar";
 import { Breadcrumbs } from "@/components/skybox/Breadcrumbs";
@@ -358,7 +358,19 @@ export default function ExplorerPage() {
   // Listen for navigation events from sidebar
   useEffect(() => {
     const handleNavigateEvent = (event: CustomEvent) => {
-      navigateToPath(event.detail);
+      const nextPath = event.detail;
+      if (!nextPath) {
+        return;
+      }
+
+      if (nextPath === currentPath) {
+        loadDirectory(nextPath);
+        return;
+      }
+
+      setBackHistory((prev) => [...prev, currentPath]);
+      setForwardHistory([]);
+      loadDirectory(nextPath);
     };
 
     window.addEventListener('navigate-to-path', handleNavigateEvent as EventListener);
@@ -366,7 +378,7 @@ export default function ExplorerPage() {
     return () => {
       window.removeEventListener('navigate-to-path', handleNavigateEvent as EventListener);
     };
-  }, [currentPath, isLoading, backHistory.length, forwardHistory.length]);
+  }, [currentPath]);
 
   // Listen for logout events from sidebar
   useEffect(() => {
@@ -384,6 +396,30 @@ export default function ExplorerPage() {
   // Handle keyboard shortcuts
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
+      const canNavigateByKeyboard = !isTextInputElement(e.target);
+
+      if (canNavigateByKeyboard && (e.key === "Backspace" || (e.altKey && e.key === "ArrowLeft"))) {
+        if (backHistory.length && !isLoading) {
+          e.preventDefault();
+          const previousPath = backHistory[backHistory.length - 1];
+          setBackHistory((prev) => prev.slice(0, -1));
+          setForwardHistory((prev) => [...prev, currentPath]);
+          loadDirectory(previousPath);
+        }
+        return;
+      }
+
+      if (canNavigateByKeyboard && e.altKey && e.key === "ArrowRight") {
+        if (forwardHistory.length && !isLoading) {
+          e.preventDefault();
+          const nextPath = forwardHistory[forwardHistory.length - 1];
+          setForwardHistory((prev) => prev.slice(0, -1));
+          setBackHistory((prev) => [...prev, currentPath]);
+          loadDirectory(nextPath);
+        }
+        return;
+      }
+
       // Ctrl/Cmd + R to refresh
       if ((e.ctrlKey || e.metaKey) && e.key === 'r') {
         e.preventDefault();
@@ -405,7 +441,7 @@ export default function ExplorerPage() {
     return () => {
       window.removeEventListener('keydown', handleKeyDown);
     };
-  }, [selectedFile, showDetails]);
+  }, [selectedFile, showDetails, backHistory, forwardHistory, currentPath, isLoading]);
 
   const loadDirectory = async (path: string) => {
     setIsLoading(true);
@@ -446,7 +482,7 @@ export default function ExplorerPage() {
     }
   };
 
-  const navigateToPath = async (path: string) => {
+  const navigateToPath = useCallback(async (path: string) => {
     if (!path) {
       return;
     }
@@ -459,9 +495,9 @@ export default function ExplorerPage() {
     setBackHistory((prev) => [...prev, currentPath]);
     setForwardHistory([]);
     await loadDirectory(path);
-  };
+  }, [currentPath]);
 
-  const handleGoBack = async () => {
+  const handleGoBack = useCallback(async () => {
     if (!backHistory.length || isLoading) {
       return;
     }
@@ -470,9 +506,9 @@ export default function ExplorerPage() {
     setBackHistory((prev) => prev.slice(0, -1));
     setForwardHistory((prev) => [...prev, currentPath]);
     await loadDirectory(previousPath);
-  };
+  }, [backHistory, currentPath, isLoading]);
 
-  const handleGoForward = async () => {
+  const handleGoForward = useCallback(async () => {
     if (!forwardHistory.length || isLoading) {
       return;
     }
@@ -481,7 +517,7 @@ export default function ExplorerPage() {
     setForwardHistory((prev) => prev.slice(0, -1));
     setBackHistory((prev) => [...prev, currentPath]);
     await loadDirectory(nextPath);
-  };
+  }, [currentPath, forwardHistory, isLoading]);
 
   const loadFavorites = async () => {
     try {
