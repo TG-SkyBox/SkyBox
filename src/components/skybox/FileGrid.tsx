@@ -91,7 +91,7 @@ function FileGridItem({
     useEffect(() => {
         setThumbUrl(resolveThumbnailSrc(file.thumbnail));
         setHasRetriedBrokenThumbnail(false);
-    }, [file.thumbnail]);
+    }, [file.messageId, file.thumbnail]);
 
     const refetchThumbnail = async () => {
         if (!file.messageId) {
