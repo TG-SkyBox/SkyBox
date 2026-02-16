@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from "react";
 import { useNavigate } from "react-router-dom";
-import { Send, ArrowLeft, X } from "lucide-react";
+import { ArrowLeft, X } from "lucide-react";
 import { CountryCodeSelect, countries, Country } from "@/components/skybox/CountryCodeSelect";
 import { TelegramButton } from "@/components/skybox/TelegramButton";
 import { OtpInput } from "@/components/skybox/OtpInput";
@@ -9,7 +9,9 @@ import { TelegramInput } from "@/components/skybox/TelegramInput"; // Assuming t
 import { toast } from "@/hooks/use-toast";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
+import { getVersion } from "@tauri-apps/api/app";
 import { logger } from "@/lib/logger";
+import appStartIcon from "@/assets/images/icon.png";
 
 interface DbError {
   message: string;
@@ -78,6 +80,7 @@ export default function LoginPage() {
   const [otp, setOtp] = useState("");
   const [password, setPassword] = useState("");
   const [isLoading, setIsLoading] = useState(false);
+  const [appVersion, setAppVersion] = useState<string>("...");
 
   // QR Login state
   const [qrData, setQrData] = useState<string | null>(null);
@@ -90,6 +93,29 @@ export default function LoginPage() {
   const isMigratingRef = useRef<boolean>(false); // Track migration state
 
   // Removed the session check useEffect since it's now handled in LoadingPage
+
+  useEffect(() => {
+    let cancelled = false;
+
+    const loadAppVersion = async () => {
+      try {
+        const version = await getVersion();
+        if (!cancelled) {
+          setAppVersion(version);
+        }
+      } catch (error) {
+        logger.warn("LoginPage: Failed to read app version", error);
+        if (!cancelled) {
+          setAppVersion("unknown");
+        }
+      }
+    };
+
+    void loadAppVersion();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   const handlePhoneSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -548,8 +574,8 @@ export default function LoginPage() {
           {loginMode === "phone" && step === "phone" && (
             <div className="animate-fade-in flex flex-col items-center">
               {/* Telegram Logo */}
-              <div className="w-32 h-32 mb-8 bg-primary rounded-full flex items-center justify-center">
-                <Send className="w-16 h-16 text-primary-foreground -rotate-45 translate-x-1" />
+              <div className="w-32 h-32 mb-8 flex items-center justify-center">
+                <img src={appStartIcon} alt="SkyBox Logo" className="w-full h-full object-contain" />
               </div>
 
               {/* Title */}
@@ -628,8 +654,8 @@ export default function LoginPage() {
           {step === "otp" && (
             <div className="animate-fade-in flex flex-col items-center">
               {/* Telegram Logo */}
-              <div className="w-32 h-32 mb-8 bg-primary rounded-full flex items-center justify-center">
-                <Send className="w-16 h-16 text-primary-foreground -rotate-45 translate-x-1" />
+              <div className="w-32 h-32 mb-8 flex items-center justify-center">
+                <img src={appStartIcon} alt="SkyBox Logo" className="w-full h-full object-contain" />
               </div>
 
               {/* Title */}
@@ -664,8 +690,8 @@ export default function LoginPage() {
           {step === "password" && (
             <div className="animate-fade-in flex flex-col items-center">
               {/* Telegram Logo */}
-              <div className="w-32 h-32 mb-8 bg-primary rounded-full flex items-center justify-center">
-                <Send className="w-16 h-16 text-primary-foreground -rotate-45 translate-x-1" />
+              <div className="w-32 h-32 mb-8 flex items-center justify-center">
+                <img src={appStartIcon} alt="SkyBox Logo" className="w-full h-full object-contain" />
               </div>
 
               {/* Title */}
@@ -711,7 +737,7 @@ export default function LoginPage() {
       {/* Footer */}
       <div className="p-4 text-center">
         <p className="text-small text-muted-foreground">
-          skybox 1.0.0
+          skybox {appVersion}
         </p>
       </div>
     </div>

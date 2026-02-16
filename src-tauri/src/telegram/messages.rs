@@ -2,7 +2,7 @@ use crate::db::{Database, TelegramMessage, TelegramSavedItem};
 use crate::telegram::{AUTH_STATE, TelegramError};
 use directories::BaseDirs;
 use grammers_client::InputMessage;
-use grammers_client::types::{Message, Media};
+use grammers_client::types::{Attribute, Media, Message};
 use grammers_client::grammers_tl_types as tl;
 use serde_json::json;
 use std::fs;
@@ -51,6 +51,80 @@ fn optional_sanitized_name(file_name: &str) -> Option<String> {
     }
 
     Some(sanitize_file_name(trimmed))
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum UploadMediaKind {
+    Photo,
+    Video,
+    Audio,
+    Document,
+}
+
+fn build_upload_file_name(file_name: &str) -> (String, Option<String>) {
+    let safe_file_name = sanitize_file_name(file_name);
+    let safe_path = Path::new(&safe_file_name);
+
+    let extension = safe_path
+        .extension()
+        .and_then(|ext| ext.to_str())
+        .and_then(|ext| normalize_extension(Some(ext)));
+
+    let stem = safe_path
+        .file_stem()
+        .and_then(|value| value.to_str())
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(sanitize_file_name)
+        .unwrap_or_else(|| "upload".to_string());
+
+    let uuid = Uuid::new_v4().simple().to_string();
+    let upload_file_name = match extension.as_deref() {
+        Some(ext) => format!("{}_{}.{}", stem, uuid, ext),
+        None => format!("{}_{}", stem, uuid),
+    };
+
+    (upload_file_name, extension)
+}
+
+fn upload_media_kind_for_extension(extension: Option<&str>) -> UploadMediaKind {
+    match extension.unwrap_or_default() {
+        "jpg" | "jpeg" | "png" | "webp" | "gif" | "bmp" => UploadMediaKind::Photo,
+        "mp4" | "mkv" | "webm" | "mov" | "avi" | "wmv" | "m4v" | "flv" => {
+            UploadMediaKind::Video
+        }
+        "mp3" | "m4a" | "ogg" | "wav" | "flac" | "aac" | "opus" | "wma" => {
+            UploadMediaKind::Audio
+        }
+        _ => UploadMediaKind::Document,
+    }
+}
+
+fn mime_type_from_extension(extension: Option<&str>) -> Option<&'static str> {
+    match extension.unwrap_or_default() {
+        "jpg" | "jpeg" => Some("image/jpeg"),
+        "png" => Some("image/png"),
+        "webp" => Some("image/webp"),
+        "gif" => Some("image/gif"),
+        "bmp" => Some("image/bmp"),
+        "mp4" => Some("video/mp4"),
+        "mkv" => Some("video/x-matroska"),
+        "webm" => Some("video/webm"),
+        "mov" => Some("video/quicktime"),
+        "avi" => Some("video/x-msvideo"),
+        "wmv" => Some("video/x-ms-wmv"),
+        "m4v" => Some("video/mp4"),
+        "flv" => Some("video/x-flv"),
+        "mp3" => Some("audio/mpeg"),
+        "m4a" => Some("audio/mp4"),
+        "ogg" => Some("audio/ogg"),
+        "wav" => Some("audio/wav"),
+        "flac" => Some("audio/flac"),
+        "aac" => Some("audio/aac"),
+        "opus" => Some("audio/opus"),
+        "wma" => Some("audio/x-ms-wma"),
+        _ => None,
+    }
 }
 
 #[derive(Clone, Copy)]
@@ -1285,7 +1359,9 @@ pub async fn tg_upload_file_to_saved_messages_impl(
         });
     }
 
-    let safe_file_name = sanitize_file_name(&file_name);
+    let (upload_file_name, upload_extension) = build_upload_file_name(&file_name);
+    let upload_media_kind = upload_media_kind_for_extension(upload_extension.as_deref());
+    let upload_mime_type = mime_type_from_extension(upload_extension.as_deref());
 
     let client = {
         let state_guard = AUTH_STATE.lock().await;
@@ -1313,7 +1389,7 @@ pub async fn tg_upload_file_to_saved_messages_impl(
         }
     };
 
-    let temp_path = build_temp_upload_path(&safe_file_name);
+    let temp_path = build_temp_upload_path(&upload_file_name);
     fs::write(&temp_path, &file_bytes).map_err(|e| TelegramError {
         message: format!(
             "Failed to prepare temporary upload file {}: {}",
@@ -1335,17 +1411,37 @@ pub async fn tg_upload_file_to_saved_messages_impl(
         message: format!("Failed to upload file to Telegram: {}", e),
     })?;
 
+    let input_message = match upload_media_kind {
+        UploadMediaKind::Photo => InputMessage::new().photo(uploaded_file),
+        UploadMediaKind::Video | UploadMediaKind::Audio => {
+            let message = match upload_mime_type {
+                Some(mime_type) => InputMessage::new().mime_type(mime_type).document(uploaded_file),
+                None => InputMessage::new().document(uploaded_file),
+            };
+
+            message.attribute(Attribute::FileName(upload_file_name.clone()))
+        }
+        UploadMediaKind::Document => {
+            let message = match upload_mime_type {
+                Some(mime_type) => InputMessage::new().mime_type(mime_type).file(uploaded_file),
+                None => InputMessage::new().file(uploaded_file),
+            };
+
+            message.attribute(Attribute::FileName(upload_file_name.clone()))
+        }
+    };
+
     let sent_message = client
-        .send_message(input_peer, InputMessage::new().file(uploaded_file))
+        .send_message(input_peer, input_message)
         .await
         .map_err(|e| TelegramError {
             message: format!("Failed to send uploaded file: {}", e),
         })?;
 
-    let telegram_message = if let Some(message) = categorize_message(&sent_message, chat_id) {
+    let mut telegram_message = if let Some(message) = categorize_message(&sent_message, chat_id) {
         message
     } else {
-        let extracted_extension = extension_from_name(&safe_file_name);
+        let extracted_extension = extension_from_name(&upload_file_name);
         let extension = normalize_extension(extracted_extension.as_deref());
         let classification = classify_extension(extension.as_deref());
 
@@ -1353,7 +1449,7 @@ pub async fn tg_upload_file_to_saved_messages_impl(
             message_id: sent_message.id(),
             chat_id,
             category: classification.category.to_string(),
-            filename: Some(safe_file_name.clone()),
+            filename: Some(upload_file_name.clone()),
             extension,
             mime_type: None,
             timestamp: sent_message.date().to_rfc3339(),
@@ -1368,6 +1464,14 @@ pub async fn tg_upload_file_to_saved_messages_impl(
         }
     };
 
+    let upload_classification = classify_extension(upload_extension.as_deref());
+    telegram_message.category = upload_classification.category.to_string();
+    telegram_message.filename = Some(upload_file_name.clone());
+    telegram_message.extension = upload_extension.clone();
+    if telegram_message.mime_type.is_none() {
+        telegram_message.mime_type = upload_mime_type.map(|value| value.to_string());
+    }
+
     db.save_telegram_message(&telegram_message).map_err(|e| TelegramError {
         message: format!("Failed to save uploaded message metadata: {}", e.message),
     })?;
@@ -1381,7 +1485,7 @@ pub async fn tg_upload_file_to_saved_messages_impl(
         &owner_id,
         &telegram_message,
         file_path.as_deref(),
-        Some(&safe_file_name),
+        Some(&upload_file_name),
     )?;
 
     Ok(telegram_message)

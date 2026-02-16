@@ -1,6 +1,8 @@
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { invoke } from "@tauri-apps/api/core";
+import { getVersion } from "@tauri-apps/api/app";
+import appStartIcon from "@/assets/images/icon.png";
 
 import { logger } from "../lib/logger";
 
@@ -28,6 +30,30 @@ interface UserInfo {
 
 export default function LoadingPage() {
   const navigate = useNavigate();
+  const [appVersion, setAppVersion] = useState<string>("...");
+
+  useEffect(() => {
+    let cancelled = false;
+
+    const loadAppVersion = async () => {
+      try {
+        const version = await getVersion();
+        if (!cancelled) {
+          setAppVersion(version);
+        }
+      } catch (error) {
+        logger.warn(`LoadingPage: Failed to read app version: ${JSON.stringify(error)}`);
+        if (!cancelled) {
+          setAppVersion("unknown");
+        }
+      }
+    };
+
+    void loadAppVersion();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   useEffect(() => {
     const checkLoginStatus = async () => {
@@ -91,7 +117,7 @@ export default function LoadingPage() {
           {/* Telegram Logo with animation */}
           {/* App Logo */}
           <div className="w-32 h-32 mb-8 flex items-center justify-center animate-pulse">
-            <img src="icons/icon.png" alt="SkyBox Logo" className="w-full h-full object-contain" />
+            <img src={appStartIcon} alt="SkyBox Logo" className="w-full h-full object-contain" />
           </div>
 
           {/* Loading text */}
@@ -107,7 +133,7 @@ export default function LoadingPage() {
       {/* Footer */}
       <div className="p-4 text-center">
         <p className="text-small text-muted-foreground">
-          skybox 1.0.0
+          skybox {appVersion}
         </p>
       </div>
     </div>

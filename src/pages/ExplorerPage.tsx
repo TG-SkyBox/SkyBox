@@ -7,7 +7,23 @@ import { FileGrid } from "@/components/skybox/FileGrid";
 import { DetailsPanel } from "@/components/skybox/DetailsPanel";
 import { ConfirmDialog } from "@/components/skybox/ConfirmDialog";
 import { TelegramButton } from "@/components/skybox/TelegramButton";
-import { FolderPlus, Grid, List, SortAsc, RefreshCw, Copy, Trash2, Edit3, ChevronLeft, ChevronRight } from "lucide-react";
+import {
+  FolderPlus,
+  Grid,
+  List,
+  SortAsc,
+  RefreshCw,
+  Copy,
+  Trash2,
+  Edit3,
+  ChevronLeft,
+  ChevronRight,
+  FolderOpen,
+  Share2,
+  Scissors,
+  ClipboardPaste,
+  Info,
+} from "lucide-react";
 import { useNavigate, useLocation } from "react-router-dom";
 import { toast } from "@/hooks/use-toast";
 import { invoke } from "@tauri-apps/api/core";
@@ -123,6 +139,21 @@ interface SavedPathCacheEntry {
 }
 
 type ExplorerViewMode = "list" | "grid";
+type ClipboardMode = "copy" | "cut";
+
+interface ExplorerClipboardItem {
+  path: string;
+  name: string;
+  isDirectory: boolean;
+  mode: ClipboardMode;
+}
+
+interface ExplorerContextMenuState {
+  x: number;
+  y: number;
+  targetFile: FileItem | null;
+  isEmptyArea: boolean;
+}
 
 // Convert Rust FileEntry to our FileItem type
 const convertFileEntryToFileItem = (entry: FileEntry): FileItem => {
@@ -259,6 +290,8 @@ export default function ExplorerPage() {
   const [showDetails, setShowDetails] = useState(false);
   const [viewMode, setViewMode] = useState<ExplorerViewMode>("list");
   const [isViewModeLoaded, setIsViewModeLoaded] = useState(false);
+  const [contextMenuState, setContextMenuState] = useState<ExplorerContextMenuState | null>(null);
+  const [clipboardItem, setClipboardItem] = useState<ExplorerClipboardItem | null>(null);
   const [favorites, setFavorites] = useState<string[]>([]);
   const [deleteTarget, setDeleteTarget] = useState<FileItem | null>(null);
   const [isLoading, setIsLoading] = useState(false);
@@ -287,6 +320,7 @@ export default function ExplorerPage() {
   const lastNavigationAtRef = useRef(Date.now());
   const prefetchedThumbnailIdsRef = useRef<Set<number>>(new Set());
   const savedPathCacheRef = useRef<Record<string, SavedPathCacheEntry>>({});
+  const contextMenuRef = useRef<HTMLDivElement | null>(null);
   const navigationStateRef = useRef({
     backHistory: [] as string[],
     forwardHistory: [] as string[],
@@ -367,6 +401,46 @@ export default function ExplorerPage() {
       console.error("Error saving explorer view mode setting:", error);
     });
   }, [isViewModeLoaded, viewMode]);
+
+  useEffect(() => {
+    if (!contextMenuState) {
+      return;
+    }
+
+    const handlePointerDown = (event: MouseEvent) => {
+      const target = event.target as Node | null;
+      if (contextMenuRef.current && target && contextMenuRef.current.contains(target)) {
+        return;
+      }
+      setContextMenuState(null);
+    };
+
+    const handleEscape = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        setContextMenuState(null);
+      }
+    };
+
+    const handleViewportChange = () => {
+      setContextMenuState(null);
+    };
+
+    window.addEventListener("mousedown", handlePointerDown, true);
+    window.addEventListener("keydown", handleEscape);
+    window.addEventListener("scroll", handleViewportChange, true);
+    window.addEventListener("blur", handleViewportChange);
+
+    return () => {
+      window.removeEventListener("mousedown", handlePointerDown, true);
+      window.removeEventListener("keydown", handleEscape);
+      window.removeEventListener("scroll", handleViewportChange, true);
+      window.removeEventListener("blur", handleViewportChange);
+    };
+  }, [contextMenuState]);
+
+  useEffect(() => {
+    setContextMenuState(null);
+  }, [currentPath]);
 
   useEffect(() => {
     if (!isSavedBackfillSyncing) {
@@ -1010,6 +1084,11 @@ export default function ExplorerPage() {
     sortedFiles.length === 0;
 
   const syncProgressLabel = `${Math.min(100, Math.max(0, Math.round(savedSyncProgress)))}%`;
+  const contextMenuItemClassName = "w-full flex items-center gap-2 rounded-lg px-3 py-2 text-left text-body text-foreground transition-colors hover:bg-primary/15 outline-none focus-visible:outline-none";
+  const contextMenuDisabledItemClassName = "w-full flex items-center gap-2 rounded-lg px-3 py-2 text-left text-body text-muted-foreground/60 pointer-events-none outline-none focus-visible:outline-none";
+  const contextMenuDangerItemClassName = "w-full flex items-center gap-2 rounded-lg px-3 py-2 text-left text-body text-destructive transition-colors hover:bg-destructive/10 outline-none focus-visible:outline-none";
+  const contextTargetFile = contextMenuState?.targetFile ?? null;
+  const canPaste = !!clipboardItem;
 
   const handleFileSelect = (file: FileItem) => {
     setSelectedFile(file);
@@ -1157,14 +1236,17 @@ export default function ExplorerPage() {
     });
   };
 
-  const handleCopyPath = () => {
-    if (selectedFile) {
-      navigator.clipboard.writeText(selectedFile.path);
-      toast({
-        title: "Path copied",
-        description: "File path copied to clipboard"
-      });
+  const handleCopyPath = (targetFile?: FileItem | null) => {
+    const file = targetFile ?? selectedFile;
+    if (!file) {
+      return;
     }
+
+    navigator.clipboard.writeText(file.path);
+    toast({
+      title: "Path copied",
+      description: "File path copied to clipboard",
+    });
   };
 
   const handleNewFolder = async () => {
@@ -1199,20 +1281,299 @@ export default function ExplorerPage() {
     }
   };
 
-  const handleRename = () => {
-    if (!selectedFile) return;
+  const handleRename = async (targetFile?: FileItem | null) => {
+    const file = targetFile ?? selectedFile;
+    if (!file) {
+      return;
+    }
 
-    const newName = prompt("Enter new name:", selectedFile.name);
-    if (!newName || newName === selectedFile.name) return;
+    const newName = prompt("Enter new name:", file.name);
+    const normalizedName = newName?.trim();
+    if (!normalizedName || normalizedName === file.name) {
+      return;
+    }
 
-    // Construct new path
-    const directory = selectedFile.path.substring(0, selectedFile.path.lastIndexOf('/'));
-    const newPath = `${directory}/${newName}`.replace("//", "/");
+    if (isVirtualPath(file.path)) {
+      toast({
+        title: "Rename unavailable",
+        description: "Renaming in Saved Messages is not available yet.",
+      });
+      return;
+    }
+
+    const directory = getParentPath(file.path);
+    if (!directory) {
+      toast({
+        title: "Rename failed",
+        description: "Unable to resolve target directory",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    const newPath = joinPath(directory, normalizedName);
+
+    try {
+      await invoke("rename_file", {
+        oldPath: file.path,
+        newPath,
+      });
+
+      toast({
+        title: "Renamed",
+        description: `${file.name} renamed to ${normalizedName}`,
+      });
+
+      if (selectedFile?.path === file.path) {
+        setSelectedFile({ ...file, name: normalizedName, path: newPath });
+      }
+
+      await loadDirectory(currentPath, { force: true });
+    } catch (error) {
+      const typedError = error as FsError;
+      toast({
+        title: "Rename failed",
+        description: typedError.message || "An unknown error occurred",
+        variant: "destructive",
+      });
+    }
+  };
+
+  const closeContextMenu = () => {
+    setContextMenuState(null);
+  };
+
+  const openContextMenu = (event: React.MouseEvent, targetFile: FileItem | null, isEmptyArea = false) => {
+    event.preventDefault();
+    event.stopPropagation();
+
+    const menuWidth = 236;
+    const menuHeight = targetFile || !isEmptyArea ? 320 : 140;
+    const clampedX = Math.max(8, Math.min(event.clientX, window.innerWidth - menuWidth - 8));
+    const clampedY = Math.max(8, Math.min(event.clientY, window.innerHeight - menuHeight - 8));
+
+    setContextMenuState({
+      x: clampedX,
+      y: clampedY,
+      targetFile,
+      isEmptyArea,
+    });
+  };
+
+  const handleFileContextMenu = (event: React.MouseEvent, file: FileItem) => {
+    setSelectedFile(file);
+    openContextMenu(event, file, false);
+  };
+
+  const handleEmptyAreaContextMenu = (event: React.MouseEvent<HTMLDivElement>) => {
+    setSelectedFile(null);
+    setShowDetails(false);
+    openContextMenu(event, null, true);
+  };
+
+  const handleShare = async (targetFile?: FileItem | null) => {
+    const file = targetFile ?? selectedFile;
+    if (!file || file.isDirectory) {
+      return;
+    }
+
+    try {
+      const share = (navigator as { share?: (data: { title?: string; text?: string; url?: string }) => Promise<void> }).share;
+      if (typeof share === "function") {
+        await share({
+          title: file.name,
+          text: file.path,
+        });
+      } else {
+        await navigator.clipboard.writeText(file.path);
+      }
+
+      toast({
+        title: "Shared",
+        description: "Share payload is ready.",
+      });
+    } catch (error) {
+      console.error("Share failed:", error);
+      toast({
+        title: "Share failed",
+        description: "Unable to share this item",
+        variant: "destructive",
+      });
+    }
+  };
+
+  const handleStageClipboardItem = (mode: ClipboardMode, targetFile?: FileItem | null) => {
+    const file = targetFile ?? selectedFile;
+    if (!file) {
+      return;
+    }
+
+    setClipboardItem({
+      path: file.path,
+      name: file.name,
+      isDirectory: file.isDirectory,
+      mode,
+    });
 
     toast({
-      title: "Rename feature",
-      description: "Rename functionality would be implemented here",
+      title: mode === "cut" ? "Ready to move" : "Ready to copy",
+      description: file.name,
     });
+  };
+
+  const resolvePasteDestinationPath = (): string => {
+    const targetFile = contextMenuState?.targetFile;
+    if (targetFile?.isDirectory) {
+      return targetFile.path;
+    }
+
+    return currentPath;
+  };
+
+  const handlePaste = async () => {
+    if (!clipboardItem) {
+      return;
+    }
+
+    const destinationFolderPath = resolvePasteDestinationPath();
+    const sourcePath = clipboardItem.path;
+    const sourceName = clipboardItem.name;
+
+    if (!destinationFolderPath) {
+      return;
+    }
+
+    try {
+      const sourceIsSaved = isSavedVirtualFolderPath(sourcePath) || isSavedVirtualFilePath(sourcePath);
+      const destinationIsSaved = isSavedVirtualFolderPath(destinationFolderPath);
+
+      if (sourceIsSaved || destinationIsSaved) {
+        if (!sourceIsSaved || !destinationIsSaved) {
+          toast({
+            title: "Paste unavailable",
+            description: "Cannot move items between local files and Saved Messages.",
+            variant: "destructive",
+          });
+          return;
+        }
+
+        if (clipboardItem.mode === "copy") {
+          toast({
+            title: "Paste unavailable",
+            description: "Copy in Saved Messages is not available yet.",
+            variant: "destructive",
+          });
+          return;
+        }
+
+        await invoke("tg_move_saved_item", {
+          sourcePath,
+          destinationPath: destinationFolderPath,
+        });
+
+        setClipboardItem(null);
+        savedPathCacheRef.current = {};
+        await loadDirectory(currentPath, { force: true });
+        toast({
+          title: "Moved",
+          description: `${sourceName} moved successfully`,
+        });
+        return;
+      }
+
+      if (isVirtualPath(sourcePath) || isVirtualPath(destinationFolderPath)) {
+        toast({
+          title: "Paste unavailable",
+          description: "Unsupported source or destination path.",
+          variant: "destructive",
+        });
+        return;
+      }
+
+      const destinationPath = joinPath(destinationFolderPath, sourceName);
+      if (normalizePath(sourcePath) === normalizePath(destinationPath)) {
+        toast({
+          title: "Paste skipped",
+          description: "Source and destination are the same.",
+        });
+        return;
+      }
+
+      if (clipboardItem.mode === "copy") {
+        if (clipboardItem.isDirectory) {
+          toast({
+            title: "Paste unavailable",
+            description: "Copying folders is not available yet.",
+            variant: "destructive",
+          });
+          return;
+        }
+
+        await invoke("copy_file", {
+          source: sourcePath,
+          destination: destinationPath,
+        });
+
+        toast({
+          title: "Copied",
+          description: `${sourceName} copied successfully`,
+        });
+      } else {
+        await invoke("move_file", {
+          source: sourcePath,
+          destination: destinationPath,
+        });
+
+        setClipboardItem(null);
+        if (selectedFile?.path === sourcePath) {
+          setSelectedFile(null);
+          setShowDetails(false);
+        }
+
+        toast({
+          title: "Moved",
+          description: `${sourceName} moved successfully`,
+        });
+      }
+
+      await loadDirectory(currentPath, { force: true });
+    } catch (error) {
+      const typedError = error as FsError | TelegramError;
+      toast({
+        title: "Paste failed",
+        description: typedError.message || "An unknown error occurred",
+        variant: "destructive",
+      });
+    }
+  };
+
+  const handleContextOpen = async () => {
+    const file = contextMenuState?.targetFile;
+    if (!file) {
+      return;
+    }
+
+    await handleFileOpen(file);
+  };
+
+  const handleContextDelete = () => {
+    const file = contextMenuState?.targetFile;
+    if (!file) {
+      return;
+    }
+
+    setSelectedFile(file);
+    setDeleteTarget(file);
+  };
+
+  const handleContextProperties = () => {
+    const file = contextMenuState?.targetFile;
+    if (!file) {
+      return;
+    }
+
+    setSelectedFile(file);
+    setShowDetails(true);
   };
 
   const isDraggableItem = (file: FileItem) => {
@@ -1506,7 +1867,14 @@ export default function ExplorerPage() {
   };
 
   return (
-    <div className="h-screen flex overflow-hidden">
+    <div
+      className="h-screen flex overflow-hidden"
+      onClick={() => {
+        if (contextMenuState) {
+          closeContextMenu();
+        }
+      }}
+    >
       {/* Sidebar */}
       <ExplorerSidebar
         currentPath={currentPath}
@@ -1650,6 +2018,7 @@ export default function ExplorerPage() {
             onDragLeave={handleExplorerDragLeave}
             onDrop={handleExplorerDrop}
             onScroll={handleDirectoryScroll}
+            onContextMenu={handleEmptyAreaContextMenu}
           >
             {(isExternalDragging || isUploadingFiles) && (
               <div className="pointer-events-none absolute inset-4 z-20 rounded-xl border-2 border-dashed border-primary/60 bg-primary/10 flex items-center justify-center">
@@ -1711,10 +2080,7 @@ export default function ExplorerPage() {
                       isSelected={selectedFile?.path === file.path}
                       onSelect={() => handleFileSelect(file)}
                       onOpen={() => handleFileOpen(file)}
-                      onContextMenu={(e) => {
-                        e.preventDefault();
-                        handleFileSelect(file);
-                      }}
+                      onContextMenu={(event) => handleFileContextMenu(event, file)}
                       draggable={isDraggableItem(file)}
                       isDropTarget={dropTargetPath === file.path}
                       onDragStart={(event) => handleItemDragStart(event, file)}
@@ -1730,10 +2096,7 @@ export default function ExplorerPage() {
                     selectedFile={selectedFile}
                     onSelect={handleFileSelect}
                     onOpen={handleFileOpen}
-                    onContextMenu={(e, file) => {
-                      e.preventDefault();
-                      handleFileSelect(file);
-                    }}
+                    onContextMenu={(event, file) => handleFileContextMenu(event, file)}
                     isDraggable={isDraggableItem}
                     isDropTarget={(file) => dropTargetPath === file.path}
                     onDragStart={(event, file) => handleItemDragStart(event, file)}
@@ -1768,6 +2131,145 @@ export default function ExplorerPage() {
           )}
         </div>
       </div>
+
+      {contextMenuState && (
+        <div
+          ref={contextMenuRef}
+          className="fixed z-[80] min-w-[220px] rounded-xl bg-glass shadow-2xl shadow-black/50 backdrop-saturate-150 p-1"
+          style={{ left: `${contextMenuState.x}px`, top: `${contextMenuState.y}px` }}
+          onClick={(event) => event.stopPropagation()}
+          onContextMenu={(event) => event.preventDefault()}
+        >
+          {contextMenuState.isEmptyArea ? (
+            <>
+              <button
+                className={contextMenuItemClassName}
+                onClick={() => {
+                  closeContextMenu();
+                  void handleNewFolder();
+                }}
+              >
+                <FolderPlus className="w-4 h-4 text-muted-foreground" />
+                <span>New Folder</span>
+              </button>
+              <button
+                className={canPaste ? contextMenuItemClassName : contextMenuDisabledItemClassName}
+                onClick={() => {
+                  if (!canPaste) {
+                    return;
+                  }
+                  closeContextMenu();
+                  void handlePaste();
+                }}
+              >
+                <ClipboardPaste className="w-4 h-4 text-muted-foreground" />
+                <span>Paste</span>
+              </button>
+            </>
+          ) : (
+            <>
+              <button
+                className={contextMenuItemClassName}
+                onClick={() => {
+                  closeContextMenu();
+                  void handleContextOpen();
+                }}
+              >
+                <FolderOpen className="w-4 h-4 text-muted-foreground" />
+                <span>Open</span>
+              </button>
+
+              {contextTargetFile && !contextTargetFile.isDirectory && (
+                <button
+                  className={contextMenuItemClassName}
+                  onClick={() => {
+                    closeContextMenu();
+                    void handleShare(contextTargetFile);
+                  }}
+                >
+                  <Share2 className="w-4 h-4 text-muted-foreground" />
+                  <span>Share</span>
+                </button>
+              )}
+
+              <div className="my-1 h-px bg-border/70" />
+
+              <button
+                className={contextMenuItemClassName}
+                onClick={() => {
+                  if (!contextTargetFile) {
+                    return;
+                  }
+                  closeContextMenu();
+                  handleStageClipboardItem("cut", contextTargetFile);
+                }}
+              >
+                <Scissors className="w-4 h-4 text-muted-foreground" />
+                <span>Cut</span>
+              </button>
+              <button
+                className={contextMenuItemClassName}
+                onClick={() => {
+                  if (!contextTargetFile) {
+                    return;
+                  }
+                  closeContextMenu();
+                  handleStageClipboardItem("copy", contextTargetFile);
+                }}
+              >
+                <Copy className="w-4 h-4 text-muted-foreground" />
+                <span>Copy</span>
+              </button>
+              <button
+                className={canPaste ? contextMenuItemClassName : contextMenuDisabledItemClassName}
+                onClick={() => {
+                  if (!canPaste) {
+                    return;
+                  }
+                  closeContextMenu();
+                  void handlePaste();
+                }}
+              >
+                <ClipboardPaste className="w-4 h-4 text-muted-foreground" />
+                <span>Paste</span>
+              </button>
+
+              <div className="my-1 h-px bg-border/70" />
+
+              <button
+                className={contextMenuItemClassName}
+                onClick={() => {
+                  closeContextMenu();
+                  void handleRename(contextTargetFile);
+                }}
+              >
+                <Edit3 className="w-4 h-4 text-muted-foreground" />
+                <span>Rename</span>
+              </button>
+              <button
+                className={contextMenuDangerItemClassName}
+                onClick={() => {
+                  closeContextMenu();
+                  handleContextDelete();
+                }}
+              >
+                <Trash2 className="w-4 h-4" />
+                <span>Delete</span>
+              </button>
+              <button
+                className={contextMenuItemClassName}
+                onClick={() => {
+                  closeContextMenu();
+                  handleContextProperties();
+                }}
+              >
+                <Info className="w-4 h-4 text-muted-foreground" />
+                <span>Properties</span>
+              </button>
+            </>
+          )}
+        </div>
+      )}
 
       {/* Delete confirmation dialog */}
       <ConfirmDialog
