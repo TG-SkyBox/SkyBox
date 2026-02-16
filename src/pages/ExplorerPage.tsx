@@ -122,6 +122,12 @@ interface TelegramRebuildSavedItemsResult {
   oldest_message_id?: number;
 }
 
+interface SavedPathCacheEntry {
+  items: FileItem[];
+  nextOffset: number;
+  hasMore: boolean;
+}
+
 // Convert Rust FileEntry to our FileItem type
 const convertFileEntryToFileItem = (entry: FileEntry): FileItem => {
   return {
@@ -264,9 +270,12 @@ export default function ExplorerPage() {
   const [hasMoreSavedItems, setHasMoreSavedItems] = useState(false);
   const [isLoadingMoreSavedItems, setIsLoadingMoreSavedItems] = useState(false);
   const [isSavedBackfillSyncing, setIsSavedBackfillSyncing] = useState(false);
+  const [isSavedSyncComplete, setIsSavedSyncComplete] = useState(false);
   const [backHistory, setBackHistory] = useState<string[]>([]);
   const [forwardHistory, setForwardHistory] = useState<string[]>([]);
+  const filesRef = useRef<FileItem[]>([]);
   const currentPathRef = useRef("tg://saved");
+  const savedPathCacheRef = useRef<Record<string, SavedPathCacheEntry>>({});
   const navigationStateRef = useRef({
     backHistory: [] as string[],
     forwardHistory: [] as string[],
@@ -304,6 +313,10 @@ export default function ExplorerPage() {
     currentPathRef.current = currentPath;
   }, [backHistory, forwardHistory, currentPath, isLoading]);
 
+  useEffect(() => {
+    filesRef.current = files;
+  }, [files]);
+
   const indexSavedMessages = async (): Promise<{ total_new_messages: number; bootstrap_limited?: boolean } | null> => {
     try {
       const result: {
@@ -313,6 +326,7 @@ export default function ExplorerPage() {
 
       console.log("Indexing summary:", result);
       if (result.total_new_messages > 0) {
+        setIsSavedSyncComplete(false);
         toast({
           title: "Saved Messages Synced",
           description: `Found ${result.total_new_messages} new item${result.total_new_messages === 1 ? "" : "s"}.`,
@@ -324,6 +338,7 @@ export default function ExplorerPage() {
           loadDirectory(currentPathRef.current);
         }
       } else if (result.bootstrap_limited) {
+        setIsSavedSyncComplete(false);
         setHasMoreSavedItems(true);
       }
 
@@ -363,12 +378,14 @@ export default function ExplorerPage() {
       try {
         let hasMore = true;
         let indexedAny = false;
+        let syncComplete = false;
         while (!cancelled && hasMore) {
           const result: TelegramBackfillBatchResult = await invoke("tg_backfill_saved_messages_batch", {
             batchSize: SAVED_ITEMS_PAGE_SIZE,
           });
 
           hasMore = result.has_more;
+          syncComplete = result.is_complete;
           if (result.indexed_count > 0) {
             indexedAny = true;
             setHasMoreSavedItems(true);
@@ -380,11 +397,18 @@ export default function ExplorerPage() {
         }
 
         if (!cancelled && indexedAny && currentPathRef.current.startsWith("tg://saved")) {
-          await loadDirectory(currentPathRef.current);
+          await loadDirectory(currentPathRef.current, { force: true });
         }
 
         if (!cancelled && !indexedAny && indexResult?.total_new_messages === 0) {
-          await loadDirectory(currentPathRef.current);
+          await loadDirectory(currentPathRef.current, { force: true });
+        }
+
+        if (!cancelled) {
+          setIsSavedSyncComplete(syncComplete);
+          if (syncComplete) {
+            setHasMoreSavedItems(false);
+          }
         }
       } catch (error) {
         console.error("Error backfilling saved messages:", error);
