@@ -768,8 +768,8 @@ export default function ExplorerPage() {
         try {
           const fileBytes = Array.from(new Uint8Array(await droppedFile.arrayBuffer()));
           const uploadedMessage: TelegramMessage = await invoke("tg_upload_file_to_saved_messages", {
-            file_name: droppedFile.name,
-            file_bytes: fileBytes,
+            fileName: droppedFile.name,
+            fileBytes,
           });
 
           uploadedCount += 1;

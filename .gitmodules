@@ -1,0 +1,3 @@
+[submodule ".qoder/repowiki"]
+	path = .qoder/repowiki
+	url = https://github.com/pamod-madubashana/SkyBox-Source-Code.wiki.git
