@@ -572,21 +572,77 @@ export default function ExplorerPage() {
     };
   }, [backHistory, currentPath, forwardHistory, isLoading]);
 
+  const loadSavedItemsPage = async (path: string, offset: number, append: boolean) => {
+    const savedPath = virtualToSavedPath(path);
+    const result: TelegramSavedItemsPage = await invoke("tg_list_saved_items_page", {
+      filePath: savedPath,
+      offset,
+      limit: SAVED_ITEMS_PAGE_SIZE,
+    });
+
+    const pageItems = result.items.map(savedItemToFileItem);
+    if (append) {
+      setFiles((prev) => [...prev, ...pageItems]);
+    } else {
+      setFiles(pageItems);
+    }
+
+    setSavedItemsOffset(result.next_offset);
+    setHasMoreSavedItems(result.has_more);
+    setCurrentPath(path);
+  };
+
+  const loadMoreSavedItems = useCallback(async () => {
+    if (!currentPath.startsWith("tg://saved")) {
+      return;
+    }
+
+    if (isLoading || isLoadingMoreSavedItems) {
+      return;
+    }
+
+    if (!hasMoreSavedItems && !isSavedBackfillSyncing) {
+      return;
+    }
+
+    setIsLoadingMoreSavedItems(true);
+    try {
+      await loadSavedItemsPage(currentPath, savedItemsOffset, true);
+    } catch (error) {
+      console.error("Error loading more saved items:", error);
+      setHasMoreSavedItems(false);
+    } finally {
+      setIsLoadingMoreSavedItems(false);
+    }
+  }, [currentPath, hasMoreSavedItems, isLoading, isLoadingMoreSavedItems, isSavedBackfillSyncing, savedItemsOffset]);
+
+  const handleDirectoryScroll = (event: React.UIEvent<HTMLDivElement>) => {
+    if (!currentPath.startsWith("tg://saved")) {
+      return;
+    }
+
+    const target = event.currentTarget;
+    const reachedBottom = target.scrollTop + target.clientHeight >= target.scrollHeight - 120;
+    if (reachedBottom) {
+      void loadMoreSavedItems();
+    }
+  };
+
   const loadDirectory = async (path: string) => {
     setIsLoading(true);
     setError(null);
     try {
       if (path.startsWith("tg://saved")) {
-        const savedPath = virtualToSavedPath(path);
-        const result: TelegramSavedItem[] = await invoke("tg_list_saved_items", { filePath: savedPath });
-        const virtualItems = result.map(savedItemToFileItem);
-        setFiles(virtualItems);
-        setCurrentPath(path);
+        setSavedItemsOffset(0);
+        setHasMoreSavedItems(false);
+        await loadSavedItemsPage(path, 0, false);
       } else {
         const result: FileEntry[] = await invoke("fs_list_dir", { path });
         const convertedFiles = result.map(convertFileEntryToFileItem);
         setFiles(convertedFiles);
         setCurrentPath(path);
+        setSavedItemsOffset(0);
+        setHasMoreSavedItems(false);
       }
 
       // Add to recent paths (only for real FS paths for now, or decide if virtual paths should be saved)
