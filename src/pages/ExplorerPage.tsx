@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo, useCallback } from "react";
+import { useState, useEffect, useMemo, useCallback, useRef } from "react";
 import { ExplorerSidebar } from "@/components/skybox/ExplorerSidebar";
 import { SearchBar } from "@/components/skybox/SearchBar";
 import { Breadcrumbs } from "@/components/skybox/Breadcrumbs";
@@ -242,6 +242,12 @@ export default function ExplorerPage() {
   const [isUploadingFiles, setIsUploadingFiles] = useState(false);
   const [backHistory, setBackHistory] = useState<string[]>([]);
   const [forwardHistory, setForwardHistory] = useState<string[]>([]);
+  const navigationStateRef = useRef({
+    backHistory: [] as string[],
+    forwardHistory: [] as string[],
+    currentPath: "tg://saved",
+    isLoading: false,
+  });
 
   // Initialize with home directory and user info
   useEffect(() => {
@@ -264,6 +270,15 @@ export default function ExplorerPage() {
     // Trigger indexing
     indexSavedMessages();
   }, [location.state]);
+
+  useEffect(() => {
+    navigationStateRef.current = {
+      backHistory,
+      forwardHistory,
+      currentPath,
+      isLoading,
+    };
+  }, [backHistory, forwardHistory, currentPath, isLoading]);
 
   const indexSavedMessages = async () => {
     try {
@@ -397,7 +412,7 @@ export default function ExplorerPage() {
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       const canNavigateByKeyboard = !isTextInputElement(e.target);
-      const isBackShortcut = e.key === "Backspace" || e.key === "BrowserBack" || (e.altKey && e.key === "ArrowLeft");
+      const isBackShortcut = e.key === "BrowserBack" || (e.altKey && e.key === "ArrowLeft");
       const isForwardShortcut = e.key === "BrowserForward" || (e.altKey && e.key === "ArrowRight");
 
       if (canNavigateByKeyboard && isBackShortcut) {
@@ -564,6 +579,42 @@ export default function ExplorerPage() {
     setBackHistory((prev) => [...prev, currentPath]);
     await loadDirectory(nextPath);
   }, [currentPath, forwardHistory, isLoading]);
+
+  useEffect(() => {
+    const explorerUrl = window.location.href;
+    const guardState = {
+      ...(window.history.state || {}),
+      __skyboxExplorerGuard: true,
+    };
+
+    const hasGuardState =
+      typeof window.history.state === "object" &&
+      window.history.state !== null &&
+      "__skyboxExplorerGuard" in window.history.state;
+
+    if (!hasGuardState) {
+      window.history.pushState(guardState, "", explorerUrl);
+    }
+
+    const handlePopState = () => {
+      window.history.pushState(guardState, "", explorerUrl);
+
+      const { backHistory: stack, currentPath: activePath, isLoading: loading } = navigationStateRef.current;
+      if (!stack.length || loading) {
+        return;
+      }
+
+      const previousPath = stack[stack.length - 1];
+      setBackHistory((prev) => prev.slice(0, -1));
+      setForwardHistory((prev) => [...prev, activePath]);
+      void loadDirectory(previousPath);
+    };
+
+    window.addEventListener("popstate", handlePopState);
+    return () => {
+      window.removeEventListener("popstate", handlePopState);
+    };
+  }, []);
 
   const loadFavorites = async () => {
     try {
@@ -1064,7 +1115,7 @@ export default function ExplorerPage() {
               onClick={handleGoBack}
               className="p-2 rounded text-muted-foreground hover:text-foreground hover:bg-secondary transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
               disabled={!backHistory.length || isLoading}
-              title="Back (Backspace / Alt+Left)"
+              title="Back (Mouse Back / Alt+Left)"
             >
               <ChevronLeft className="w-4 h-4" />
             </button>
@@ -1072,7 +1123,7 @@ export default function ExplorerPage() {
               onClick={handleGoForward}
               className="p-2 rounded text-muted-foreground hover:text-foreground hover:bg-secondary transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
               disabled={!forwardHistory.length || isLoading}
-              title="Forward (Alt+Right)"
+              title="Forward (Mouse Forward / Alt+Right)"
             >
               <ChevronRight className="w-4 h-4" />
             </button>
