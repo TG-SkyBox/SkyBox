@@ -1298,6 +1298,170 @@ impl Database {
         Ok(())
     }
 
+    pub fn rename_telegram_saved_file_by_message_id(
+        &self,
+        owner_id: &str,
+        message_id: i32,
+        new_file_name: &str,
+        modified_date: &str,
+    ) -> Result<(), DbError> {
+        let conn = self.0.lock().unwrap();
+
+        let mut statement = conn
+            .prepare(
+                "UPDATE telegram_saved_items
+                 SET file_name = ?, file_caption = ?, modified_date = ?
+                 WHERE owner_id = ? AND message_id = ? AND file_type != 'folder'",
+            )
+            .map_err(|e| DbError {
+                message: format!("Failed to prepare statement: {}", e),
+            })?;
+
+        statement.bind((1, new_file_name)).map_err(|e| DbError {
+            message: format!("Failed to bind new_file_name: {}", e),
+        })?;
+        statement.bind((2, new_file_name)).map_err(|e| DbError {
+            message: format!("Failed to bind file_caption: {}", e),
+        })?;
+        statement.bind((3, modified_date)).map_err(|e| DbError {
+            message: format!("Failed to bind modified_date: {}", e),
+        })?;
+        statement.bind((4, owner_id)).map_err(|e| DbError {
+            message: format!("Failed to bind owner_id: {}", e),
+        })?;
+        statement.bind((5, message_id as i64)).map_err(|e| DbError {
+            message: format!("Failed to bind message_id: {}", e),
+        })?;
+
+        statement.next().map_err(|e| DbError {
+            message: format!("Failed to execute statement: {}", e),
+        })?;
+
+        Ok(())
+    }
+
+    pub fn rename_telegram_saved_folder_tree(
+        &self,
+        owner_id: &str,
+        parent_path: &str,
+        current_folder_name: &str,
+        new_folder_name: &str,
+        source_folder_path: &str,
+        destination_folder_path: &str,
+        modified_date: &str,
+    ) -> Result<(), DbError> {
+        let conn = self.0.lock().unwrap();
+
+        let mut rename_folder_statement = conn
+            .prepare(
+                "UPDATE telegram_saved_items
+                 SET file_name = ?, file_caption = ?, modified_date = ?
+                 WHERE owner_id = ?
+                   AND file_type = 'folder'
+                   AND file_path = ?
+                   AND file_name = ?",
+            )
+            .map_err(|e| DbError {
+                message: format!("Failed to prepare folder rename statement: {}", e),
+            })?;
+
+        rename_folder_statement
+            .bind((1, new_folder_name))
+            .map_err(|e| DbError {
+                message: format!("Failed to bind new_folder_name: {}", e),
+            })?;
+        rename_folder_statement
+            .bind((2, new_folder_name))
+            .map_err(|e| DbError {
+                message: format!("Failed to bind file_caption: {}", e),
+            })?;
+        rename_folder_statement
+            .bind((3, modified_date))
+            .map_err(|e| DbError {
+                message: format!("Failed to bind modified_date: {}", e),
+            })?;
+        rename_folder_statement.bind((4, owner_id)).map_err(|e| DbError {
+            message: format!("Failed to bind owner_id: {}", e),
+        })?;
+        rename_folder_statement
+            .bind((5, parent_path))
+            .map_err(|e| DbError {
+                message: format!("Failed to bind parent_path: {}", e),
+            })?;
+        rename_folder_statement
+            .bind((6, current_folder_name))
+            .map_err(|e| DbError {
+                message: format!("Failed to bind current_folder_name: {}", e),
+            })?;
+
+        rename_folder_statement.next().map_err(|e| DbError {
+            message: format!("Failed to execute folder rename statement: {}", e),
+        })?;
+
+        let prefix_like_pattern = format!("{}/%", source_folder_path);
+        let source_prefix_length = source_folder_path.len() as i64 + 1;
+
+        let mut rename_children_statement = conn
+            .prepare(
+                "UPDATE telegram_saved_items
+                 SET file_path = CASE
+                     WHEN file_path = ? THEN ?
+                     ELSE ? || substr(file_path, ?)
+                 END,
+                 modified_date = ?
+                 WHERE owner_id = ?
+                   AND (file_path = ? OR file_path LIKE ?)",
+            )
+            .map_err(|e| DbError {
+                message: format!("Failed to prepare child rename statement: {}", e),
+            })?;
+
+        rename_children_statement
+            .bind((1, source_folder_path))
+            .map_err(|e| DbError {
+                message: format!("Failed to bind source_folder_path (eq): {}", e),
+            })?;
+        rename_children_statement
+            .bind((2, destination_folder_path))
+            .map_err(|e| DbError {
+                message: format!("Failed to bind destination_folder_path (eq): {}", e),
+            })?;
+        rename_children_statement
+            .bind((3, destination_folder_path))
+            .map_err(|e| DbError {
+                message: format!("Failed to bind destination_folder_path (prefix): {}", e),
+            })?;
+        rename_children_statement
+            .bind((4, source_prefix_length))
+            .map_err(|e| DbError {
+                message: format!("Failed to bind source_prefix_length: {}", e),
+            })?;
+        rename_children_statement
+            .bind((5, modified_date))
+            .map_err(|e| DbError {
+                message: format!("Failed to bind modified_date: {}", e),
+            })?;
+        rename_children_statement.bind((6, owner_id)).map_err(|e| DbError {
+            message: format!("Failed to bind owner_id: {}", e),
+        })?;
+        rename_children_statement
+            .bind((7, source_folder_path))
+            .map_err(|e| DbError {
+                message: format!("Failed to bind source_folder_path (where): {}", e),
+            })?;
+        rename_children_statement
+            .bind((8, prefix_like_pattern.as_str()))
+            .map_err(|e| DbError {
+                message: format!("Failed to bind prefix_like_pattern: {}", e),
+            })?;
+
+        rename_children_statement.next().map_err(|e| DbError {
+            message: format!("Failed to execute child rename statement: {}", e),
+        })?;
+
+        Ok(())
+    }
+
     pub fn move_telegram_saved_folder_tree(
         &self,
         owner_id: &str,

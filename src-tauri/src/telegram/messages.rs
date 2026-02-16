@@ -1096,6 +1096,104 @@ pub async fn tg_move_saved_item_impl(
     Ok(())
 }
 
+pub async fn tg_rename_saved_item_impl(
+    db: Database,
+    source_path: String,
+    new_name: String,
+) -> Result<(), TelegramError> {
+    let trimmed_name = new_name.trim();
+    if trimmed_name.is_empty() {
+        return Err(TelegramError {
+            message: "New name cannot be empty".to_string(),
+        });
+    }
+
+    let normalized_name = sanitize_file_name(trimmed_name);
+
+    let state_guard = AUTH_STATE.lock().await;
+    let state = state_guard.as_ref().ok_or_else(|| TelegramError {
+        message: "Not authorized".to_string(),
+    })?;
+
+    let me = state.client.get_me().await.map_err(|e| TelegramError {
+        message: format!("Failed to get user info: {}", e),
+    })?;
+
+    let owner_id = me.raw.id().to_string();
+
+    db.ensure_telegram_saved_folders(&owner_id)
+        .map_err(|e| TelegramError {
+            message: format!("Failed to ensure default folders: {}", e.message),
+        })?;
+
+    let modified_date = chrono::Utc::now().to_rfc3339();
+
+    if let Some(message_id) = parse_message_id_from_virtual_path(&source_path) {
+        if !db
+            .telegram_saved_file_exists_by_message_id(&owner_id, message_id)
+            .map_err(|e| TelegramError {
+                message: format!("Failed to check source file: {}", e.message),
+            })?
+        {
+            return Err(TelegramError {
+                message: "Source file was not found in local index".to_string(),
+            });
+        }
+
+        db.rename_telegram_saved_file_by_message_id(
+            &owner_id,
+            message_id,
+            &normalized_name,
+            &modified_date,
+        )
+        .map_err(|e| TelegramError {
+            message: format!("Failed to rename file metadata: {}", e.message),
+        })?;
+
+        return Ok(());
+    }
+
+    let source_saved_path = virtual_to_saved_path(&source_path).ok_or_else(|| TelegramError {
+        message: "Invalid source path".to_string(),
+    })?;
+
+    if source_saved_path == "/Home" {
+        return Err(TelegramError {
+            message: "Cannot rename the root folder".to_string(),
+        });
+    }
+
+    let (parent_path, current_folder_name) =
+        split_saved_parent_and_name(&source_saved_path).ok_or_else(|| TelegramError {
+            message: "Invalid source folder path".to_string(),
+        })?;
+
+    if current_folder_name == normalized_name {
+        return Ok(());
+    }
+
+    let destination_folder_path = format!(
+        "{}/{}",
+        parent_path.trim_end_matches('/'),
+        normalized_name.as_str()
+    );
+
+    db.rename_telegram_saved_folder_tree(
+        &owner_id,
+        &parent_path,
+        &current_folder_name,
+        &normalized_name,
+        &source_saved_path,
+        &destination_folder_path,
+        &modified_date,
+    )
+    .map_err(|e| TelegramError {
+        message: format!("Failed to rename folder metadata: {}", e.message),
+    })?;
+
+    Ok(())
+}
+
 async fn get_or_fetch_message_thumbnail_impl(
     db: &Database,
     client: &grammers_client::Client,
