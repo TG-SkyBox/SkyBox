@@ -11,7 +11,7 @@ import {
 } from "lucide-react";
 import { LucideIcon } from "lucide-react";
 import { useState, useEffect } from "react";
-import { invoke } from "@tauri-apps/api/core";
+import { invoke, convertFileSrc } from "@tauri-apps/api/core";
 
 export interface FileItem {
   name: string;
@@ -132,6 +132,24 @@ const formatDate = (dateStr?: string): string => {
   }
 };
 
+const resolveThumbnailSrc = (thumbnail?: string | null): string | undefined => {
+  if (!thumbnail) {
+    return undefined;
+  }
+
+  if (
+    thumbnail.startsWith("data:") ||
+    thumbnail.startsWith("http://") ||
+    thumbnail.startsWith("https://") ||
+    thumbnail.startsWith("asset:") ||
+    thumbnail.startsWith("blob:")
+  ) {
+    return thumbnail;
+  }
+
+  return convertFileSrc(thumbnail);
+};
+
 export function FileRow({
   file,
   isSelected,
@@ -146,8 +164,12 @@ export function FileRow({
   onDrop,
   isDropTarget,
 }: FileRowProps) {
-  const [thumbUrl, setThumbUrl] = useState<string | undefined>(file.thumbnail);
+  const [thumbUrl, setThumbUrl] = useState<string | undefined>(resolveThumbnailSrc(file.thumbnail));
   const Icon = getFileIcon(file);
+
+  useEffect(() => {
+    setThumbUrl(resolveThumbnailSrc(file.thumbnail));
+  }, [file.thumbnail]);
 
   useEffect(() => {
     // If we have a messageId but no thumbnail, try to fetch it
@@ -156,7 +178,7 @@ export function FileRow({
         try {
           const result: string | null = await invoke("tg_get_message_thumbnail", { messageId: file.messageId });
           if (result) {
-            setThumbUrl(result);
+            setThumbUrl(resolveThumbnailSrc(result));
           }
         } catch (e) {
           console.error("Failed to fetch thumbnail for message:", file.messageId, e);
