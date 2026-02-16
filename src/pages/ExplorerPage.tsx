@@ -109,17 +109,9 @@ interface TelegramSavedItemsPage {
   next_offset: number;
 }
 
-interface TelegramBackfillBatchResult {
-  fetched_count: number;
-  indexed_count: number;
-  has_more: boolean;
-  is_complete: boolean;
-  next_offset_id?: number;
-}
-
-interface TelegramRebuildSavedItemsResult {
-  upserted_count: number;
-  oldest_message_id?: number;
+interface TelegramIndexSavedMessagesResult {
+  total_new_messages: number;
+  started_from_empty_db?: boolean;
 }
 
 interface SavedPathCacheEntry {
@@ -285,6 +277,7 @@ export default function ExplorerPage() {
   const filesRef = useRef<FileItem[]>([]);
   const currentPathRef = useRef("tg://saved");
   const savedLoadMoreLastAttemptRef = useRef(0);
+  const startupSyncRanRef = useRef(false);
   const lastNavigationAtRef = useRef(Date.now());
   const savedPathCacheRef = useRef<Record<string, SavedPathCacheEntry>>({});
   const navigationStateRef = useRef({
@@ -332,12 +325,9 @@ export default function ExplorerPage() {
     lastNavigationAtRef.current = Date.now();
   }, []);
 
-  const indexSavedMessages = async (): Promise<{ total_new_messages: number; bootstrap_limited?: boolean } | null> => {
+  const indexSavedMessages = async (): Promise<TelegramIndexSavedMessagesResult | null> => {
     try {
-      const result: {
-        total_new_messages: number;
-        bootstrap_limited?: boolean;
-      } = await invoke("tg_index_saved_messages");
+      const result: TelegramIndexSavedMessagesResult = await invoke("tg_index_saved_messages");
 
       console.log("Indexing summary:", result);
       if (result.total_new_messages > 0) {
@@ -347,14 +337,9 @@ export default function ExplorerPage() {
           description: `Found ${result.total_new_messages} new item${result.total_new_messages === 1 ? "" : "s"}.`,
         });
 
-        setHasMoreSavedItems(true);
-        // If we are currently viewing a Saved Messages path, refresh it
         if (currentPathRef.current.startsWith("tg://saved")) {
           loadDirectory(currentPathRef.current, { force: true });
         }
-      } else if (result.bootstrap_limited) {
-        setIsSavedSyncComplete(false);
-        setHasMoreSavedItems(true);
       }
 
       return result;
@@ -365,78 +350,28 @@ export default function ExplorerPage() {
   };
 
   useEffect(() => {
+    if (startupSyncRanRef.current) {
+      return;
+    }
+    startupSyncRanRef.current = true;
+
     let cancelled = false;
 
     const runSavedMessageSync = async () => {
-      const indexResult = await indexSavedMessages();
-      if (cancelled) {
-        return;
-      }
-
+      setIsSavedBackfillSyncing(true);
       try {
-        const rebuildResult: TelegramRebuildSavedItemsResult = await invoke("tg_rebuild_saved_items_index");
-        if (!cancelled && rebuildResult.upserted_count > 0) {
-          setHasMoreSavedItems(true);
+        await indexSavedMessages();
+
+        if (!cancelled) {
+          setIsSavedSyncComplete(true);
+          setHasMoreSavedItems(false);
+
           if (currentPathRef.current.startsWith("tg://saved")) {
             await loadDirectory(currentPathRef.current, { force: true });
           }
         }
       } catch (error) {
-        console.error("Error rebuilding saved item index:", error);
-      }
-
-      if (cancelled) {
-        return;
-      }
-
-      setIsSavedBackfillSyncing(true);
-      try {
-        let hasMore = true;
-        let indexedAny = false;
-        let syncComplete = false;
-        while (!cancelled && hasMore) {
-          const userNavigatedRecently = Date.now() - lastNavigationAtRef.current < 800;
-          if (userNavigatedRecently) {
-            await new Promise((resolve) => setTimeout(resolve, 200));
-            continue;
-          }
-
-          const result: TelegramBackfillBatchResult = await invoke("tg_backfill_saved_messages_batch", {
-            batchSize: SAVED_ITEMS_PAGE_SIZE,
-          });
-
-          hasMore = result.has_more;
-          syncComplete = result.is_complete;
-          if (result.indexed_count > 0) {
-            indexedAny = true;
-            setHasMoreSavedItems(true);
-          }
-
-          if (hasMore) {
-            await new Promise((resolve) => setTimeout(resolve, 250));
-          }
-        }
-
-        if (!cancelled && indexedAny && currentPathRef.current.startsWith("tg://saved")) {
-          await loadDirectory(currentPathRef.current, { force: true });
-        }
-
-        if (!cancelled && !indexedAny && indexResult?.total_new_messages === 0) {
-          await loadDirectory(currentPathRef.current, { force: true });
-        }
-
-        if (!cancelled) {
-          setIsSavedSyncComplete(syncComplete);
-          if (syncComplete) {
-            setHasMoreSavedItems(false);
-          }
-        }
-
-        if (!cancelled && syncComplete && currentPathRef.current.startsWith("tg://saved")) {
-          await loadAllSavedItems(currentPathRef.current);
-        }
-      } catch (error) {
-        console.error("Error backfilling saved messages:", error);
+        console.error("Error syncing saved messages:", error);
       } finally {
         if (!cancelled) {
           setIsSavedBackfillSyncing(false);
@@ -448,7 +383,7 @@ export default function ExplorerPage() {
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [indexSavedMessages]);
 
   // Load user info from session
   const loadUserInfo = async () => {

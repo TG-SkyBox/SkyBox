@@ -483,12 +483,8 @@ pub async fn tg_index_saved_messages_impl(db: Database) -> Result<serde_json::Va
         }),
         _ => return Err(TelegramError { message: "Invalid user type".to_string() }),
     };
-    let bootstrap_limited = last_id == 0;
-    let mut messages_iter = if bootstrap_limited {
-        client.iter_messages(input_peer).limit(DEFAULT_BATCH_SIZE)
-    } else {
-        client.iter_messages(input_peer)
-    };
+    let started_from_empty_db = last_id == 0;
+    let mut messages_iter = client.iter_messages(input_peer);
     
     let mut new_count = 0;
     let mut category_counts = std::collections::HashMap::new();
@@ -497,7 +493,7 @@ pub async fn tg_index_saved_messages_impl(db: Database) -> Result<serde_json::Va
     while let Some(message) = messages_iter.next().await.map_err(|e| TelegramError {
         message: format!("Failed to fetch messages: {}", e),
     })? {
-        if message.id() <= last_id {
+        if !started_from_empty_db && message.id() <= last_id {
             break;
         }
 
@@ -516,8 +512,8 @@ pub async fn tg_index_saved_messages_impl(db: Database) -> Result<serde_json::Va
         }
     }
 
-    if bootstrap_limited && new_count > 0 {
-        db.set_setting(&backfill_complete_key(chat_id), "0").map_err(|e| TelegramError {
+    if started_from_empty_db {
+        db.set_setting(&backfill_complete_key(chat_id), "1").map_err(|e| TelegramError {
             message: format!("Failed to update backfill completion state: {}", e.message),
         })?;
 
@@ -531,7 +527,7 @@ pub async fn tg_index_saved_messages_impl(db: Database) -> Result<serde_json::Va
     Ok(json!({
         "total_new_messages": new_count,
         "categories": category_counts,
-        "bootstrap_limited": bootstrap_limited
+        "started_from_empty_db": started_from_empty_db
     }))
 }
 
