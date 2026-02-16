@@ -176,13 +176,23 @@ fn hydrate_saved_items_from_cached_messages(
     owner_id: &str,
     chat_id: i64,
 ) -> Result<usize, TelegramError> {
+    let indexed_messages_count = db
+        .count_all_indexed_messages(chat_id)
+        .map_err(|e| TelegramError {
+            message: format!("Failed to count indexed messages: {}", e.message),
+        })?;
+
+    if indexed_messages_count == 0 {
+        return Ok(0);
+    }
+
     let existing_items = db
         .count_telegram_saved_non_folder_items(owner_id)
         .map_err(|e| TelegramError {
             message: format!("Failed to count saved items: {}", e.message),
         })?;
 
-    if existing_items > 0 {
+    if existing_items >= indexed_messages_count {
         return Ok(0);
     }
 

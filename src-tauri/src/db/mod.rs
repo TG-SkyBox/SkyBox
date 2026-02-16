@@ -817,6 +817,31 @@ impl Database {
         Ok(messages)
     }
 
+    pub fn count_all_indexed_messages(&self, chat_id: i64) -> Result<i64, DbError> {
+        let conn = self.0.lock().unwrap();
+
+        let mut statement = conn
+            .prepare("SELECT COUNT(*) FROM telegram_messages WHERE chat_id = ?")
+            .map_err(|e| DbError {
+                message: format!("Failed to prepare statement: {}", e),
+            })?;
+
+        statement.bind((1, chat_id)).map_err(|e| DbError {
+            message: format!("Failed to bind chat_id: {}", e),
+        })?;
+
+        match statement.next() {
+            Ok(SqliteState::Row) => {
+                let count: i64 = statement.read::<i64, usize>(0).unwrap_or(0);
+                Ok(count)
+            }
+            Ok(SqliteState::Done) => Ok(0),
+            Err(e) => Err(DbError {
+                message: format!("Failed to count indexed messages: {}", e),
+            }),
+        }
+    }
+
     pub fn get_last_indexed_message_id(&self, chat_id: i64) -> Result<i32, DbError> {
         let conn = self.0.lock().unwrap();
         
