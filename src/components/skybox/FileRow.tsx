@@ -11,7 +11,8 @@ import {
 } from "lucide-react";
 import { LucideIcon } from "lucide-react";
 import { useState, useEffect } from "react";
-import { invoke, convertFileSrc } from "@tauri-apps/api/core";
+import { invoke } from "@tauri-apps/api/core";
+import { resolveThumbnailSrc } from "@/lib/thumbnail-src";
 
 export interface FileItem {
   name: string;
@@ -132,42 +133,6 @@ const formatDate = (dateStr?: string): string => {
   }
 };
 
-const resolveThumbnailSrc = (thumbnail?: string | null): string | undefined => {
-  if (!thumbnail) {
-    return undefined;
-  }
-
-  if (
-    thumbnail.startsWith("data:") ||
-    thumbnail.startsWith("http://") ||
-    thumbnail.startsWith("https://") ||
-    thumbnail.startsWith("asset://") ||
-    thumbnail.startsWith("tauri://") ||
-    thumbnail.startsWith("asset:") ||
-    thumbnail.startsWith("blob:")
-  ) {
-    return thumbnail;
-  }
-
-  const normalizedPath = thumbnail.replace(/\\/g, "/");
-
-  try {
-    const converted = convertFileSrc(normalizedPath);
-    if (
-      converted.startsWith("http://") ||
-      converted.startsWith("https://") ||
-      converted.startsWith("asset://") ||
-      converted.startsWith("tauri://")
-    ) {
-      return converted;
-    }
-  } catch (error) {
-    console.warn("convertFileSrc failed for thumbnail path", normalizedPath, error);
-  }
-
-  return `http://asset.localhost/${encodeURIComponent(normalizedPath)}`;
-};
-
 export function FileRow({
   file,
   isSelected,
@@ -191,7 +156,7 @@ export function FileRow({
 
   useEffect(() => {
     // If we have a messageId but no thumbnail, try to fetch it
-    if (file.messageId && !thumbUrl) {
+    if (file.messageId && !thumbUrl && !file.thumbnail) {
       const fetchThumb = async () => {
         try {
           const result: string | null = await invoke("tg_get_message_thumbnail", { messageId: file.messageId });
@@ -204,7 +169,7 @@ export function FileRow({
       };
       fetchThumb();
     }
-  }, [file.messageId, thumbUrl]);
+  }, [file.messageId, file.thumbnail, thumbUrl]);
 
   return (
     <div

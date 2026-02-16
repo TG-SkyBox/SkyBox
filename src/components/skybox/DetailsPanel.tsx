@@ -12,43 +12,7 @@ import {
   Edit2,
 } from "lucide-react";
 import { TelegramButton } from "./TelegramButton";
-import { convertFileSrc } from "@tauri-apps/api/core";
-
-const resolveThumbnailSrc = (thumbnail?: string | null): string | undefined => {
-  if (!thumbnail) {
-    return undefined;
-  }
-
-  if (
-    thumbnail.startsWith("data:") ||
-    thumbnail.startsWith("http://") ||
-    thumbnail.startsWith("https://") ||
-    thumbnail.startsWith("asset://") ||
-    thumbnail.startsWith("tauri://") ||
-    thumbnail.startsWith("asset:") ||
-    thumbnail.startsWith("blob:")
-  ) {
-    return thumbnail;
-  }
-
-  const normalizedPath = thumbnail.replace(/\\/g, "/");
-
-  try {
-    const converted = convertFileSrc(normalizedPath);
-    if (
-      converted.startsWith("http://") ||
-      converted.startsWith("https://") ||
-      converted.startsWith("asset://") ||
-      converted.startsWith("tauri://")
-    ) {
-      return converted;
-    }
-  } catch (error) {
-    console.warn("convertFileSrc failed for thumbnail path", normalizedPath, error);
-  }
-
-  return `http://asset.localhost/${encodeURIComponent(normalizedPath)}`;
-};
+import { resolveThumbnailSrc } from "@/lib/thumbnail-src";
 
 interface DetailsPanelProps {
   file: FileItem | null;

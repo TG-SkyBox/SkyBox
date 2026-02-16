@@ -10,7 +10,8 @@ import { TelegramButton } from "@/components/skybox/TelegramButton";
 import { FolderPlus, Grid, List, SortAsc, RefreshCw, Copy, Trash2, Edit3, ChevronLeft, ChevronRight } from "lucide-react";
 import { useNavigate, useLocation } from "react-router-dom";
 import { toast } from "@/hooks/use-toast";
-import { invoke, convertFileSrc } from "@tauri-apps/api/core";
+import { invoke } from "@tauri-apps/api/core";
+import { resolveThumbnailSrc } from "@/lib/thumbnail-src";
 
 interface FsError {
   message: string;
@@ -215,42 +216,6 @@ const savedToVirtualPath = (savedPath: string): string => {
   }
 
   return "tg://saved";
-};
-
-const resolveThumbnailSrc = (thumbnail?: string | null): string | undefined => {
-  if (!thumbnail) {
-    return undefined;
-  }
-
-  if (
-    thumbnail.startsWith("data:") ||
-    thumbnail.startsWith("http://") ||
-    thumbnail.startsWith("https://") ||
-    thumbnail.startsWith("asset://") ||
-    thumbnail.startsWith("tauri://") ||
-    thumbnail.startsWith("asset:") ||
-    thumbnail.startsWith("blob:")
-  ) {
-    return thumbnail;
-  }
-
-  const normalizedPath = thumbnail.replace(/\\/g, "/");
-
-  try {
-    const converted = convertFileSrc(normalizedPath);
-    if (
-      converted.startsWith("http://") ||
-      converted.startsWith("https://") ||
-      converted.startsWith("asset://") ||
-      converted.startsWith("tauri://")
-    ) {
-      return converted;
-    }
-  } catch (error) {
-    console.warn("convertFileSrc failed for thumbnail path", normalizedPath, error);
-  }
-
-  return `http://asset.localhost/${encodeURIComponent(normalizedPath)}`;
 };
 
 const savedItemToFileItem = (item: TelegramSavedItem): FileItem => {
