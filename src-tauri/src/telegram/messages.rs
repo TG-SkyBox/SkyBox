@@ -363,8 +363,6 @@ pub async fn tg_list_saved_items_impl(db: Database, file_path: String) -> Result
         message: format!("Failed to ensure default folders: {}", e.message),
     })?;
 
-    let _ = hydrate_saved_items_from_cached_messages(&db, &owner_id, me.raw.id())?;
-
     db.get_telegram_saved_items_by_path(&owner_id, &normalized_path).map_err(|e| TelegramError {
         message: format!("Database error: {}", e.message),
     })
@@ -393,8 +391,6 @@ pub async fn tg_list_saved_items_page_impl(
     db.ensure_telegram_saved_folders(&owner_id).map_err(|e| TelegramError {
         message: format!("Failed to ensure default folders: {}", e.message),
     })?;
-
-    let _ = hydrate_saved_items_from_cached_messages(&db, &owner_id, me.raw.id())?;
 
     let mut items = db
         .get_telegram_saved_items_by_path_paginated(&owner_id, &normalized_path, safe_offset, safe_limit + 1)
@@ -435,8 +431,6 @@ pub async fn tg_backfill_saved_messages_batch_impl(
     db.ensure_telegram_saved_folders(&owner_id).map_err(|e| TelegramError {
         message: format!("Failed to ensure default folders: {}", e.message),
     })?;
-
-    let _ = hydrate_saved_items_from_cached_messages(&db, &owner_id, chat_id)?;
 
     let complete_key = backfill_complete_key(chat_id);
     let complete = db
@@ -547,6 +541,24 @@ pub async fn tg_rebuild_saved_items_index_impl(db: Database) -> Result<serde_jso
     db.ensure_telegram_saved_folders(&owner_id).map_err(|e| TelegramError {
         message: format!("Failed to ensure default folders: {}", e.message),
     })?;
+
+    let indexed_messages_count = db
+        .count_all_indexed_messages(chat_id)
+        .map_err(|e| TelegramError {
+            message: format!("Failed to count indexed messages: {}", e.message),
+        })?;
+    let saved_items_count = db
+        .count_telegram_saved_non_folder_items(&owner_id)
+        .map_err(|e| TelegramError {
+            message: format!("Failed to count saved items: {}", e.message),
+        })?;
+
+    if indexed_messages_count == 0 || saved_items_count >= indexed_messages_count {
+        return Ok(json!({
+            "upserted_count": 0,
+            "oldest_message_id": db.get_oldest_indexed_message_id(chat_id).unwrap_or(0)
+        }));
+    }
 
     let cached_messages = db.get_all_indexed_messages(chat_id).map_err(|e| TelegramError {
         message: format!("Failed to read cached telegram messages: {}", e.message),

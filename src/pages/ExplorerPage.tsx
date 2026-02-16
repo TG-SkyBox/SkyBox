@@ -126,6 +126,7 @@ interface SavedPathCacheEntry {
   items: FileItem[];
   nextOffset: number;
   hasMore: boolean;
+  isCompleteSnapshot: boolean;
 }
 
 // Convert Rust FileEntry to our FileItem type
@@ -328,7 +329,6 @@ export default function ExplorerPage() {
       console.log("Indexing summary:", result);
       if (result.total_new_messages > 0) {
         setIsSavedSyncComplete(false);
-        savedPathCacheRef.current = {};
         toast({
           title: "Saved Messages Synced",
           description: `Found ${result.total_new_messages} new item${result.total_new_messages === 1 ? "" : "s"}.`,
@@ -363,7 +363,6 @@ export default function ExplorerPage() {
       try {
         const rebuildResult: TelegramRebuildSavedItemsResult = await invoke("tg_rebuild_saved_items_index");
         if (!cancelled && rebuildResult.upserted_count > 0) {
-          savedPathCacheRef.current = {};
           setHasMoreSavedItems(true);
           if (currentPathRef.current.startsWith("tg://saved")) {
             await loadDirectory(currentPathRef.current, { force: true });
@@ -391,7 +390,6 @@ export default function ExplorerPage() {
           syncComplete = result.is_complete;
           if (result.indexed_count > 0) {
             indexedAny = true;
-            savedPathCacheRef.current = {};
             setHasMoreSavedItems(true);
           }
 
@@ -551,7 +549,7 @@ export default function ExplorerPage() {
 
       if (canNavigateByKeyboard && isBackShortcut) {
         e.preventDefault();
-        if (backHistory.length && !isLoading) {
+        if (backHistory.length) {
           const previousPath = backHistory[backHistory.length - 1];
           setBackHistory((prev) => prev.slice(0, -1));
           setForwardHistory((prev) => [...prev, currentPath]);
@@ -562,7 +560,7 @@ export default function ExplorerPage() {
 
       if (canNavigateByKeyboard && isForwardShortcut) {
         e.preventDefault();
-        if (forwardHistory.length && !isLoading) {
+        if (forwardHistory.length) {
           const nextPath = forwardHistory[forwardHistory.length - 1];
           setForwardHistory((prev) => prev.slice(0, -1));
           setBackHistory((prev) => [...prev, currentPath]);
@@ -610,7 +608,7 @@ export default function ExplorerPage() {
       if (event.button === 3) {
         event.preventDefault();
         event.stopPropagation();
-        if (backHistory.length && !isLoading) {
+        if (backHistory.length) {
           const previousPath = backHistory[backHistory.length - 1];
           setBackHistory((prev) => prev.slice(0, -1));
           setForwardHistory((prev) => [...prev, currentPath]);
@@ -621,7 +619,7 @@ export default function ExplorerPage() {
       if (event.button === 4) {
         event.preventDefault();
         event.stopPropagation();
-        if (forwardHistory.length && !isLoading) {
+        if (forwardHistory.length) {
           const nextPath = forwardHistory[forwardHistory.length - 1];
           setForwardHistory((prev) => prev.slice(0, -1));
           setBackHistory((prev) => [...prev, currentPath]);
@@ -651,11 +649,18 @@ export default function ExplorerPage() {
     return true;
   };
 
-  const cacheSavedPath = (path: string, items: FileItem[], nextOffset: number, hasMore: boolean) => {
+  const cacheSavedPath = (
+    path: string,
+    items: FileItem[],
+    nextOffset: number,
+    hasMore: boolean,
+    isCompleteSnapshot: boolean,
+  ) => {
     savedPathCacheRef.current[path] = {
       items,
       nextOffset,
       hasMore,
+      isCompleteSnapshot,
     };
   };
 
@@ -673,7 +678,7 @@ export default function ExplorerPage() {
     setSavedItemsOffset(result.next_offset);
     setHasMoreSavedItems(result.has_more);
     setCurrentPath(path);
-    cacheSavedPath(path, mergedItems, result.next_offset, result.has_more);
+    cacheSavedPath(path, mergedItems, result.next_offset, result.has_more, false);
   };
 
   const loadAllSavedItems = async (path: string) => {
@@ -687,13 +692,19 @@ export default function ExplorerPage() {
     setSavedItemsOffset(allItems.length);
     setHasMoreSavedItems(false);
     setCurrentPath(path);
-    cacheSavedPath(path, allItems, allItems.length, false);
+    cacheSavedPath(path, allItems, allItems.length, false, true);
   };
 
   const loadMoreSavedItems = async () => {
     if (!currentPath.startsWith("tg://saved")) {
       return;
     }
+
+    const now = Date.now();
+    if (now - savedLoadMoreLastAttemptRef.current < 250) {
+      return;
+    }
+    savedLoadMoreLastAttemptRef.current = now;
 
     if (isLoading || isLoadingMoreSavedItems) {
       return;
@@ -738,7 +749,7 @@ export default function ExplorerPage() {
       const hasCache = applySavedPathCache(path);
       if (hasCache) {
         const cacheEntry = savedPathCacheRef.current[path];
-        if (isSavedSyncComplete && cacheEntry.hasMore) {
+        if (isSavedSyncComplete && !cacheEntry.isCompleteSnapshot) {
           void loadAllSavedItems(path).catch((error) => {
             console.error("Error upgrading cached saved items view to full list:", error);
           });
@@ -804,7 +815,7 @@ export default function ExplorerPage() {
   }, [currentPath]);
 
   const handleGoBack = useCallback(async () => {
-    if (!backHistory.length || isLoading) {
+    if (!backHistory.length) {
       return;
     }
 
@@ -812,10 +823,10 @@ export default function ExplorerPage() {
     setBackHistory((prev) => prev.slice(0, -1));
     setForwardHistory((prev) => [...prev, currentPath]);
     await loadDirectory(previousPath);
-  }, [backHistory, currentPath, isLoading]);
+  }, [backHistory, currentPath]);
 
   const handleGoForward = useCallback(async () => {
-    if (!forwardHistory.length || isLoading) {
+    if (!forwardHistory.length) {
       return;
     }
 
@@ -823,7 +834,7 @@ export default function ExplorerPage() {
     setForwardHistory((prev) => prev.slice(0, -1));
     setBackHistory((prev) => [...prev, currentPath]);
     await loadDirectory(nextPath);
-  }, [currentPath, forwardHistory, isLoading]);
+  }, [currentPath, forwardHistory]);
 
   useEffect(() => {
     const explorerUrl = window.location.href;
@@ -1363,7 +1374,7 @@ export default function ExplorerPage() {
             <button
               onClick={handleGoBack}
               className="p-2 rounded text-muted-foreground hover:text-foreground hover:bg-secondary transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
-              disabled={!backHistory.length || isLoading}
+              disabled={!backHistory.length}
               title="Back (Mouse Back / Alt+Left)"
             >
               <ChevronLeft className="w-4 h-4" />
@@ -1371,7 +1382,7 @@ export default function ExplorerPage() {
             <button
               onClick={handleGoForward}
               className="p-2 rounded text-muted-foreground hover:text-foreground hover:bg-secondary transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
-              disabled={!forwardHistory.length || isLoading}
+              disabled={!forwardHistory.length}
               title="Forward (Mouse Forward / Alt+Right)"
             >
               <ChevronRight className="w-4 h-4" />
