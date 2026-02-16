@@ -158,6 +158,24 @@ Lists locally indexed Saved Messages items for a virtual path.
 
 **Returns:** `Result<Vec<TelegramSavedItem>, TelegramError>`
 
+### `tg_list_saved_items_page(file_path: String, offset: i64, limit: i64)`
+Lists locally indexed Saved Messages items for a virtual path using pagination.
+
+**Parameters:**
+- `file_path`: Virtual storage path (for example `/Home`, `/Home/Videos`)
+- `offset`: Pagination offset
+- `limit`: Maximum items per page (recommended `50`)
+
+**Returns:** `Result<{ items: TelegramSavedItem[], has_more: bool, next_offset: i64 }, TelegramError>`
+
+### `tg_backfill_saved_messages_batch(batch_size?: i32)`
+Indexes older Saved Messages into local storage in small batches.
+
+**Parameters:**
+- `batch_size`: Optional batch size (`50` recommended)
+
+**Returns:** `Result<{ fetched_count: usize, indexed_count: usize, has_more: bool, is_complete: bool, next_offset_id?: i32 }, TelegramError>`
+
 ### `tg_create_saved_folder(parent_path: String, folder_name: String)`
 Creates a virtual Saved Messages folder record in local metadata.
 

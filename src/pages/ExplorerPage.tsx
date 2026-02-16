@@ -796,12 +796,16 @@ export default function ExplorerPage() {
 
   // Sort: directories first, then by name
   const sortedFiles = useMemo(() => {
+    if (currentPath.startsWith("tg://saved")) {
+      return filteredFiles;
+    }
+
     return [...filteredFiles].sort((a, b) => {
       if (a.isDirectory && !b.isDirectory) return -1;
       if (!a.isDirectory && b.isDirectory) return 1;
       return a.name.localeCompare(b.name);
     });
-  }, [filteredFiles]);
+  }, [currentPath, filteredFiles]);
 
   const handleFileSelect = (file: FileItem) => {
     setSelectedFile(file);
@@ -919,9 +923,7 @@ export default function ExplorerPage() {
   };
 
   const handleRefresh = async () => {
-    setIsLoading(true);
     await loadDirectory(currentPath);
-    setIsLoading(false);
     toast({
       title: "Refreshed",
       description: "Directory contents refreshed"
@@ -1343,6 +1345,12 @@ export default function ExplorerPage() {
             <span className="text-small text-muted-foreground">
               {sortedFiles.length} {sortedFiles.length === 1 ? 'item' : 'items'}
             </span>
+            {currentPath.startsWith("tg://saved") && isSavedBackfillSyncing && (
+              <span className="text-small text-muted-foreground inline-flex items-center gap-1">
+                <span className="inline-block w-2 h-2 rounded-full bg-primary animate-pulse" />
+                Syncing...
+              </span>
+            )}
           </div>
         </div>
 
@@ -1353,6 +1361,7 @@ export default function ExplorerPage() {
             onDragOver={handleExplorerDragOver}
             onDragLeave={handleExplorerDragLeave}
             onDrop={handleExplorerDrop}
+            onScroll={handleDirectoryScroll}
           >
             {(isExternalDragging || isUploadingFiles) && (
               <div className="pointer-events-none absolute inset-4 z-20 rounded-xl border-2 border-dashed border-primary/60 bg-primary/10 flex items-center justify-center">
@@ -1440,6 +1449,12 @@ export default function ExplorerPage() {
                     onDragLeave={(_, file) => handleItemDragLeave(file)}
                     onDrop={(event, file) => handleItemDrop(event, file)}
                   />
+                )}
+
+                {isLoadingMoreSavedItems && (
+                  <div className="flex items-center justify-center py-4">
+                    <div className="animate-spin rounded-full h-5 w-5 border-b-2 border-primary" />
+                  </div>
                 )}
               </div>
             )}
