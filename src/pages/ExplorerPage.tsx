@@ -320,9 +320,9 @@ export default function ExplorerPage() {
     filesRef.current = files;
   }, [files]);
 
-  const markNavigationActivity = () => {
+  const markNavigationActivity = useCallback(() => {
     lastNavigationAtRef.current = Date.now();
-  };
+  }, []);
 
   const indexSavedMessages = async (): Promise<{ total_new_messages: number; bootstrap_limited?: boolean } | null> => {
     try {
@@ -387,6 +387,12 @@ export default function ExplorerPage() {
         let indexedAny = false;
         let syncComplete = false;
         while (!cancelled && hasMore) {
+          const userNavigatedRecently = Date.now() - lastNavigationAtRef.current < 800;
+          if (userNavigatedRecently) {
+            await new Promise((resolve) => setTimeout(resolve, 200));
+            continue;
+          }
+
           const result: TelegramBackfillBatchResult = await invoke("tg_backfill_saved_messages_batch", {
             batchSize: SAVED_ITEMS_PAGE_SIZE,
           });
@@ -532,7 +538,7 @@ export default function ExplorerPage() {
     return () => {
       window.removeEventListener('navigate-to-path', handleNavigateEvent as EventListener);
     };
-  }, [currentPath]);
+  }, [currentPath, markNavigationActivity]);
 
   // Listen for logout events from sidebar
   useEffect(() => {
@@ -599,7 +605,7 @@ export default function ExplorerPage() {
     return () => {
       window.removeEventListener('keydown', handleKeyDown);
     };
-  }, [selectedFile, showDetails, backHistory, forwardHistory, currentPath, isLoading]);
+  }, [selectedFile, showDetails, backHistory, forwardHistory, currentPath, isLoading, markNavigationActivity]);
 
   useEffect(() => {
     const suppressDefaultMouseNavigation = (event: MouseEvent) => {
@@ -645,7 +651,7 @@ export default function ExplorerPage() {
       window.removeEventListener("mousedown", suppressDefaultMouseNavigation, true);
       window.removeEventListener("mouseup", handleMouseNavigationButtons, true);
     };
-  }, [backHistory, currentPath, forwardHistory, isLoading]);
+  }, [backHistory, currentPath, forwardHistory, isLoading, markNavigationActivity]);
 
   const applySavedPathCache = (path: string): boolean => {
     const cacheEntry = savedPathCacheRef.current[path];
@@ -824,7 +830,7 @@ export default function ExplorerPage() {
     setForwardHistory([]);
     markNavigationActivity();
     await loadDirectory(path);
-  }, [currentPath]);
+  }, [currentPath, markNavigationActivity]);
 
   const handleGoBack = useCallback(async () => {
     if (!backHistory.length) {
@@ -836,7 +842,7 @@ export default function ExplorerPage() {
     setForwardHistory((prev) => [...prev, currentPath]);
     markNavigationActivity();
     await loadDirectory(previousPath);
-  }, [backHistory, currentPath]);
+  }, [backHistory, currentPath, markNavigationActivity]);
 
   const handleGoForward = useCallback(async () => {
     if (!forwardHistory.length) {
@@ -848,7 +854,7 @@ export default function ExplorerPage() {
     setBackHistory((prev) => [...prev, currentPath]);
     markNavigationActivity();
     await loadDirectory(nextPath);
-  }, [currentPath, forwardHistory]);
+  }, [currentPath, forwardHistory, markNavigationActivity]);
 
   useEffect(() => {
     const explorerUrl = window.location.href;
@@ -885,7 +891,7 @@ export default function ExplorerPage() {
     return () => {
       window.removeEventListener("popstate", handlePopState);
     };
-  }, []);
+  }, [markNavigationActivity]);
 
   const loadFavorites = async () => {
     try {
