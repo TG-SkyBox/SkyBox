@@ -8,9 +8,29 @@ interface FileGridProps {
     onSelect: (file: FileItem) => void;
     onOpen: (file: FileItem) => void;
     onContextMenu: (e: React.MouseEvent, file: FileItem) => void;
+    isDraggable?: (file: FileItem) => boolean;
+    isDropTarget?: (file: FileItem) => boolean;
+    onDragStart?: (e: React.DragEvent, file: FileItem) => void;
+    onDragEnd?: (e: React.DragEvent, file: FileItem) => void;
+    onDragOver?: (e: React.DragEvent, file: FileItem) => void;
+    onDragLeave?: (e: React.DragEvent, file: FileItem) => void;
+    onDrop?: (e: React.DragEvent, file: FileItem) => void;
 }
 
-export function FileGrid({ files, selectedFile, onSelect, onOpen, onContextMenu }: FileGridProps) {
+export function FileGrid({
+    files,
+    selectedFile,
+    onSelect,
+    onOpen,
+    onContextMenu,
+    isDraggable,
+    isDropTarget,
+    onDragStart,
+    onDragEnd,
+    onDragOver,
+    onDragLeave,
+    onDrop,
+}: FileGridProps) {
     return (
         <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-4">
             {files.map((file) => (
@@ -21,6 +41,13 @@ export function FileGrid({ files, selectedFile, onSelect, onOpen, onContextMenu 
                     onSelect={() => onSelect(file)}
                     onOpen={() => onOpen(file)}
                     onContextMenu={(e) => onContextMenu(e, file)}
+                    draggable={isDraggable?.(file)}
+                    isDropTarget={isDropTarget?.(file)}
+                    onDragStart={(e) => onDragStart?.(e, file)}
+                    onDragEnd={(e) => onDragEnd?.(e, file)}
+                    onDragOver={(e) => onDragOver?.(e, file)}
+                    onDragLeave={(e) => onDragLeave?.(e, file)}
+                    onDrop={(e) => onDrop?.(e, file)}
                 />
             ))}
         </div>
@@ -33,9 +60,29 @@ interface FileGridItemProps {
     onSelect: () => void;
     onOpen: () => void;
     onContextMenu: (e: React.MouseEvent) => void;
+    draggable?: boolean;
+    isDropTarget?: boolean;
+    onDragStart?: (e: React.DragEvent) => void;
+    onDragEnd?: (e: React.DragEvent) => void;
+    onDragOver?: (e: React.DragEvent) => void;
+    onDragLeave?: (e: React.DragEvent) => void;
+    onDrop?: (e: React.DragEvent) => void;
 }
 
-function FileGridItem({ file, isSelected, onSelect, onOpen, onContextMenu }: FileGridItemProps) {
+function FileGridItem({
+    file,
+    isSelected,
+    onSelect,
+    onOpen,
+    onContextMenu,
+    draggable,
+    isDropTarget,
+    onDragStart,
+    onDragEnd,
+    onDragOver,
+    onDragLeave,
+    onDrop,
+}: FileGridItemProps) {
     const [thumbUrl, setThumbUrl] = useState<string | undefined>(file.thumbnail);
     const Icon = getFileIcon(file);
 
@@ -61,10 +108,16 @@ function FileGridItem({ file, isSelected, onSelect, onOpen, onContextMenu }: Fil
             onClick={onSelect}
             onDoubleClick={onOpen}
             onContextMenu={onContextMenu}
+            draggable={draggable}
+            onDragStart={onDragStart}
+            onDragEnd={onDragEnd}
+            onDragOver={onDragOver}
+            onDragLeave={onDragLeave}
+            onDrop={onDrop}
             className={`group flex flex-col items-center p-3 rounded-xl cursor-pointer transition-all duration-200 border ${isSelected
                     ? "bg-sidebar-accent border-primary/30 shadow-lg shadow-primary/5"
                     : "hover:bg-sidebar-accent/50 border-transparent hover:border-border"
-                }`}
+                } ${isDropTarget ? "ring-1 ring-primary/60 bg-primary/10" : ""}`}
         >
             <div className="w-full aspect-square mb-3 flex items-center justify-center rounded-lg overflow-hidden bg-secondary/30 group-hover:bg-secondary/50 transition-colors relative">
                 {thumbUrl ? (

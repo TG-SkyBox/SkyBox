@@ -106,6 +106,37 @@ const mockRoots = [
   { id: "2", path: "/media/external", name: "External Drive" },
 ];
 
+const INTERNAL_DRAG_MIME = "application/x-skybox-item-path";
+
+const isVirtualPath = (path: string): boolean => path.startsWith("tg://");
+
+const normalizePath = (path: string): string => path.replace(/\\/g, "/").replace(/\/+/g, "/");
+
+const getPathName = (path: string): string => {
+  const normalized = normalizePath(path).replace(/\/+$/, "");
+  const parts = normalized.split("/").filter(Boolean);
+  return parts[parts.length - 1] || normalized;
+};
+
+const getParentPath = (path: string): string => {
+  const normalized = normalizePath(path).replace(/\/+$/, "");
+  const index = normalized.lastIndexOf("/");
+  if (index <= 0) {
+    return "";
+  }
+
+  return normalized.slice(0, index);
+};
+
+const joinPath = (base: string, name: string): string => {
+  const normalizedBase = normalizePath(base).replace(/\/+$/, "");
+  if (!normalizedBase) {
+    return name;
+  }
+
+  return `${normalizedBase}/${name}`;
+};
+
 export default function ExplorerPage() {
   const navigate = useNavigate();
   const location = useLocation();
@@ -122,6 +153,10 @@ export default function ExplorerPage() {
   const [userInfo, setUserInfo] = useState<UserInfo | null>(null);
   const [avatarUrl, setAvatarUrl] = useState<string | null>(null);
   const [phoneNumber, setPhoneNumber] = useState<string | null>(null);
+  const [draggedPath, setDraggedPath] = useState<string | null>(null);
+  const [dropTargetPath, setDropTargetPath] = useState<string | null>(null);
+  const [isExternalDragging, setIsExternalDragging] = useState(false);
+  const [isUploadingFiles, setIsUploadingFiles] = useState(false);
 
   // Initialize with home directory and user info
   useEffect(() => {
@@ -593,6 +628,212 @@ export default function ExplorerPage() {
     });
   };
 
+  const isDraggableItem = (file: FileItem) => !isVirtualPath(file.path);
+
+  const getDraggedSourcePath = (event: React.DragEvent): string | null => {
+    const fromTransfer = event.dataTransfer.getData(INTERNAL_DRAG_MIME);
+    if (fromTransfer) {
+      return fromTransfer;
+    }
+
+    return draggedPath;
+  };
+
+  const canDropToTarget = (sourcePath: string, target: FileItem): boolean => {
+    if (!target.isDirectory) {
+      return false;
+    }
+
+    if (isVirtualPath(sourcePath) || isVirtualPath(target.path)) {
+      return false;
+    }
+
+    const normalizedSourcePath = normalizePath(sourcePath);
+    const normalizedTargetPath = normalizePath(target.path);
+
+    if (normalizedSourcePath === normalizedTargetPath) {
+      return false;
+    }
+
+    const sourceParentPath = getParentPath(normalizedSourcePath);
+    if (sourceParentPath === normalizedTargetPath) {
+      return false;
+    }
+
+    const sourceItem = files.find((file) => normalizePath(file.path) === normalizedSourcePath);
+    if (sourceItem?.isDirectory && normalizedTargetPath.startsWith(`${normalizedSourcePath}/`)) {
+      return false;
+    }
+
+    return true;
+  };
+
+  const handleItemDragStart = (event: React.DragEvent, file: FileItem) => {
+    if (!isDraggableItem(file)) {
+      return;
+    }
+
+    event.dataTransfer.effectAllowed = "move";
+    event.dataTransfer.setData(INTERNAL_DRAG_MIME, file.path);
+    setDraggedPath(file.path);
+  };
+
+  const handleItemDragEnd = () => {
+    setDraggedPath(null);
+    setDropTargetPath(null);
+  };
+
+  const handleItemDragOver = (event: React.DragEvent, target: FileItem) => {
+    const sourcePath = getDraggedSourcePath(event);
+    if (!sourcePath || !canDropToTarget(sourcePath, target)) {
+      return;
+    }
+
+    event.preventDefault();
+    event.dataTransfer.dropEffect = "move";
+    setDropTargetPath(target.path);
+  };
+
+  const handleItemDragLeave = (target: FileItem) => {
+    if (dropTargetPath === target.path) {
+      setDropTargetPath(null);
+    }
+  };
+
+  const handleItemDrop = async (event: React.DragEvent, target: FileItem) => {
+    const sourcePath = getDraggedSourcePath(event);
+    if (!sourcePath || !canDropToTarget(sourcePath, target)) {
+      return;
+    }
+
+    event.preventDefault();
+    event.stopPropagation();
+
+    const destinationPath = joinPath(target.path, getPathName(sourcePath));
+
+    try {
+      await invoke("move_file", { source: sourcePath, destination: destinationPath });
+      toast({
+        title: "Moved",
+        description: `${getPathName(sourcePath)} moved to ${target.name}`,
+      });
+
+      if (selectedFile?.path === sourcePath) {
+        setSelectedFile(null);
+        setShowDetails(false);
+      }
+
+      await loadDirectory(currentPath);
+    } catch (error) {
+      const typedError = error as FsError;
+      toast({
+        title: "Move failed",
+        description: typedError.message || "Unable to move item",
+        variant: "destructive",
+      });
+    } finally {
+      setDraggedPath(null);
+      setDropTargetPath(null);
+    }
+  };
+
+  const isExternalFileDrag = (event: React.DragEvent): boolean => {
+    const dragTypes = Array.from(event.dataTransfer.types || []);
+    const hasFiles = dragTypes.includes("Files");
+    const hasInternalFile = dragTypes.includes(INTERNAL_DRAG_MIME);
+    return hasFiles && !hasInternalFile;
+  };
+
+  const handleUploadFiles = async (droppedFiles: File[]) => {
+    if (!droppedFiles.length) {
+      return;
+    }
+
+    if (!currentPath.startsWith("tg://saved")) {
+      toast({
+        title: "Upload unavailable",
+        description: "Drag-and-drop upload is available in Saved Messages only.",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    setIsUploadingFiles(true);
+
+    let uploadedCount = 0;
+    let failedCount = 0;
+    const uploadedCategories = new Set<string>();
+
+    for (const droppedFile of droppedFiles) {
+      try {
+        const fileBytes = Array.from(new Uint8Array(await droppedFile.arrayBuffer()));
+        const uploadedMessage: TelegramMessage = await invoke("tg_upload_file_to_saved_messages", {
+          file_name: droppedFile.name,
+          file_bytes: fileBytes,
+        });
+
+        uploadedCount += 1;
+        uploadedCategories.add(uploadedMessage.category);
+      } catch (error) {
+        failedCount += 1;
+        console.error("Failed to upload file:", droppedFile.name, error);
+      }
+    }
+
+    if (uploadedCount > 0) {
+      await loadDirectory(currentPath);
+
+      const categorySummary = uploadedCategories.size
+        ? ` to ${Array.from(uploadedCategories).join(", ")}`
+        : "";
+
+      toast({
+        title: "Upload complete",
+        description: `Uploaded ${uploadedCount} file${uploadedCount === 1 ? "" : "s"}${categorySummary}`,
+      });
+    }
+
+    if (failedCount > 0) {
+      toast({
+        title: "Some uploads failed",
+        description: `${failedCount} file${failedCount === 1 ? "" : "s"} could not be uploaded`,
+        variant: "destructive",
+      });
+    }
+
+    setIsUploadingFiles(false);
+  };
+
+  const handleExplorerDragOver = (event: React.DragEvent) => {
+    if (!isExternalFileDrag(event)) {
+      return;
+    }
+
+    event.preventDefault();
+    event.dataTransfer.dropEffect = "copy";
+    setIsExternalDragging(true);
+  };
+
+  const handleExplorerDragLeave = (event: React.DragEvent<HTMLDivElement>) => {
+    const nextTarget = event.relatedTarget as Node | null;
+    if (nextTarget && event.currentTarget.contains(nextTarget)) {
+      return;
+    }
+
+    setIsExternalDragging(false);
+  };
+
+  const handleExplorerDrop = async (event: React.DragEvent) => {
+    if (!isExternalFileDrag(event)) {
+      return;
+    }
+
+    event.preventDefault();
+    setIsExternalDragging(false);
+
+    await handleUploadFiles(Array.from(event.dataTransfer.files));
+  };
+
   return (
     <div className="h-screen flex overflow-hidden">
       {/* Sidebar */}
@@ -705,7 +946,22 @@ export default function ExplorerPage() {
 
         {/* File list */}
         <div className="flex-1 flex min-h-0">
-          <div className="flex-1 overflow-y-auto p-4">
+          <div
+            className="relative flex-1 overflow-y-auto p-4"
+            onDragOver={handleExplorerDragOver}
+            onDragLeave={handleExplorerDragLeave}
+            onDrop={handleExplorerDrop}
+          >
+            {(isExternalDragging || isUploadingFiles) && (
+              <div className="pointer-events-none absolute inset-4 z-20 rounded-xl border-2 border-dashed border-primary/60 bg-primary/10 flex items-center justify-center">
+                <p className="text-body font-medium text-foreground">
+                  {isUploadingFiles
+                    ? "Uploading files to Saved Messages..."
+                    : "Drop files here to upload to Saved Messages"}
+                </p>
+              </div>
+            )}
+
             {error ? (
               <div className="flex flex-col items-center justify-center h-full text-center">
                 <p className="text-body text-destructive mb-2">
@@ -755,6 +1011,13 @@ export default function ExplorerPage() {
                         e.preventDefault();
                         handleFileSelect(file);
                       }}
+                      draggable={isDraggableItem(file)}
+                      isDropTarget={dropTargetPath === file.path}
+                      onDragStart={(event) => handleItemDragStart(event, file)}
+                      onDragEnd={handleItemDragEnd}
+                      onDragOver={(event) => handleItemDragOver(event, file)}
+                      onDragLeave={() => handleItemDragLeave(file)}
+                      onDrop={(event) => handleItemDrop(event, file)}
                     />
                   ))
                 ) : (
@@ -767,6 +1030,13 @@ export default function ExplorerPage() {
                       e.preventDefault();
                       handleFileSelect(file);
                     }}
+                    isDraggable={isDraggableItem}
+                    isDropTarget={(file) => dropTargetPath === file.path}
+                    onDragStart={(event, file) => handleItemDragStart(event, file)}
+                    onDragEnd={handleItemDragEnd}
+                    onDragOver={(event, file) => handleItemDragOver(event, file)}
+                    onDragLeave={(_, file) => handleItemDragLeave(file)}
+                    onDrop={(event, file) => handleItemDrop(event, file)}
                   />
                 )}
               </div>
