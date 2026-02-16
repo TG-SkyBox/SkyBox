@@ -150,6 +150,8 @@ const INTERNAL_DRAG_MIME = "application/x-skybox-item-path";
 const SAVED_ITEMS_PAGE_SIZE = 50;
 
 const isVirtualPath = (path: string): boolean => path.startsWith("tg://");
+const isSavedVirtualFolderPath = (path: string): boolean => path === "tg://saved" || path.startsWith("tg://saved/");
+const isSavedVirtualFilePath = (path: string): boolean => path.startsWith("tg://msg/");
 
 const normalizePath = (path: string): string => path.replace(/\\/g, "/");
 
@@ -1174,7 +1176,17 @@ export default function ExplorerPage() {
     });
   };
 
-  const isDraggableItem = (file: FileItem) => !isVirtualPath(file.path);
+  const isDraggableItem = (file: FileItem) => {
+    if (isSavedVirtualFolderPath(file.path)) {
+      return file.path !== "tg://saved";
+    }
+
+    if (isSavedVirtualFilePath(file.path)) {
+      return true;
+    }
+
+    return !isVirtualPath(file.path);
+  };
 
   const getDraggedSourcePath = (event: React.DragEvent): string | null => {
     const fromTransfer = event.dataTransfer.getData(INTERNAL_DRAG_MIME);
@@ -1188,6 +1200,42 @@ export default function ExplorerPage() {
   const canDropToTarget = (sourcePath: string, target: FileItem): boolean => {
     if (!target.isDirectory) {
       return false;
+    }
+
+    const sourceItem = files.find((file) => file.path === sourcePath);
+
+    const sourceIsSavedVirtual = isSavedVirtualFolderPath(sourcePath) || isSavedVirtualFilePath(sourcePath);
+    const targetIsSavedVirtualFolder = isSavedVirtualFolderPath(target.path);
+
+    if (sourceIsSavedVirtual || targetIsSavedVirtualFolder) {
+      if (!sourceIsSavedVirtual || !targetIsSavedVirtualFolder) {
+        return false;
+      }
+
+      if (sourcePath === target.path) {
+        return false;
+      }
+
+      if (isSavedVirtualFolderPath(sourcePath)) {
+        const sourceParentPath = getParentPath(sourcePath);
+        if (sourceParentPath === target.path) {
+          return false;
+        }
+
+        if (target.path.startsWith(`${sourcePath}/`)) {
+          return false;
+        }
+      }
+
+      if (isSavedVirtualFilePath(sourcePath) && currentPath === target.path) {
+        return false;
+      }
+
+      if (!sourceItem && !isSavedVirtualFilePath(sourcePath)) {
+        return false;
+      }
+
+      return true;
     }
 
     if (isVirtualPath(sourcePath) || isVirtualPath(target.path)) {
@@ -1206,7 +1254,6 @@ export default function ExplorerPage() {
       return false;
     }
 
-    const sourceItem = files.find((file) => normalizePath(file.path) === normalizedSourcePath);
     if (sourceItem?.isDirectory && normalizedTargetPath.startsWith(`${normalizedSourcePath}/`)) {
       return false;
     }
@@ -1252,8 +1299,44 @@ export default function ExplorerPage() {
       return;
     }
 
+    const sourceItem = files.find((file) => file.path === sourcePath);
+    const sourceDisplayName = sourceItem?.name || getPathName(sourcePath);
+
     event.preventDefault();
     event.stopPropagation();
+
+    if ((isSavedVirtualFolderPath(sourcePath) || isSavedVirtualFilePath(sourcePath)) && isSavedVirtualFolderPath(target.path)) {
+      try {
+        await invoke("tg_move_saved_item", {
+          sourcePath,
+          destinationPath: target.path,
+        });
+
+        toast({
+          title: "Moved",
+          description: `${sourceDisplayName} moved to ${target.name}`,
+        });
+
+        if (selectedFile?.path === sourcePath) {
+          setSelectedFile(null);
+          setShowDetails(false);
+        }
+
+        savedPathCacheRef.current = {};
+        await loadDirectory(currentPath, { force: true });
+      } catch (error) {
+        const typedError = error as TelegramError;
+        toast({
+          title: "Move failed",
+          description: typedError.message || "Unable to move item",
+          variant: "destructive",
+        });
+      } finally {
+        setDraggedPath(null);
+        setDropTargetPath(null);
+      }
+      return;
+    }
 
     const destinationPath = joinPath(target.path, getPathName(sourcePath));
 
@@ -1261,7 +1344,7 @@ export default function ExplorerPage() {
       await invoke("move_file", { source: sourcePath, destination: destinationPath });
       toast({
         title: "Moved",
-        description: `${getPathName(sourcePath)} moved to ${target.name}`,
+        description: `${sourceDisplayName} moved to ${target.name}`,
       });
 
       if (selectedFile?.path === sourcePath) {

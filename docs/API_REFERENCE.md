@@ -189,3 +189,12 @@ Creates a virtual Saved Messages folder record in local metadata.
 - `folder_name`: Folder name to create
 
 **Returns:** `Result<TelegramSavedItem, TelegramError>`
+
+### `tg_move_saved_item(source_path: String, destination_path: String)`
+Moves a virtual Saved Messages item (file or folder) between local virtual folders.
+
+**Parameters:**
+- `source_path`: Source virtual path (`tg://msg/<id>` for files or `tg://saved/...` for folders)
+- `destination_path`: Destination virtual folder path (`tg://saved/...`)
+
+**Returns:** `Result<(), TelegramError>`

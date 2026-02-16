@@ -1094,6 +1094,227 @@ impl Database {
         }
     }
 
+    pub fn telegram_saved_file_exists_by_message_id(&self, owner_id: &str, message_id: i32) -> Result<bool, DbError> {
+        let conn = self.0.lock().unwrap();
+
+        let mut statement = conn
+            .prepare(
+                "SELECT COUNT(*)
+                 FROM telegram_saved_items
+                 WHERE owner_id = ? AND message_id = ? AND file_type != 'folder'",
+            )
+            .map_err(|e| DbError {
+                message: format!("Failed to prepare statement: {}", e),
+            })?;
+
+        statement.bind((1, owner_id)).map_err(|e| DbError {
+            message: format!("Failed to bind owner_id: {}", e),
+        })?;
+        statement.bind((2, message_id as i64)).map_err(|e| DbError {
+            message: format!("Failed to bind message_id: {}", e),
+        })?;
+
+        match statement.next() {
+            Ok(SqliteState::Row) => {
+                let count: i64 = statement.read::<i64, usize>(0).unwrap_or(0);
+                Ok(count > 0)
+            }
+            Ok(SqliteState::Done) => Ok(false),
+            Err(e) => Err(DbError {
+                message: format!("Failed to read file existence: {}", e),
+            }),
+        }
+    }
+
+    pub fn telegram_saved_folder_exists(&self, owner_id: &str, parent_path: &str, folder_name: &str) -> Result<bool, DbError> {
+        let conn = self.0.lock().unwrap();
+
+        let mut statement = conn
+            .prepare(
+                "SELECT COUNT(*)
+                 FROM telegram_saved_items
+                 WHERE owner_id = ? AND file_type = 'folder' AND file_path = ? AND file_name = ?",
+            )
+            .map_err(|e| DbError {
+                message: format!("Failed to prepare statement: {}", e),
+            })?;
+
+        statement.bind((1, owner_id)).map_err(|e| DbError {
+            message: format!("Failed to bind owner_id: {}", e),
+        })?;
+        statement.bind((2, parent_path)).map_err(|e| DbError {
+            message: format!("Failed to bind parent_path: {}", e),
+        })?;
+        statement.bind((3, folder_name)).map_err(|e| DbError {
+            message: format!("Failed to bind folder_name: {}", e),
+        })?;
+
+        match statement.next() {
+            Ok(SqliteState::Row) => {
+                let count: i64 = statement.read::<i64, usize>(0).unwrap_or(0);
+                Ok(count > 0)
+            }
+            Ok(SqliteState::Done) => Ok(false),
+            Err(e) => Err(DbError {
+                message: format!("Failed to read folder existence: {}", e),
+            }),
+        }
+    }
+
+    pub fn move_telegram_saved_file_by_message_id(
+        &self,
+        owner_id: &str,
+        message_id: i32,
+        destination_path: &str,
+        modified_date: &str,
+    ) -> Result<(), DbError> {
+        let conn = self.0.lock().unwrap();
+
+        let mut statement = conn
+            .prepare(
+                "UPDATE telegram_saved_items
+                 SET file_path = ?, modified_date = ?
+                 WHERE owner_id = ? AND message_id = ? AND file_type != 'folder'",
+            )
+            .map_err(|e| DbError {
+                message: format!("Failed to prepare statement: {}", e),
+            })?;
+
+        statement.bind((1, destination_path)).map_err(|e| DbError {
+            message: format!("Failed to bind destination_path: {}", e),
+        })?;
+        statement.bind((2, modified_date)).map_err(|e| DbError {
+            message: format!("Failed to bind modified_date: {}", e),
+        })?;
+        statement.bind((3, owner_id)).map_err(|e| DbError {
+            message: format!("Failed to bind owner_id: {}", e),
+        })?;
+        statement.bind((4, message_id as i64)).map_err(|e| DbError {
+            message: format!("Failed to bind message_id: {}", e),
+        })?;
+
+        statement.next().map_err(|e| DbError {
+            message: format!("Failed to execute statement: {}", e),
+        })?;
+
+        Ok(())
+    }
+
+    pub fn move_telegram_saved_folder_tree(
+        &self,
+        owner_id: &str,
+        source_parent_path: &str,
+        folder_name: &str,
+        source_folder_path: &str,
+        destination_parent_path: &str,
+        destination_folder_path: &str,
+        modified_date: &str,
+    ) -> Result<(), DbError> {
+        let conn = self.0.lock().unwrap();
+
+        let mut move_folder_statement = conn
+            .prepare(
+                "UPDATE telegram_saved_items
+                 SET file_path = ?, modified_date = ?
+                 WHERE owner_id = ?
+                   AND file_type = 'folder'
+                   AND file_path = ?
+                   AND file_name = ?",
+            )
+            .map_err(|e| DbError {
+                message: format!("Failed to prepare folder move statement: {}", e),
+            })?;
+
+        move_folder_statement
+            .bind((1, destination_parent_path))
+            .map_err(|e| DbError {
+                message: format!("Failed to bind destination_parent_path: {}", e),
+            })?;
+        move_folder_statement
+            .bind((2, modified_date))
+            .map_err(|e| DbError {
+                message: format!("Failed to bind modified_date: {}", e),
+            })?;
+        move_folder_statement.bind((3, owner_id)).map_err(|e| DbError {
+            message: format!("Failed to bind owner_id: {}", e),
+        })?;
+        move_folder_statement
+            .bind((4, source_parent_path))
+            .map_err(|e| DbError {
+                message: format!("Failed to bind source_parent_path: {}", e),
+            })?;
+        move_folder_statement.bind((5, folder_name)).map_err(|e| DbError {
+            message: format!("Failed to bind folder_name: {}", e),
+        })?;
+
+        move_folder_statement.next().map_err(|e| DbError {
+            message: format!("Failed to execute folder move statement: {}", e),
+        })?;
+
+        let prefix_like_pattern = format!("{}/%", source_folder_path);
+        let source_prefix_length = source_folder_path.len() as i64 + 1;
+
+        let mut move_children_statement = conn
+            .prepare(
+                "UPDATE telegram_saved_items
+                 SET file_path = CASE
+                     WHEN file_path = ? THEN ?
+                     ELSE ? || substr(file_path, ?)
+                 END,
+                 modified_date = ?
+                 WHERE owner_id = ?
+                   AND (file_path = ? OR file_path LIKE ?)",
+            )
+            .map_err(|e| DbError {
+                message: format!("Failed to prepare child move statement: {}", e),
+            })?;
+
+        move_children_statement
+            .bind((1, source_folder_path))
+            .map_err(|e| DbError {
+                message: format!("Failed to bind source_folder_path (eq): {}", e),
+            })?;
+        move_children_statement
+            .bind((2, destination_folder_path))
+            .map_err(|e| DbError {
+                message: format!("Failed to bind destination_folder_path (eq): {}", e),
+            })?;
+        move_children_statement
+            .bind((3, destination_folder_path))
+            .map_err(|e| DbError {
+                message: format!("Failed to bind destination_folder_path (prefix): {}", e),
+            })?;
+        move_children_statement
+            .bind((4, source_prefix_length))
+            .map_err(|e| DbError {
+                message: format!("Failed to bind source_prefix_length: {}", e),
+            })?;
+        move_children_statement
+            .bind((5, modified_date))
+            .map_err(|e| DbError {
+                message: format!("Failed to bind modified_date: {}", e),
+            })?;
+        move_children_statement.bind((6, owner_id)).map_err(|e| DbError {
+            message: format!("Failed to bind owner_id: {}", e),
+        })?;
+        move_children_statement
+            .bind((7, source_folder_path))
+            .map_err(|e| DbError {
+                message: format!("Failed to bind source_folder_path (where): {}", e),
+            })?;
+        move_children_statement
+            .bind((8, prefix_like_pattern.as_str()))
+            .map_err(|e| DbError {
+                message: format!("Failed to bind prefix_like_pattern: {}", e),
+            })?;
+
+        move_children_statement.next().map_err(|e| DbError {
+            message: format!("Failed to execute child move statement: {}", e),
+        })?;
+
+        Ok(())
+    }
+
     pub fn get_telegram_saved_items_by_path_paginated(
         &self,
         owner_id: &str,

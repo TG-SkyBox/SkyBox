@@ -209,6 +209,57 @@ fn normalize_saved_path(path: &str) -> String {
     format!("/Home/{}", without_trailing)
 }
 
+fn virtual_to_saved_path(path: &str) -> Option<String> {
+    let trimmed = path.trim();
+    if trimmed.starts_with("tg://saved") {
+        let relative = trimmed
+            .trim_start_matches("tg://saved")
+            .trim_start_matches('/')
+            .trim_end_matches('/');
+
+        if relative.is_empty() {
+            return Some("/Home".to_string());
+        }
+
+        return Some(format!("/Home/{}", relative));
+    }
+
+    if trimmed.starts_with("/Home") || trimmed.starts_with('/') {
+        return Some(normalize_saved_path(trimmed));
+    }
+
+    None
+}
+
+fn parse_message_id_from_virtual_path(path: &str) -> Option<i32> {
+    path
+        .trim()
+        .strip_prefix("tg://msg/")
+        .and_then(|value| value.parse::<i32>().ok())
+}
+
+fn split_saved_parent_and_name(path: &str) -> Option<(String, String)> {
+    let normalized = normalize_saved_path(path);
+    if normalized == "/Home" {
+        return None;
+    }
+
+    let trimmed = normalized.trim_end_matches('/');
+    let index = trimmed.rfind('/')?;
+    let parent = if index == 0 {
+        "/Home".to_string()
+    } else {
+        trimmed[..index].to_string()
+    };
+    let name = trimmed[index + 1..].trim().to_string();
+
+    if name.is_empty() {
+        return None;
+    }
+
+    Some((parent, name))
+}
+
 fn category_to_saved_path(category: &str) -> String {
     match category {
         "Images" => "/Home/Images".to_string(),
@@ -805,6 +856,105 @@ pub async fn tg_create_saved_folder_impl(
     })?;
 
     Ok(folder_item)
+}
+
+pub async fn tg_move_saved_item_impl(
+    db: Database,
+    source_path: String,
+    destination_path: String,
+) -> Result<(), TelegramError> {
+    let state_guard = AUTH_STATE.lock().await;
+    let state = state_guard.as_ref().ok_or_else(|| TelegramError {
+        message: "Not authorized".to_string(),
+    })?;
+
+    let me = state.client.get_me().await.map_err(|e| TelegramError {
+        message: format!("Failed to get user info: {}", e),
+    })?;
+
+    let owner_id = me.raw.id().to_string();
+    let normalized_destination = virtual_to_saved_path(&destination_path).ok_or_else(|| TelegramError {
+        message: "Invalid destination path".to_string(),
+    })?;
+
+    db.ensure_telegram_saved_folders(&owner_id).map_err(|e| TelegramError {
+        message: format!("Failed to ensure default folders: {}", e.message),
+    })?;
+
+    let modified_date = chrono::Utc::now().to_rfc3339();
+
+    if let Some(message_id) = parse_message_id_from_virtual_path(&source_path) {
+        if !db
+            .telegram_saved_file_exists_by_message_id(&owner_id, message_id)
+            .map_err(|e| TelegramError {
+                message: format!("Failed to check source file: {}", e.message),
+            })?
+        {
+            return Err(TelegramError {
+                message: "Source file was not found in local index".to_string(),
+            });
+        }
+
+        db.move_telegram_saved_file_by_message_id(&owner_id, message_id, &normalized_destination, &modified_date)
+            .map_err(|e| TelegramError {
+                message: format!("Failed to move file metadata: {}", e.message),
+            })?;
+
+        return Ok(());
+    }
+
+    let source_saved_path = virtual_to_saved_path(&source_path).ok_or_else(|| TelegramError {
+        message: "Invalid source path".to_string(),
+    })?;
+
+    if source_saved_path == "/Home" {
+        return Err(TelegramError {
+            message: "Cannot move the root folder".to_string(),
+        });
+    }
+
+    if source_saved_path == normalized_destination {
+        return Ok(());
+    }
+
+    let destination_prefix = format!("{}/", source_saved_path);
+    if normalized_destination.starts_with(&destination_prefix) {
+        return Err(TelegramError {
+            message: "Cannot move a folder into its own child".to_string(),
+        });
+    }
+
+    let (source_parent_path, folder_name) = split_saved_parent_and_name(&source_saved_path).ok_or_else(|| TelegramError {
+        message: "Invalid source folder path".to_string(),
+    })?;
+
+    if !db
+        .telegram_saved_folder_exists(&owner_id, &source_parent_path, &folder_name)
+        .map_err(|e| TelegramError {
+            message: format!("Failed to check source folder: {}", e.message),
+        })?
+    {
+        return Err(TelegramError {
+            message: "Source folder was not found in local index".to_string(),
+        });
+    }
+
+    let destination_folder_path = format!("{}/{}", normalized_destination.trim_end_matches('/'), folder_name);
+
+    db.move_telegram_saved_folder_tree(
+        &owner_id,
+        &source_parent_path,
+        &folder_name,
+        &source_saved_path,
+        &normalized_destination,
+        &destination_folder_path,
+        &modified_date,
+    )
+    .map_err(|e| TelegramError {
+        message: format!("Failed to move folder metadata: {}", e.message),
+    })?;
+
+    Ok(())
 }
 
 pub async fn tg_get_message_thumbnail_impl(db: Database, message_id: i32) -> Result<Option<String>, TelegramError> {

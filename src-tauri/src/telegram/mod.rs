@@ -219,6 +219,7 @@ use messages::{
     tg_backfill_saved_messages_batch_impl,
     tg_rebuild_saved_items_index_impl,
     tg_create_saved_folder_impl,
+    tg_move_saved_item_impl,
     tg_get_message_thumbnail_impl,
     tg_upload_file_to_saved_messages_impl,
 };
@@ -321,6 +322,15 @@ pub async fn tg_create_saved_folder(
     folder_name: String,
 ) -> Result<crate::db::TelegramSavedItem, TelegramError> {
     tg_create_saved_folder_impl(db.inner().clone(), parent_path, folder_name).await
+}
+
+#[tauri::command]
+pub async fn tg_move_saved_item(
+    db: State<'_, crate::db::Database>,
+    source_path: String,
+    destination_path: String,
+) -> Result<(), TelegramError> {
+    tg_move_saved_item_impl(db.inner().clone(), source_path, destination_path).await
 }
 
 #[tauri::command]
