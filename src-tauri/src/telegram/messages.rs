@@ -1,8 +1,44 @@
 use crate::db::{Database, TelegramMessage};
 use crate::telegram::{AUTH_STATE, TelegramError};
+use grammers_client::InputMessage;
 use grammers_client::types::{Message, Media};
 use grammers_client::grammers_tl_types as tl;
 use serde_json::json;
+use std::fs;
+use std::path::PathBuf;
+use std::time::{SystemTime, UNIX_EPOCH};
+
+fn sanitize_upload_file_name(file_name: &str) -> String {
+    let trimmed = file_name.trim();
+    if trimmed.is_empty() {
+        return "upload.bin".to_string();
+    }
+
+    trimmed
+        .chars()
+        .map(|ch| {
+            if matches!(ch, '/' | '\\' | ':' | '*' | '?' | '"' | '<' | '>' | '|') {
+                '_'
+            } else {
+                ch
+            }
+        })
+        .collect()
+}
+
+fn build_temp_upload_path(file_name: &str) -> PathBuf {
+    let timestamp = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| duration.as_millis())
+        .unwrap_or(0);
+
+    std::env::temp_dir().join(format!(
+        "skybox_upload_{}_{}_{}",
+        std::process::id(),
+        timestamp,
+        file_name
+    ))
+}
 
 pub async fn tg_index_saved_messages_impl(db: Database) -> Result<serde_json::Value, TelegramError> {
     let state_guard = AUTH_STATE.lock().await;
@@ -211,6 +247,84 @@ pub async fn tg_get_message_thumbnail_impl(db: Database, message_id: i32) -> Res
     }
 
     Ok(Some(data_url))
+}
+
+pub async fn tg_upload_file_to_saved_messages_impl(
+    db: Database,
+    file_name: String,
+    file_bytes: Vec<u8>,
+) -> Result<TelegramMessage, TelegramError> {
+    if file_bytes.is_empty() {
+        return Err(TelegramError {
+            message: "Cannot upload an empty file".to_string(),
+        });
+    }
+
+    let safe_file_name = sanitize_upload_file_name(&file_name);
+
+    let client = {
+        let state_guard = AUTH_STATE.lock().await;
+        let state = state_guard.as_ref().ok_or_else(|| TelegramError {
+            message: "Not authorized".to_string(),
+        })?;
+        state.client.clone()
+    };
+
+    let me = client.get_me().await.map_err(|e| TelegramError {
+        message: format!("Failed to get user info: {}", e),
+    })?;
+
+    let chat_id = me.raw.id();
+    let input_peer = match &me.raw {
+        tl::enums::User::User(user) => tl::enums::InputPeer::User(tl::types::InputPeerUser {
+            user_id: user.id,
+            access_hash: user.access_hash.unwrap_or(0),
+        }),
+        _ => {
+            return Err(TelegramError {
+                message: "Invalid user type".to_string(),
+            })
+        }
+    };
+
+    let temp_path = build_temp_upload_path(&safe_file_name);
+    fs::write(&temp_path, &file_bytes).map_err(|e| TelegramError {
+        message: format!(
+            "Failed to prepare temporary upload file {}: {}",
+            temp_path.display(),
+            e
+        ),
+    })?;
+
+    let upload_result = client.upload_file(&temp_path).await;
+    if let Err(cleanup_error) = fs::remove_file(&temp_path) {
+        log::warn!(
+            "Failed to delete temporary upload file {}: {}",
+            temp_path.display(),
+            cleanup_error
+        );
+    }
+
+    let uploaded_file = upload_result.map_err(|e| TelegramError {
+        message: format!("Failed to upload file to Telegram: {}", e),
+    })?;
+
+    let sent_message = client
+        .send_message(input_peer, InputMessage::new().file(uploaded_file))
+        .await
+        .map_err(|e| TelegramError {
+            message: format!("Failed to send uploaded file: {}", e),
+        })?;
+
+    let telegram_message = categorize_message(&sent_message, chat_id).ok_or_else(|| TelegramError {
+        message: "Uploaded message could not be indexed".to_string(),
+    })?;
+
+    db.save_telegram_message(&telegram_message).map_err(|e| TelegramError {
+        message: format!("Failed to save uploaded message metadata: {}", e.message),
+    })?;
+
+    Ok(telegram_message)
 }
 
 
