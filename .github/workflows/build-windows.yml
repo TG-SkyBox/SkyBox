@@ -2,7 +2,7 @@ name: Build Tauri Windows App
 
 on:
   push:
-    branches: [ main, master, featured ]
+    branches: [ main, master ]
   workflow_dispatch:
 
 jobs:
