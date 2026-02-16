@@ -141,13 +141,31 @@ const resolveThumbnailSrc = (thumbnail?: string | null): string | undefined => {
     thumbnail.startsWith("data:") ||
     thumbnail.startsWith("http://") ||
     thumbnail.startsWith("https://") ||
+    thumbnail.startsWith("asset://") ||
+    thumbnail.startsWith("tauri://") ||
     thumbnail.startsWith("asset:") ||
     thumbnail.startsWith("blob:")
   ) {
     return thumbnail;
   }
 
-  return convertFileSrc(thumbnail);
+  const normalizedPath = thumbnail.replace(/\\/g, "/");
+
+  try {
+    const converted = convertFileSrc(normalizedPath);
+    if (
+      converted.startsWith("http://") ||
+      converted.startsWith("https://") ||
+      converted.startsWith("asset://") ||
+      converted.startsWith("tauri://")
+    ) {
+      return converted;
+    }
+  } catch (error) {
+    console.warn("convertFileSrc failed for thumbnail path", normalizedPath, error);
+  }
+
+  return `http://asset.localhost/${encodeURIComponent(normalizedPath)}`;
 };
 
 export function FileRow({
