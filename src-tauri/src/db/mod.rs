@@ -966,6 +966,8 @@ impl Database {
              WHERE owner_id = ? AND file_path = ?
              ORDER BY
                 CASE WHEN file_type = 'folder' THEN 0 ELSE 1 END,
+                CASE WHEN file_type = 'folder' THEN LOWER(file_name) ELSE '' END,
+                CASE WHEN file_type = 'folder' THEN 0 ELSE message_id END DESC,
                 LOWER(file_name) ASC",
         ).map_err(|e| DbError {
             message: format!("Failed to prepare statement: {}", e),
