@@ -85,11 +85,40 @@ function FileGridItem({
     onDrop,
 }: FileGridItemProps) {
     const [thumbUrl, setThumbUrl] = useState<string | undefined>(resolveThumbnailSrc(file.thumbnail));
+    const [hasRetriedBrokenThumbnail, setHasRetriedBrokenThumbnail] = useState(false);
     const Icon = getFileIcon(file);
 
     useEffect(() => {
         setThumbUrl(resolveThumbnailSrc(file.thumbnail));
+        setHasRetriedBrokenThumbnail(false);
     }, [file.thumbnail]);
+
+    const refetchThumbnail = async () => {
+        if (!file.messageId) {
+            setThumbUrl(undefined);
+            return;
+        }
+
+        if (hasRetriedBrokenThumbnail) {
+            setThumbUrl(undefined);
+            return;
+        }
+
+        setHasRetriedBrokenThumbnail(true);
+
+        try {
+            const result: string | null = await invoke("tg_get_message_thumbnail", { messageId: file.messageId });
+            const resolved = resolveThumbnailSrc(result);
+            if (resolved) {
+                setThumbUrl(resolved);
+                return;
+            }
+        } catch (e) {
+            console.error("Failed to refetch missing thumbnail for message:", file.messageId, e);
+        }
+
+        setThumbUrl(undefined);
+    };
 
     useEffect(() => {
         // If we have a messageId but no thumbnail, try to fetch it
@@ -126,7 +155,14 @@ function FileGridItem({
         >
             <div className="w-full max-w-24 max-h-24 aspect-square mb-3 mx-auto flex items-center justify-center rounded-lg overflow-hidden bg-secondary/30 group-hover:bg-secondary/50 transition-colors relative">
                 {thumbUrl ? (
-                    <img src={thumbUrl} alt={file.name} className="w-full h-full object-cover transition-transform duration-300 group-hover:scale-105" />
+                    <img
+                        src={thumbUrl}
+                        alt={file.name}
+                        className="w-full h-full object-cover transition-transform duration-300 group-hover:scale-105"
+                        onError={() => {
+                            void refetchThumbnail();
+                        }}
+                    />
                 ) : (
                     <Icon
                         className={`w-10 h-10 transition-transform duration-200 group-hover:scale-110 ${file.isDirectory ? "text-primary" : "text-muted-foreground"
