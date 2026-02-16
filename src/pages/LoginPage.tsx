@@ -9,6 +9,7 @@ import { TelegramInput } from "@/components/skybox/TelegramInput"; // Assuming t
 import { toast } from "@/hooks/use-toast";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
+import { getVersion } from "@tauri-apps/api/app";
 import { logger } from "@/lib/logger";
 
 interface DbError {
@@ -78,6 +79,7 @@ export default function LoginPage() {
   const [otp, setOtp] = useState("");
   const [password, setPassword] = useState("");
   const [isLoading, setIsLoading] = useState(false);
+  const [appVersion, setAppVersion] = useState<string>("...");
 
   // QR Login state
   const [qrData, setQrData] = useState<string | null>(null);
@@ -90,6 +92,29 @@ export default function LoginPage() {
   const isMigratingRef = useRef<boolean>(false); // Track migration state
 
   // Removed the session check useEffect since it's now handled in LoadingPage
+
+  useEffect(() => {
+    let cancelled = false;
+
+    const loadAppVersion = async () => {
+      try {
+        const version = await getVersion();
+        if (!cancelled) {
+          setAppVersion(version);
+        }
+      } catch (error) {
+        logger.warn("LoginPage: Failed to read app version", error);
+        if (!cancelled) {
+          setAppVersion("unknown");
+        }
+      }
+    };
+
+    void loadAppVersion();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   const handlePhoneSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -711,7 +736,7 @@ export default function LoginPage() {
       {/* Footer */}
       <div className="p-4 text-center">
         <p className="text-small text-muted-foreground">
-          skybox 1.0.0
+          skybox {appVersion}
         </p>
       </div>
     </div>
