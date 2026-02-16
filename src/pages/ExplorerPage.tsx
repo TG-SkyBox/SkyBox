@@ -297,6 +297,7 @@ export default function ExplorerPage() {
   const savedLoadMoreLastAttemptRef = useRef(0);
   const startupSyncRanRef = useRef(false);
   const lastNavigationAtRef = useRef(Date.now());
+  const prefetchedThumbnailIdsRef = useRef<Set<number>>(new Set());
   const savedPathCacheRef = useRef<Record<string, SavedPathCacheEntry>>({});
   const navigationStateRef = useRef({
     backHistory: [] as string[],
@@ -624,6 +625,7 @@ export default function ExplorerPage() {
     setSavedItemsOffset(cacheEntry.nextOffset);
     setHasMoreSavedItems(cacheEntry.hasMore);
     setCurrentPath(path);
+    prefetchThumbnailsForItems(cacheEntry.items);
     return true;
   };
 
@@ -642,6 +644,24 @@ export default function ExplorerPage() {
     };
   };
 
+  const prefetchThumbnailsForItems = (items: FileItem[]) => {
+    const messageIds = items
+      .map((item) => item.messageId)
+      .filter((id): id is number => !!id && id > 0)
+      .filter((id) => !prefetchedThumbnailIdsRef.current.has(id));
+
+    if (!messageIds.length) {
+      return;
+    }
+
+    messageIds.forEach((id) => prefetchedThumbnailIdsRef.current.add(id));
+
+    invoke("tg_prefetch_message_thumbnails", { messageIds }).catch((error) => {
+      console.error("Failed to prefetch message thumbnails:", error);
+      messageIds.forEach((id) => prefetchedThumbnailIdsRef.current.delete(id));
+    });
+  };
+
   const loadSavedItemsPage = async (path: string, offset: number, append: boolean) => {
     const savedPath = virtualToSavedPath(path);
     const result: TelegramSavedItemsPage = await invoke("tg_list_saved_items_page", {
@@ -657,6 +677,7 @@ export default function ExplorerPage() {
     setHasMoreSavedItems(result.has_more);
     setCurrentPath(path);
     cacheSavedPath(path, mergedItems, result.next_offset, result.has_more, false);
+    prefetchThumbnailsForItems(mergedItems);
   };
 
   const loadAllSavedItems = async (path: string) => {
@@ -671,6 +692,7 @@ export default function ExplorerPage() {
     setHasMoreSavedItems(false);
     setCurrentPath(path);
     cacheSavedPath(path, allItems, allItems.length, false, true);
+    prefetchThumbnailsForItems(allItems);
   };
 
   const loadMoreSavedItems = async () => {

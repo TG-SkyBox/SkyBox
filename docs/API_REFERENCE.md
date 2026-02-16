@@ -198,3 +198,19 @@ Moves a virtual Saved Messages item (file or folder) between local virtual folde
 - `destination_path`: Destination virtual folder path (`tg://saved/...`)
 
 **Returns:** `Result<(), TelegramError>`
+
+### `tg_get_message_thumbnail(message_id: i32)`
+Fetches thumbnail for a Saved Message, stores it in local cache (`AppData\\Local\\Skybox\\.thumbnails`), and saves the cached file path in local DB.
+
+**Parameters:**
+- `message_id`: Telegram message ID
+
+**Returns:** `Result<Option<String>, TelegramError>` (absolute cached thumbnail path)
+
+### `tg_prefetch_message_thumbnails(message_ids: Vec<i32>)`
+Prefetches and caches thumbnails for multiple message IDs.
+
+**Parameters:**
+- `message_ids`: List of Telegram message IDs
+
+**Returns:** `Result<{ cached_count: usize, failed_count: usize }, TelegramError>`

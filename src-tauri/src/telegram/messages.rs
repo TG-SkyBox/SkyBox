@@ -1203,6 +1203,40 @@ pub async fn tg_get_message_thumbnail_impl(db: Database, message_id: i32) -> Res
     Ok(Some(cached_path))
 }
 
+pub async fn tg_prefetch_message_thumbnails_impl(
+    db: Database,
+    message_ids: Vec<i32>,
+) -> Result<serde_json::Value, TelegramError> {
+    let mut ids: Vec<i32> = message_ids.into_iter().filter(|id| *id > 0).collect();
+    ids.sort_unstable();
+    ids.dedup();
+
+    let mut cached_count = 0usize;
+    let mut failed_count = 0usize;
+
+    for message_id in ids {
+        match tg_get_message_thumbnail_impl(db.clone(), message_id).await {
+            Ok(Some(_)) => {
+                cached_count += 1;
+            }
+            Ok(None) => {}
+            Err(error) => {
+                failed_count += 1;
+                log::warn!(
+                    "tg_prefetch_message_thumbnails_impl: Failed to prefetch thumbnail for message {}: {}",
+                    message_id,
+                    error.message
+                );
+            }
+        }
+    }
+
+    Ok(json!({
+        "cached_count": cached_count,
+        "failed_count": failed_count
+    }))
+}
+
 pub async fn tg_upload_file_to_saved_messages_impl(
     db: Database,
     file_name: String,
