@@ -7,7 +7,7 @@ import { FileGrid } from "@/components/skybox/FileGrid";
 import { DetailsPanel } from "@/components/skybox/DetailsPanel";
 import { ConfirmDialog } from "@/components/skybox/ConfirmDialog";
 import { TelegramButton } from "@/components/skybox/TelegramButton";
-import { FolderPlus, Grid, List, SortAsc, RefreshCw, Copy, Trash2, Edit3, LogOut } from "lucide-react";
+import { FolderPlus, Grid, List, SortAsc, RefreshCw, Copy, Trash2, Edit3, ChevronLeft, ChevronRight } from "lucide-react";
 import { useNavigate, useLocation } from "react-router-dom";
 import { toast } from "@/hooks/use-toast";
 import { invoke } from "@tauri-apps/api/core";
