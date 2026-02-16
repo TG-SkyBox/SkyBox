@@ -32,7 +32,7 @@ export function FileGrid({
     onDrop,
 }: FileGridProps) {
     return (
-        <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-4">
+        <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-5 lg:grid-cols-6 xl:grid-cols-7 2xl:grid-cols-8 gap-3">
             {files.map((file) => (
                 <FileGridItem
                     key={file.path}
@@ -114,7 +114,7 @@ function FileGridItem({
             onDragOver={onDragOver}
             onDragLeave={onDragLeave}
             onDrop={onDrop}
-            className={`group flex flex-col items-center p-3 rounded-xl cursor-pointer transition-all duration-200 border ${isSelected
+            className={`group flex flex-col items-center p-2 rounded-xl cursor-pointer transition-all duration-200 border ${isSelected
                     ? "bg-sidebar-accent border-primary/30 shadow-lg shadow-primary/5"
                     : "hover:bg-sidebar-accent/50 border-transparent hover:border-border"
                 } ${isDropTarget ? "ring-1 ring-primary/60 bg-primary/10" : ""}`}
