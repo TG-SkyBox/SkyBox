@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { invoke } from "@tauri-apps/api/core";
 import { getVersion } from "@tauri-apps/api/app";
+import appStartIcon from "../../image.png";
 
 import { logger } from "../lib/logger";
 
@@ -116,7 +117,7 @@ export default function LoadingPage() {
           {/* Telegram Logo with animation */}
           {/* App Logo */}
           <div className="w-32 h-32 mb-8 flex items-center justify-center animate-pulse">
-            <img src="icons/icon.png" alt="SkyBox Logo" className="w-full h-full object-contain" />
+            <img src={appStartIcon} alt="SkyBox Logo" className="w-full h-full object-contain" />
           </div>
 
           {/* Loading text */}

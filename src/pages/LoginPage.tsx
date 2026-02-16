@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from "react";
 import { useNavigate } from "react-router-dom";
-import { Send, ArrowLeft, X } from "lucide-react";
+import { ArrowLeft, X } from "lucide-react";
 import { CountryCodeSelect, countries, Country } from "@/components/skybox/CountryCodeSelect";
 import { TelegramButton } from "@/components/skybox/TelegramButton";
 import { OtpInput } from "@/components/skybox/OtpInput";
@@ -11,6 +11,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { getVersion } from "@tauri-apps/api/app";
 import { logger } from "@/lib/logger";
+import appStartIcon from "../../image.png";
 
 interface DbError {
   message: string;
@@ -573,8 +574,8 @@ export default function LoginPage() {
           {loginMode === "phone" && step === "phone" && (
             <div className="animate-fade-in flex flex-col items-center">
               {/* Telegram Logo */}
-              <div className="w-32 h-32 mb-8 bg-primary rounded-full flex items-center justify-center">
-                <Send className="w-16 h-16 text-primary-foreground -rotate-45 translate-x-1" />
+              <div className="w-32 h-32 mb-8 flex items-center justify-center">
+                <img src={appStartIcon} alt="SkyBox Logo" className="w-full h-full object-contain" />
               </div>
 
               {/* Title */}
@@ -653,8 +654,8 @@ export default function LoginPage() {
           {step === "otp" && (
             <div className="animate-fade-in flex flex-col items-center">
               {/* Telegram Logo */}
-              <div className="w-32 h-32 mb-8 bg-primary rounded-full flex items-center justify-center">
-                <Send className="w-16 h-16 text-primary-foreground -rotate-45 translate-x-1" />
+              <div className="w-32 h-32 mb-8 flex items-center justify-center">
+                <img src={appStartIcon} alt="SkyBox Logo" className="w-full h-full object-contain" />
               </div>
 
               {/* Title */}
@@ -689,8 +690,8 @@ export default function LoginPage() {
           {step === "password" && (
             <div className="animate-fade-in flex flex-col items-center">
               {/* Telegram Logo */}
-              <div className="w-32 h-32 mb-8 bg-primary rounded-full flex items-center justify-center">
-                <Send className="w-16 h-16 text-primary-foreground -rotate-45 translate-x-1" />
+              <div className="w-32 h-32 mb-8 flex items-center justify-center">
+                <img src={appStartIcon} alt="SkyBox Logo" className="w-full h-full object-contain" />
               </div>
 
               {/* Title */}
