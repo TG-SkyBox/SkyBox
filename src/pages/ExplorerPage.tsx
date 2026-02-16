@@ -151,6 +151,20 @@ const joinPath = (base: string, name: string): string => {
   return `${normalizedBase}/${name}`;
 };
 
+const isTextInputElement = (target: EventTarget | null): boolean => {
+  if (!(target instanceof HTMLElement)) {
+    return false;
+  }
+
+  const tagName = target.tagName;
+  return (
+    target.isContentEditable ||
+    tagName === "INPUT" ||
+    tagName === "TEXTAREA" ||
+    tagName === "SELECT"
+  );
+};
+
 const extensionFromFileName = (fileName: string): string | undefined => {
   const parts = fileName.split(".");
   if (parts.length < 2) {
@@ -226,6 +240,8 @@ export default function ExplorerPage() {
   const [dropTargetPath, setDropTargetPath] = useState<string | null>(null);
   const [isExternalDragging, setIsExternalDragging] = useState(false);
   const [isUploadingFiles, setIsUploadingFiles] = useState(false);
+  const [backHistory, setBackHistory] = useState<string[]>([]);
+  const [forwardHistory, setForwardHistory] = useState<string[]>([]);
 
   // Initialize with home directory and user info
   useEffect(() => {
