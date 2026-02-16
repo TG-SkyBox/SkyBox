@@ -91,6 +91,64 @@ fn classify_extension(extension: Option<&str>) -> ExtensionClassification {
     }
 }
 
+fn extension_from_mime_type(mime_type: Option<&str>) -> Option<String> {
+    let mime = mime_type?.trim().to_lowercase();
+    let ext = match mime.as_str() {
+        "image/jpeg" | "image/jpg" => "jpg",
+        "image/png" => "png",
+        "image/webp" => "webp",
+        "image/gif" => "gif",
+        "image/bmp" => "bmp",
+        "image/tiff" => "tiff",
+        "image/heic" | "image/heif" => "heic",
+
+        "video/mp4" => "mp4",
+        "video/x-matroska" => "mkv",
+        "video/webm" => "webm",
+        "video/quicktime" => "mov",
+        "video/x-msvideo" => "avi",
+        "video/x-ms-wmv" => "wmv",
+
+        "audio/mpeg" | "audio/mp3" => "mp3",
+        "audio/mp4" | "audio/x-m4a" => "m4a",
+        "audio/ogg" => "ogg",
+        "audio/wav" | "audio/x-wav" => "wav",
+        "audio/flac" | "audio/x-flac" => "flac",
+        "audio/aac" => "aac",
+        "audio/opus" => "opus",
+
+        "text/plain" => "txt",
+        "text/markdown" => "md",
+
+        "application/pdf" => "pdf",
+        "application/zip" => "zip",
+        "application/x-rar-compressed" => "rar",
+        "application/x-7z-compressed" => "7z",
+        "application/json" => "json",
+        "application/xml" => "xml",
+        "application/msword" => "doc",
+        "application/vnd.openxmlformats-officedocument.wordprocessingml.document" => "docx",
+        "application/vnd.ms-excel" => "xls",
+        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" => "xlsx",
+        "application/vnd.ms-powerpoint" => "ppt",
+        "application/vnd.openxmlformats-officedocument.presentationml.presentation" => "pptx",
+        "application/octet-stream" => "bin",
+        _ => return None,
+    };
+
+    Some(ext.to_string())
+}
+
+fn default_extension_for_file_type(file_type: &str) -> &'static str {
+    match file_type {
+        "image" => "jpg",
+        "video" => "mp4",
+        "audio" => "mp3",
+        "text" => "txt",
+        _ => "bin",
+    }
+}
+
 fn normalize_extension(raw_extension: Option<&str>) -> Option<String> {
     raw_extension
         .map(|ext| ext.trim().trim_start_matches('.').to_lowercase())
@@ -180,12 +238,21 @@ fn upsert_saved_item_from_message(
         .and_then(optional_sanitized_name)
         .or_else(|| message.filename.as_deref().and_then(optional_sanitized_name));
 
-    let extension = normalize_extension(message.extension.as_deref())
-        .or_else(|| preferred_name.as_deref().and_then(extension_from_name));
-    let classification = classify_extension(extension.as_deref());
+    let extension_from_name_candidate = preferred_name
+        .as_deref()
+        .and_then(extension_from_name);
+
+    let extension_candidate = normalize_extension(message.extension.as_deref())
+        .or(extension_from_name_candidate)
+        .or_else(|| extension_from_mime_type(message.mime_type.as_deref()));
+
+    let classification = classify_extension(extension_candidate.as_deref());
+
+    let final_extension = extension_candidate
+        .or_else(|| Some(default_extension_for_file_type(classification.file_type).to_string()));
 
     let file_name = preferred_name.unwrap_or_else(|| {
-        generated_file_name(classification.file_type, extension.as_deref())
+        generated_file_name(classification.file_type, final_extension.as_deref())
     });
 
     let path = preferred_path
@@ -986,13 +1053,14 @@ fn categorize_message(message: &Message, chat_id: i64) -> Option<TelegramMessage
                 _ => return None,
             };
             let file_name = optional_sanitized_name(&doc.name().to_string());
-            let extracted_extension = file_name.as_deref().and_then(extension_from_name);
-            let ext = normalize_extension(extracted_extension.as_deref());
-            let classification = classify_extension(ext.as_deref());
             let mime = match doc.mime_type() {
                 Some(m) => Some(m.to_string()),
                 None => None,
             };
+            let extracted_extension = file_name.as_deref().and_then(extension_from_name);
+            let ext = normalize_extension(extracted_extension.as_deref())
+                .or_else(|| extension_from_mime_type(mime.as_deref()));
+            let classification = classify_extension(ext.as_deref());
             let sz = Some(doc.size() as i64);
 
             (
