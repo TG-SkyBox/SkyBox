@@ -220,6 +220,7 @@ use messages::{
     tg_rebuild_saved_items_index_impl,
     tg_create_saved_folder_impl,
     tg_move_saved_item_impl,
+    tg_rename_saved_item_impl,
     tg_get_message_thumbnail_impl,
     tg_prefetch_message_thumbnails_impl,
     tg_upload_file_to_saved_messages_impl,
@@ -332,6 +333,15 @@ pub async fn tg_move_saved_item(
     destination_path: String,
 ) -> Result<(), TelegramError> {
     tg_move_saved_item_impl(db.inner().clone(), source_path, destination_path).await
+}
+
+#[tauri::command]
+pub async fn tg_rename_saved_item(
+    db: State<'_, crate::db::Database>,
+    source_path: String,
+    new_name: String,
+) -> Result<(), TelegramError> {
+    tg_rename_saved_item_impl(db.inner().clone(), source_path, new_name).await
 }
 
 #[tauri::command]
