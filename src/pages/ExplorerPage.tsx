@@ -397,8 +397,10 @@ export default function ExplorerPage() {
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       const canNavigateByKeyboard = !isTextInputElement(e.target);
+      const isBackShortcut = e.key === "Backspace" || e.key === "BrowserBack" || (e.altKey && e.key === "ArrowLeft");
+      const isForwardShortcut = e.key === "BrowserForward" || (e.altKey && e.key === "ArrowRight");
 
-      if (canNavigateByKeyboard && (e.key === "Backspace" || (e.altKey && e.key === "ArrowLeft"))) {
+      if (canNavigateByKeyboard && isBackShortcut) {
         e.preventDefault();
         if (backHistory.length && !isLoading) {
           const previousPath = backHistory[backHistory.length - 1];
@@ -409,7 +411,7 @@ export default function ExplorerPage() {
         return;
       }
 
-      if (canNavigateByKeyboard && e.altKey && e.key === "ArrowRight") {
+      if (canNavigateByKeyboard && isForwardShortcut) {
         e.preventDefault();
         if (forwardHistory.length && !isLoading) {
           const nextPath = forwardHistory[forwardHistory.length - 1];
@@ -442,6 +444,50 @@ export default function ExplorerPage() {
       window.removeEventListener('keydown', handleKeyDown);
     };
   }, [selectedFile, showDetails, backHistory, forwardHistory, currentPath, isLoading]);
+
+  useEffect(() => {
+    const suppressDefaultMouseNavigation = (event: MouseEvent) => {
+      if (event.button === 3 || event.button === 4) {
+        event.preventDefault();
+        event.stopPropagation();
+      }
+    };
+
+    const handleMouseNavigationButtons = (event: MouseEvent) => {
+      if (isTextInputElement(event.target)) {
+        return;
+      }
+
+      if (event.button === 3) {
+        event.preventDefault();
+        event.stopPropagation();
+        if (backHistory.length && !isLoading) {
+          const previousPath = backHistory[backHistory.length - 1];
+          setBackHistory((prev) => prev.slice(0, -1));
+          setForwardHistory((prev) => [...prev, currentPath]);
+          void loadDirectory(previousPath);
+        }
+      }
+
+      if (event.button === 4) {
+        event.preventDefault();
+        event.stopPropagation();
+        if (forwardHistory.length && !isLoading) {
+          const nextPath = forwardHistory[forwardHistory.length - 1];
+          setForwardHistory((prev) => prev.slice(0, -1));
+          setBackHistory((prev) => [...prev, currentPath]);
+          void loadDirectory(nextPath);
+        }
+      }
+    };
+
+    window.addEventListener("mousedown", suppressDefaultMouseNavigation, true);
+    window.addEventListener("mouseup", handleMouseNavigationButtons, true);
+    return () => {
+      window.removeEventListener("mousedown", suppressDefaultMouseNavigation, true);
+      window.removeEventListener("mouseup", handleMouseNavigationButtons, true);
+    };
+  }, [backHistory, currentPath, forwardHistory, isLoading]);
 
   const loadDirectory = async (path: string) => {
     setIsLoading(true);
