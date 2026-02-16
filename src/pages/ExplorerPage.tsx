@@ -122,6 +122,8 @@ interface SavedPathCacheEntry {
   isCompleteSnapshot: boolean;
 }
 
+type ExplorerViewMode = "list" | "grid";
+
 // Convert Rust FileEntry to our FileItem type
 const convertFileEntryToFileItem = (entry: FileEntry): FileItem => {
   return {
@@ -141,6 +143,7 @@ const mockRoots = [
 
 const INTERNAL_DRAG_MIME = "application/x-skybox-item-path";
 const SAVED_ITEMS_PAGE_SIZE = 50;
+const EXPLORER_VIEW_MODE_KEY = "explorer_view_mode";
 
 const isVirtualPath = (path: string): boolean => path.startsWith("tg://");
 const isSavedVirtualFolderPath = (path: string): boolean => path === "tg://saved" || path.startsWith("tg://saved/");
@@ -254,7 +257,8 @@ export default function ExplorerPage() {
   const [search, setSearch] = useState("");
   const [selectedFile, setSelectedFile] = useState<FileItem | null>(null);
   const [showDetails, setShowDetails] = useState(false);
-  const [viewMode, setViewMode] = useState<"list" | "grid">("list");
+  const [viewMode, setViewMode] = useState<ExplorerViewMode>("list");
+  const [isViewModeLoaded, setIsViewModeLoaded] = useState(false);
   const [favorites, setFavorites] = useState<string[]>([]);
   const [deleteTarget, setDeleteTarget] = useState<FileItem | null>(null);
   const [isLoading, setIsLoading] = useState(false);
@@ -323,6 +327,46 @@ export default function ExplorerPage() {
   useEffect(() => {
     filesRef.current = files;
   }, [files]);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    const loadViewModePreference = async () => {
+      try {
+        const savedViewMode = await invoke<string | null>("db_get_setting", {
+          key: EXPLORER_VIEW_MODE_KEY,
+        });
+
+        if (!cancelled && (savedViewMode === "list" || savedViewMode === "grid")) {
+          setViewMode(savedViewMode);
+        }
+      } catch (error) {
+        console.error("Error loading explorer view mode setting:", error);
+      } finally {
+        if (!cancelled) {
+          setIsViewModeLoaded(true);
+        }
+      }
+    };
+
+    void loadViewModePreference();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!isViewModeLoaded) {
+      return;
+    }
+
+    invoke("db_set_setting", {
+      key: EXPLORER_VIEW_MODE_KEY,
+      value: viewMode,
+    }).catch((error) => {
+      console.error("Error saving explorer view mode setting:", error);
+    });
+  }, [isViewModeLoaded, viewMode]);
 
   useEffect(() => {
     if (!isSavedBackfillSyncing) {
