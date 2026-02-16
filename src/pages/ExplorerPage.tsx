@@ -275,6 +275,7 @@ export default function ExplorerPage() {
   const [forwardHistory, setForwardHistory] = useState<string[]>([]);
   const filesRef = useRef<FileItem[]>([]);
   const currentPathRef = useRef("tg://saved");
+  const savedLoadMoreLastAttemptRef = useRef(0);
   const savedPathCacheRef = useRef<Record<string, SavedPathCacheEntry>>({});
   const navigationStateRef = useRef({
     backHistory: [] as string[],
@@ -395,7 +396,7 @@ export default function ExplorerPage() {
           }
 
           if (hasMore) {
-            await new Promise((resolve) => setTimeout(resolve, 120));
+            await new Promise((resolve) => setTimeout(resolve, 250));
           }
         }
 
@@ -1097,6 +1098,7 @@ export default function ExplorerPage() {
           parentPath: virtualToSavedPath(currentPath),
           folderName,
         });
+        savedPathCacheRef.current = {};
       } else {
         const newPath = `${currentPath}/${folderName}`.replace("//", "/");
         await invoke("fs_create_dir", { path: newPath });
@@ -1288,6 +1290,7 @@ export default function ExplorerPage() {
       }
 
       if (uploadedCount > 0) {
+        savedPathCacheRef.current = {};
         await loadDirectory(currentPath, { force: true });
 
         const categorySummary = uploadedCategories.size
