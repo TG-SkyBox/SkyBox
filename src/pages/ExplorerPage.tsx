@@ -122,6 +122,8 @@ interface SavedPathCacheEntry {
   isCompleteSnapshot: boolean;
 }
 
+type ExplorerViewMode = "list" | "grid";
+
 // Convert Rust FileEntry to our FileItem type
 const convertFileEntryToFileItem = (entry: FileEntry): FileItem => {
   return {
@@ -141,6 +143,7 @@ const mockRoots = [
 
 const INTERNAL_DRAG_MIME = "application/x-skybox-item-path";
 const SAVED_ITEMS_PAGE_SIZE = 50;
+const EXPLORER_VIEW_MODE_KEY = "explorer_view_mode";
 
 const isVirtualPath = (path: string): boolean => path.startsWith("tg://");
 const isSavedVirtualFolderPath = (path: string): boolean => path === "tg://saved" || path.startsWith("tg://saved/");
@@ -254,7 +257,8 @@ export default function ExplorerPage() {
   const [search, setSearch] = useState("");
   const [selectedFile, setSelectedFile] = useState<FileItem | null>(null);
   const [showDetails, setShowDetails] = useState(false);
-  const [viewMode, setViewMode] = useState<"list" | "grid">("list");
+  const [viewMode, setViewMode] = useState<ExplorerViewMode>("list");
+  const [isViewModeLoaded, setIsViewModeLoaded] = useState(false);
   const [favorites, setFavorites] = useState<string[]>([]);
   const [deleteTarget, setDeleteTarget] = useState<FileItem | null>(null);
   const [isLoading, setIsLoading] = useState(false);
@@ -325,6 +329,46 @@ export default function ExplorerPage() {
   }, [files]);
 
   useEffect(() => {
+    let cancelled = false;
+
+    const loadViewModePreference = async () => {
+      try {
+        const savedViewMode = await invoke<string | null>("db_get_setting", {
+          key: EXPLORER_VIEW_MODE_KEY,
+        });
+
+        if (!cancelled && (savedViewMode === "list" || savedViewMode === "grid")) {
+          setViewMode(savedViewMode);
+        }
+      } catch (error) {
+        console.error("Error loading explorer view mode setting:", error);
+      } finally {
+        if (!cancelled) {
+          setIsViewModeLoaded(true);
+        }
+      }
+    };
+
+    void loadViewModePreference();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!isViewModeLoaded) {
+      return;
+    }
+
+    invoke("db_set_setting", {
+      key: EXPLORER_VIEW_MODE_KEY,
+      value: viewMode,
+    }).catch((error) => {
+      console.error("Error saving explorer view mode setting:", error);
+    });
+  }, [isViewModeLoaded, viewMode]);
+
+  useEffect(() => {
     if (!isSavedBackfillSyncing) {
       return;
     }
@@ -355,7 +399,7 @@ export default function ExplorerPage() {
     lastNavigationAtRef.current = Date.now();
   }, []);
 
-  const indexSavedMessages = async (): Promise<TelegramIndexSavedMessagesResult | null> => {
+  const indexSavedMessages = useCallback(async (): Promise<TelegramIndexSavedMessagesResult | null> => {
     try {
       const result: TelegramIndexSavedMessagesResult = await invoke("tg_index_saved_messages");
 
@@ -366,10 +410,6 @@ export default function ExplorerPage() {
           title: "Saved Messages Synced",
           description: `Found ${result.total_new_messages} new item${result.total_new_messages === 1 ? "" : "s"}.`,
         });
-
-        if (currentPathRef.current.startsWith("tg://saved")) {
-          loadDirectory(currentPathRef.current, { force: true });
-        }
       }
 
       return result;
@@ -377,7 +417,7 @@ export default function ExplorerPage() {
       console.error("Error indexing saved messages:", error);
       return null;
     }
-  };
+  }, []);
 
   useEffect(() => {
     if (startupSyncRanRef.current) {
@@ -906,6 +946,10 @@ export default function ExplorerPage() {
   const handleNavigateToPath = (path: string) => {
     navigateToPath(path);
   };
+
+  const handleViewModeChange = useCallback((mode: ExplorerViewMode) => {
+    setViewMode((prev) => (prev === mode ? prev : mode));
+  }, []);
 
   const breadcrumbItems = useMemo(() => {
     if (!currentPath) return [];
@@ -1516,7 +1560,7 @@ export default function ExplorerPage() {
 
             <div className="flex items-center gap-1 ml-2">
               <button
-                onClick={() => setViewMode("list")}
+                onClick={() => handleViewModeChange("list")}
                 className={`p-2 rounded transition-colors ${viewMode === "list" ? "bg-secondary text-foreground" : "text-muted-foreground hover:text-foreground"
                   }`}
                 title="List view"
@@ -1524,7 +1568,7 @@ export default function ExplorerPage() {
                 <List className="w-4 h-4" />
               </button>
               <button
-                onClick={() => setViewMode("grid")}
+                onClick={() => handleViewModeChange("grid")}
                 className={`p-2 rounded transition-colors ${viewMode === "grid" ? "bg-secondary text-foreground" : "text-muted-foreground hover:text-foreground"
                   }`}
                 title="Grid view"
