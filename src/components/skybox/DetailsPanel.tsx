@@ -43,7 +43,30 @@ export function DetailsPanel({
   useEffect(() => {
     setPreviewThumb(resolveThumbnailSrc(file?.thumbnail));
     setHasRetriedBrokenThumbnail(false);
-  }, [file?.thumbnail]);
+  }, [file?.messageId, file?.thumbnail]);
+
+  useEffect(() => {
+    const messageId = file?.messageId;
+    if (!messageId || previewThumb || hasRetriedBrokenThumbnail) {
+      return;
+    }
+
+    setHasRetriedBrokenThumbnail(true);
+
+    const fetchThumbnail = async () => {
+      try {
+        const result: string | null = await invoke("tg_get_message_thumbnail", { messageId });
+        const resolved = resolveThumbnailSrc(result);
+        if (resolved) {
+          setPreviewThumb(resolved);
+        }
+      } catch (e) {
+        console.error("Failed to fetch thumbnail for message:", messageId, e);
+      }
+    };
+
+    void fetchThumbnail();
+  }, [file?.messageId, hasRetriedBrokenThumbnail, previewThumb]);
 
   const refetchThumbnail = async () => {
     const messageId = file?.messageId;

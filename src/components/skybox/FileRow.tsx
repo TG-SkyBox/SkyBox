@@ -185,12 +185,15 @@ export function FileRow({
 
   useEffect(() => {
     // If we have a messageId but no thumbnail, try to fetch it
-    if (file.messageId && !thumbUrl && !file.thumbnail) {
+    if (file.messageId && !thumbUrl && !hasRetriedBrokenThumbnail) {
+      setHasRetriedBrokenThumbnail(true);
+
       const fetchThumb = async () => {
         try {
           const result: string | null = await invoke("tg_get_message_thumbnail", { messageId: file.messageId });
-          if (result) {
-            setThumbUrl(resolveThumbnailSrc(result));
+          const resolved = resolveThumbnailSrc(result);
+          if (resolved) {
+            setThumbUrl(resolved);
           }
         } catch (e) {
           console.error("Failed to fetch thumbnail for message:", file.messageId, e);
@@ -198,7 +201,7 @@ export function FileRow({
       };
       fetchThumb();
     }
-  }, [file.messageId, file.thumbnail, thumbUrl]);
+  }, [file.messageId, hasRetriedBrokenThumbnail, thumbUrl]);
 
   return (
     <div
