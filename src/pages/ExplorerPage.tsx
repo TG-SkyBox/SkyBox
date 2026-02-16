@@ -117,6 +117,11 @@ interface TelegramBackfillBatchResult {
   next_offset_id?: number;
 }
 
+interface TelegramRebuildSavedItemsResult {
+  upserted_count: number;
+  oldest_message_id?: number;
+}
+
 // Convert Rust FileEntry to our FileItem type
 const convertFileEntryToFileItem = (entry: FileEntry): FileItem => {
   return {
@@ -299,7 +304,7 @@ export default function ExplorerPage() {
     currentPathRef.current = currentPath;
   }, [backHistory, forwardHistory, currentPath, isLoading]);
 
-  const indexSavedMessages = async () => {
+  const indexSavedMessages = async (): Promise<{ total_new_messages: number; bootstrap_limited?: boolean } | null> => {
     try {
       const result: {
         total_new_messages: number;
@@ -321,8 +326,11 @@ export default function ExplorerPage() {
       } else if (result.bootstrap_limited) {
         setHasMoreSavedItems(true);
       }
+
+      return result;
     } catch (error) {
       console.error("Error indexing saved messages:", error);
+      return null;
     }
   };
 
@@ -330,7 +338,23 @@ export default function ExplorerPage() {
     let cancelled = false;
 
     const runSavedMessageSync = async () => {
-      await indexSavedMessages();
+      const indexResult = await indexSavedMessages();
+      if (cancelled) {
+        return;
+      }
+
+      try {
+        const rebuildResult: TelegramRebuildSavedItemsResult = await invoke("tg_rebuild_saved_items_index");
+        if (!cancelled && rebuildResult.upserted_count > 0) {
+          setHasMoreSavedItems(true);
+          if (currentPathRef.current.startsWith("tg://saved")) {
+            await loadDirectory(currentPathRef.current);
+          }
+        }
+      } catch (error) {
+        console.error("Error rebuilding saved item index:", error);
+      }
+
       if (cancelled) {
         return;
       }
@@ -356,6 +380,10 @@ export default function ExplorerPage() {
         }
 
         if (!cancelled && indexedAny && currentPathRef.current.startsWith("tg://saved")) {
+          await loadDirectory(currentPathRef.current);
+        }
+
+        if (!cancelled && !indexedAny && indexResult?.total_new_messages === 0) {
           await loadDirectory(currentPathRef.current);
         }
       } catch (error) {

@@ -176,6 +176,11 @@ Indexes older Saved Messages into local storage in small batches.
 
 **Returns:** `Result<{ fetched_count: usize, indexed_count: usize, has_more: bool, is_complete: bool, next_offset_id?: i32 }, TelegramError>`
 
+### `tg_rebuild_saved_items_index()`
+Rebuilds `telegram_saved_items` metadata from existing local `telegram_messages` cache.
+
+**Returns:** `Result<{ upserted_count: usize, oldest_message_id: i32 }, TelegramError>`
+
 ### `tg_create_saved_folder(parent_path: String, folder_name: String)`
 Creates a virtual Saved Messages folder record in local metadata.
 

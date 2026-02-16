@@ -217,6 +217,7 @@ use messages::{
     tg_list_saved_items_impl,
     tg_list_saved_items_page_impl,
     tg_backfill_saved_messages_batch_impl,
+    tg_rebuild_saved_items_index_impl,
     tg_create_saved_folder_impl,
     tg_get_message_thumbnail_impl,
     tg_upload_file_to_saved_messages_impl,
@@ -304,6 +305,13 @@ pub async fn tg_backfill_saved_messages_batch(
     batch_size: Option<i32>,
 ) -> Result<serde_json::Value, TelegramError> {
     tg_backfill_saved_messages_batch_impl(db.inner().clone(), batch_size).await
+}
+
+#[tauri::command]
+pub async fn tg_rebuild_saved_items_index(
+    db: State<'_, crate::db::Database>,
+) -> Result<serde_json::Value, TelegramError> {
+    tg_rebuild_saved_items_index_impl(db.inner().clone()).await
 }
 
 #[tauri::command]

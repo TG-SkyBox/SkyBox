@@ -531,6 +531,54 @@ pub async fn tg_backfill_saved_messages_batch_impl(
     }))
 }
 
+pub async fn tg_rebuild_saved_items_index_impl(db: Database) -> Result<serde_json::Value, TelegramError> {
+    let state_guard = AUTH_STATE.lock().await;
+    let state = state_guard.as_ref().ok_or_else(|| TelegramError {
+        message: "Not authorized".to_string(),
+    })?;
+
+    let me = state.client.get_me().await.map_err(|e| TelegramError {
+        message: format!("Failed to get user info: {}", e),
+    })?;
+
+    let chat_id = me.raw.id();
+    let owner_id = chat_id.to_string();
+
+    db.ensure_telegram_saved_folders(&owner_id).map_err(|e| TelegramError {
+        message: format!("Failed to ensure default folders: {}", e.message),
+    })?;
+
+    let cached_messages = db.get_all_indexed_messages(chat_id).map_err(|e| TelegramError {
+        message: format!("Failed to read cached telegram messages: {}", e.message),
+    })?;
+
+    let mut upserted = 0usize;
+    for message in cached_messages {
+        upsert_saved_item_from_message(&db, &owner_id, &message, None, None)?;
+        upserted += 1;
+    }
+
+    let oldest_message_id = db.get_oldest_indexed_message_id(chat_id).map_err(|e| TelegramError {
+        message: format!("Failed to read oldest cached message id: {}", e.message),
+    })?;
+
+    if oldest_message_id > 0 {
+        db.set_setting(&backfill_cursor_key(chat_id), &oldest_message_id.to_string())
+            .map_err(|e| TelegramError {
+                message: format!("Failed to update backfill cursor: {}", e.message),
+            })?;
+        db.set_setting(&backfill_complete_key(chat_id), "0")
+            .map_err(|e| TelegramError {
+                message: format!("Failed to update backfill completion state: {}", e.message),
+            })?;
+    }
+
+    Ok(json!({
+        "upserted_count": upserted,
+        "oldest_message_id": oldest_message_id
+    }))
+}
+
 pub async fn tg_create_saved_folder_impl(
     db: Database,
     parent_path: String,
