@@ -137,3 +137,32 @@ Creates a new user session.
 Clears the current user session.
 
 **Returns:** `Result<(), DbError>`
+
+## Telegram Commands
+
+### `tg_upload_file_to_saved_messages(file_name: String, file_bytes: Vec<u8>, file_path?: String)`
+Uploads a dropped file to Telegram Saved Messages and stores its indexed metadata locally.
+
+**Parameters:**
+- `file_name`: Original file name
+- `file_bytes`: Raw file bytes from drag-and-drop payload
+- `file_path`: Optional virtual folder path (defaults to category-based path)
+
+**Returns:** `Result<TelegramMessage, TelegramError>`
+
+### `tg_list_saved_items(file_path: String)`
+Lists locally indexed Saved Messages items for a virtual path.
+
+**Parameters:**
+- `file_path`: Virtual storage path (for example `/Home`, `/Home/Videos`)
+
+**Returns:** `Result<Vec<TelegramSavedItem>, TelegramError>`
+
+### `tg_create_saved_folder(parent_path: String, folder_name: String)`
+Creates a virtual Saved Messages folder record in local metadata.
+
+**Parameters:**
+- `parent_path`: Virtual parent path (for example `/Home`)
+- `folder_name`: Folder name to create
+
+**Returns:** `Result<TelegramSavedItem, TelegramError>`

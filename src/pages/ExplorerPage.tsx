@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo } from "react";
+import { useState, useEffect, useMemo, useCallback, useRef } from "react";
 import { ExplorerSidebar } from "@/components/skybox/ExplorerSidebar";
 import { SearchBar } from "@/components/skybox/SearchBar";
 import { Breadcrumbs } from "@/components/skybox/Breadcrumbs";
@@ -7,7 +7,7 @@ import { FileGrid } from "@/components/skybox/FileGrid";
 import { DetailsPanel } from "@/components/skybox/DetailsPanel";
 import { ConfirmDialog } from "@/components/skybox/ConfirmDialog";
 import { TelegramButton } from "@/components/skybox/TelegramButton";
-import { FolderPlus, Grid, List, SortAsc, RefreshCw, Copy, Trash2, Edit3, LogOut } from "lucide-react";
+import { FolderPlus, Grid, List, SortAsc, RefreshCw, Copy, Trash2, Edit3, ChevronLeft, ChevronRight } from "lucide-react";
 import { useNavigate, useLocation } from "react-router-dom";
 import { toast } from "@/hooks/use-toast";
 import { invoke } from "@tauri-apps/api/core";
@@ -89,6 +89,20 @@ interface TelegramMessage {
   file_reference: string;
 }
 
+interface TelegramSavedItem {
+  chat_id: number;
+  message_id: number;
+  thumbnail?: string;
+  file_type: string;
+  file_unique_id: string;
+  file_size: number;
+  file_name: string;
+  file_caption?: string;
+  file_path: string;
+  modified_date: string;
+  owner_id: string;
+}
+
 // Convert Rust FileEntry to our FileItem type
 const convertFileEntryToFileItem = (entry: FileEntry): FileItem => {
   return {
@@ -106,6 +120,106 @@ const mockRoots = [
   { id: "2", path: "/media/external", name: "External Drive" },
 ];
 
+const INTERNAL_DRAG_MIME = "application/x-skybox-item-path";
+
+const isVirtualPath = (path: string): boolean => path.startsWith("tg://");
+
+const normalizePath = (path: string): string => path.replace(/\\/g, "/");
+
+const getPathName = (path: string): string => {
+  const normalized = normalizePath(path).replace(/\/+$/, "");
+  const parts = normalized.split("/").filter(Boolean);
+  return parts[parts.length - 1] || normalized;
+};
+
+const getParentPath = (path: string): string => {
+  const normalized = normalizePath(path).replace(/\/+$/, "");
+  const index = normalized.lastIndexOf("/");
+  if (index <= 0) {
+    return "";
+  }
+
+  return normalized.slice(0, index);
+};
+
+const joinPath = (base: string, name: string): string => {
+  const normalizedBase = normalizePath(base).replace(/\/+$/, "");
+  if (!normalizedBase) {
+    return name;
+  }
+
+  return `${normalizedBase}/${name}`;
+};
+
+const isTextInputElement = (target: EventTarget | null): boolean => {
+  if (!(target instanceof HTMLElement)) {
+    return false;
+  }
+
+  const tagName = target.tagName;
+  return (
+    target.isContentEditable ||
+    tagName === "INPUT" ||
+    tagName === "TEXTAREA" ||
+    tagName === "SELECT"
+  );
+};
+
+const extensionFromFileName = (fileName: string): string | undefined => {
+  const parts = fileName.split(".");
+  if (parts.length < 2) {
+    return undefined;
+  }
+
+  return parts[parts.length - 1]?.toLowerCase();
+};
+
+const virtualToSavedPath = (virtualPath: string): string => {
+  if (virtualPath === "tg://saved") {
+    return "/Home";
+  }
+
+  const relativePath = virtualPath.replace(/^tg:\/\/saved\/?/, "").replace(/\/+$/, "");
+  return relativePath ? `/Home/${relativePath}` : "/Home";
+};
+
+const savedToVirtualPath = (savedPath: string): string => {
+  const normalized = normalizePath(savedPath).replace(/\/+$/, "");
+  if (normalized === "/Home") {
+    return "tg://saved";
+  }
+
+  if (normalized.startsWith("/Home/")) {
+    return `tg://saved/${normalized.slice(6)}`;
+  }
+
+  return "tg://saved";
+};
+
+const savedItemToFileItem = (item: TelegramSavedItem): FileItem => {
+  const isDirectory = item.file_type === "folder";
+  if (isDirectory) {
+    const folderPath = savedToVirtualPath(joinPath(item.file_path, item.file_name));
+    return {
+      name: item.file_name,
+      path: folderPath,
+      isDirectory: true,
+      modifiedAt: item.modified_date,
+    };
+  }
+
+  return {
+    name: item.file_name,
+    path: `tg://msg/${item.message_id}`,
+    isDirectory: false,
+    size: item.file_size,
+    modifiedAt: item.modified_date,
+    extension: extensionFromFileName(item.file_name),
+    messageId: item.message_id > 0 ? item.message_id : undefined,
+    thumbnail: item.thumbnail || undefined,
+  };
+};
+
 export default function ExplorerPage() {
   const navigate = useNavigate();
   const location = useLocation();
@@ -122,6 +236,18 @@ export default function ExplorerPage() {
   const [userInfo, setUserInfo] = useState<UserInfo | null>(null);
   const [avatarUrl, setAvatarUrl] = useState<string | null>(null);
   const [phoneNumber, setPhoneNumber] = useState<string | null>(null);
+  const [draggedPath, setDraggedPath] = useState<string | null>(null);
+  const [dropTargetPath, setDropTargetPath] = useState<string | null>(null);
+  const [isExternalDragging, setIsExternalDragging] = useState(false);
+  const [isUploadingFiles, setIsUploadingFiles] = useState(false);
+  const [backHistory, setBackHistory] = useState<string[]>([]);
+  const [forwardHistory, setForwardHistory] = useState<string[]>([]);
+  const navigationStateRef = useRef({
+    backHistory: [] as string[],
+    forwardHistory: [] as string[],
+    currentPath: "tg://saved",
+    isLoading: false,
+  });
 
   // Initialize with home directory and user info
   useEffect(() => {
@@ -144,6 +270,15 @@ export default function ExplorerPage() {
     // Trigger indexing
     indexSavedMessages();
   }, [location.state]);
+
+  useEffect(() => {
+    navigationStateRef.current = {
+      backHistory,
+      forwardHistory,
+      currentPath,
+      isLoading,
+    };
+  }, [backHistory, forwardHistory, currentPath, isLoading]);
 
   const indexSavedMessages = async () => {
     try {
@@ -238,7 +373,19 @@ export default function ExplorerPage() {
   // Listen for navigation events from sidebar
   useEffect(() => {
     const handleNavigateEvent = (event: CustomEvent) => {
-      loadDirectory(event.detail);
+      const nextPath = event.detail;
+      if (!nextPath) {
+        return;
+      }
+
+      if (nextPath === currentPath) {
+        loadDirectory(nextPath);
+        return;
+      }
+
+      setBackHistory((prev) => [...prev, currentPath]);
+      setForwardHistory([]);
+      loadDirectory(nextPath);
     };
 
     window.addEventListener('navigate-to-path', handleNavigateEvent as EventListener);
@@ -246,7 +393,7 @@ export default function ExplorerPage() {
     return () => {
       window.removeEventListener('navigate-to-path', handleNavigateEvent as EventListener);
     };
-  }, []);
+  }, [currentPath]);
 
   // Listen for logout events from sidebar
   useEffect(() => {
@@ -264,6 +411,32 @@ export default function ExplorerPage() {
   // Handle keyboard shortcuts
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
+      const canNavigateByKeyboard = !isTextInputElement(e.target);
+      const isBackShortcut = e.key === "BrowserBack" || (e.altKey && e.key === "ArrowLeft");
+      const isForwardShortcut = e.key === "BrowserForward" || (e.altKey && e.key === "ArrowRight");
+
+      if (canNavigateByKeyboard && isBackShortcut) {
+        e.preventDefault();
+        if (backHistory.length && !isLoading) {
+          const previousPath = backHistory[backHistory.length - 1];
+          setBackHistory((prev) => prev.slice(0, -1));
+          setForwardHistory((prev) => [...prev, currentPath]);
+          loadDirectory(previousPath);
+        }
+        return;
+      }
+
+      if (canNavigateByKeyboard && isForwardShortcut) {
+        e.preventDefault();
+        if (forwardHistory.length && !isLoading) {
+          const nextPath = forwardHistory[forwardHistory.length - 1];
+          setForwardHistory((prev) => prev.slice(0, -1));
+          setBackHistory((prev) => [...prev, currentPath]);
+          loadDirectory(nextPath);
+        }
+        return;
+      }
+
       // Ctrl/Cmd + R to refresh
       if ((e.ctrlKey || e.metaKey) && e.key === 'r') {
         e.preventDefault();
@@ -285,36 +458,61 @@ export default function ExplorerPage() {
     return () => {
       window.removeEventListener('keydown', handleKeyDown);
     };
-  }, [selectedFile, showDetails]);
+  }, [selectedFile, showDetails, backHistory, forwardHistory, currentPath, isLoading]);
+
+  useEffect(() => {
+    const suppressDefaultMouseNavigation = (event: MouseEvent) => {
+      if (event.button === 3 || event.button === 4) {
+        event.preventDefault();
+        event.stopPropagation();
+      }
+    };
+
+    const handleMouseNavigationButtons = (event: MouseEvent) => {
+      if (isTextInputElement(event.target)) {
+        return;
+      }
+
+      if (event.button === 3) {
+        event.preventDefault();
+        event.stopPropagation();
+        if (backHistory.length && !isLoading) {
+          const previousPath = backHistory[backHistory.length - 1];
+          setBackHistory((prev) => prev.slice(0, -1));
+          setForwardHistory((prev) => [...prev, currentPath]);
+          void loadDirectory(previousPath);
+        }
+      }
+
+      if (event.button === 4) {
+        event.preventDefault();
+        event.stopPropagation();
+        if (forwardHistory.length && !isLoading) {
+          const nextPath = forwardHistory[forwardHistory.length - 1];
+          setForwardHistory((prev) => prev.slice(0, -1));
+          setBackHistory((prev) => [...prev, currentPath]);
+          void loadDirectory(nextPath);
+        }
+      }
+    };
+
+    window.addEventListener("mousedown", suppressDefaultMouseNavigation, true);
+    window.addEventListener("mouseup", handleMouseNavigationButtons, true);
+    return () => {
+      window.removeEventListener("mousedown", suppressDefaultMouseNavigation, true);
+      window.removeEventListener("mouseup", handleMouseNavigationButtons, true);
+    };
+  }, [backHistory, currentPath, forwardHistory, isLoading]);
 
   const loadDirectory = async (path: string) => {
     setIsLoading(true);
     setError(null);
     try {
-      if (path === "tg://saved") {
-        const categories = ["Images", "Videos", "Audios", "Documents", "Notes"];
-        const virtualFolders: FileItem[] = categories.map(cat => ({
-          name: cat,
-          path: `tg://saved/${cat}`,
-          isDirectory: true,
-        }));
-        setFiles(virtualFolders);
-        setCurrentPath(path);
-      } else if (path.startsWith("tg://saved/")) {
-        const cat = path.replace("tg://saved/", "");
-        const result: TelegramMessage[] = await invoke("tg_get_indexed_saved_messages", { category: cat });
-
-        const messageFiles: FileItem[] = result.map(msg => ({
-          name: msg.filename || (msg.text ? (msg.text.length > 30 ? msg.text.substring(0, 30) + "..." : msg.text) : `Message ${msg.message_id}`),
-          path: `tg://msg/${msg.message_id}`,
-          isDirectory: false,
-          size: msg.size,
-          modifiedAt: msg.timestamp,
-          extension: msg.extension || (msg.category === "Notes" ? "txt" : ""),
-          messageId: msg.message_id,
-          thumbnail: msg.thumbnail || undefined,
-        }));
-        setFiles(messageFiles);
+      if (path.startsWith("tg://saved")) {
+        const savedPath = virtualToSavedPath(path);
+        const result: TelegramSavedItem[] = await invoke("tg_list_saved_items", { filePath: savedPath });
+        const virtualItems = result.map(savedItemToFileItem);
+        setFiles(virtualItems);
         setCurrentPath(path);
       } else {
         const result: FileEntry[] = await invoke("fs_list_dir", { path });
@@ -345,6 +543,79 @@ export default function ExplorerPage() {
     }
   };
 
+  const navigateToPath = useCallback(async (path: string) => {
+    if (!path) {
+      return;
+    }
+
+    if (path === currentPath) {
+      await loadDirectory(path);
+      return;
+    }
+
+    setBackHistory((prev) => [...prev, currentPath]);
+    setForwardHistory([]);
+    await loadDirectory(path);
+  }, [currentPath]);
+
+  const handleGoBack = useCallback(async () => {
+    if (!backHistory.length || isLoading) {
+      return;
+    }
+
+    const previousPath = backHistory[backHistory.length - 1];
+    setBackHistory((prev) => prev.slice(0, -1));
+    setForwardHistory((prev) => [...prev, currentPath]);
+    await loadDirectory(previousPath);
+  }, [backHistory, currentPath, isLoading]);
+
+  const handleGoForward = useCallback(async () => {
+    if (!forwardHistory.length || isLoading) {
+      return;
+    }
+
+    const nextPath = forwardHistory[forwardHistory.length - 1];
+    setForwardHistory((prev) => prev.slice(0, -1));
+    setBackHistory((prev) => [...prev, currentPath]);
+    await loadDirectory(nextPath);
+  }, [currentPath, forwardHistory, isLoading]);
+
+  useEffect(() => {
+    const explorerUrl = window.location.href;
+    const guardState = {
+      ...(window.history.state || {}),
+      __skyboxExplorerGuard: true,
+    };
+
+    const hasGuardState =
+      typeof window.history.state === "object" &&
+      window.history.state !== null &&
+      "__skyboxExplorerGuard" in window.history.state;
+
+    if (!hasGuardState) {
+      window.history.pushState(guardState, "", explorerUrl);
+    }
+
+    const handlePopState = () => {
+      window.history.pushState(guardState, "", explorerUrl);
+
+      const { backHistory: stack, currentPath: activePath, isLoading: loading } = navigationStateRef.current;
+      if (!stack.length || loading) {
+        return;
+      }
+
+      const previousPath = stack[stack.length - 1];
+      setBackHistory((prev) => prev.slice(0, -1));
+      setForwardHistory((prev) => [...prev, activePath]);
+      void loadDirectory(previousPath);
+    };
+
+    window.addEventListener("popstate", handlePopState);
+    return () => {
+      window.removeEventListener("popstate", handlePopState);
+    };
+  }, []);
+
   const loadFavorites = async () => {
     try {
       const result: Favorite[] = await invoke("db_get_favorites");
@@ -357,18 +628,28 @@ export default function ExplorerPage() {
   };
 
   const handleNavigateToPath = (path: string) => {
-    loadDirectory(path);
+    navigateToPath(path);
   };
 
   const breadcrumbItems = useMemo(() => {
     if (!currentPath) return [];
 
     if (currentPath.startsWith("tg://saved")) {
-      const part = currentPath.replace("tg://saved/", "");
-      if (part !== "tg://saved" && part !== "") {
-        return [{ name: part, path: currentPath }];
+      const relativePath = currentPath.replace(/^tg:\/\/saved\/?/, "");
+      if (!relativePath) {
+        return [];
       }
-      return [];
+
+      const parts = relativePath.split("/").filter(Boolean);
+      const breadcrumbs: { name: string; path: string }[] = [];
+      let runningPath = "tg://saved";
+
+      parts.forEach((part) => {
+        runningPath = `${runningPath}/${part}`;
+        breadcrumbs.push({ name: part, path: runningPath });
+      });
+
+      return breadcrumbs;
     }
 
     const parts = currentPath.split('/').filter(p => p);
@@ -405,12 +686,20 @@ export default function ExplorerPage() {
 
   const handleFileOpen = async (file: FileItem) => {
     if (file.isDirectory) {
-      loadDirectory(file.path);
+      navigateToPath(file.path);
       toast({
         title: "Opening folder",
         description: file.name,
       });
     } else {
+      if (file.path.startsWith("tg://msg/")) {
+        toast({
+          title: "Cloud file selected",
+          description: "Direct open for Saved Messages files is not available yet.",
+        });
+        return;
+      }
+
       try {
         await invoke("fs_open_path", { path: file.path });
         toast({
@@ -556,19 +845,25 @@ export default function ExplorerPage() {
     const folderName = prompt("Enter folder name:");
     if (!folderName) return;
 
-    // Construct the new path
-    const newPath = `${currentPath}/${folderName}`.replace("//", "/");
-
     try {
-      await invoke("fs_create_dir", { path: newPath });
+      if (currentPath.startsWith("tg://saved")) {
+        await invoke("tg_create_saved_folder", {
+          parentPath: virtualToSavedPath(currentPath),
+          folderName,
+        });
+      } else {
+        const newPath = `${currentPath}/${folderName}`.replace("//", "/");
+        await invoke("fs_create_dir", { path: newPath });
+      }
+
       toast({
         title: "Folder created",
         description: `Created folder: ${folderName}`,
       });
       // Reload the current directory to show the new folder
-      loadDirectory(currentPath);
+      await loadDirectory(currentPath);
     } catch (error) {
-      const typedError = error as FsError;
+      const typedError = error as FsError | TelegramError;
       toast({
         title: "Error creating folder",
         description: typedError.message || "An unknown error occurred",
@@ -593,6 +888,214 @@ export default function ExplorerPage() {
     });
   };
 
+  const isDraggableItem = (file: FileItem) => !isVirtualPath(file.path);
+
+  const getDraggedSourcePath = (event: React.DragEvent): string | null => {
+    const fromTransfer = event.dataTransfer.getData(INTERNAL_DRAG_MIME);
+    if (fromTransfer) {
+      return fromTransfer;
+    }
+
+    return draggedPath;
+  };
+
+  const canDropToTarget = (sourcePath: string, target: FileItem): boolean => {
+    if (!target.isDirectory) {
+      return false;
+    }
+
+    if (isVirtualPath(sourcePath) || isVirtualPath(target.path)) {
+      return false;
+    }
+
+    const normalizedSourcePath = normalizePath(sourcePath);
+    const normalizedTargetPath = normalizePath(target.path);
+
+    if (normalizedSourcePath === normalizedTargetPath) {
+      return false;
+    }
+
+    const sourceParentPath = getParentPath(normalizedSourcePath);
+    if (sourceParentPath === normalizedTargetPath) {
+      return false;
+    }
+
+    const sourceItem = files.find((file) => normalizePath(file.path) === normalizedSourcePath);
+    if (sourceItem?.isDirectory && normalizedTargetPath.startsWith(`${normalizedSourcePath}/`)) {
+      return false;
+    }
+
+    return true;
+  };
+
+  const handleItemDragStart = (event: React.DragEvent, file: FileItem) => {
+    if (!isDraggableItem(file)) {
+      return;
+    }
+
+    event.dataTransfer.effectAllowed = "move";
+    event.dataTransfer.setData(INTERNAL_DRAG_MIME, file.path);
+    setDraggedPath(file.path);
+  };
+
+  const handleItemDragEnd = () => {
+    setDraggedPath(null);
+    setDropTargetPath(null);
+  };
+
+  const handleItemDragOver = (event: React.DragEvent, target: FileItem) => {
+    const sourcePath = getDraggedSourcePath(event);
+    if (!sourcePath || !canDropToTarget(sourcePath, target)) {
+      return;
+    }
+
+    event.preventDefault();
+    event.dataTransfer.dropEffect = "move";
+    setDropTargetPath(target.path);
+  };
+
+  const handleItemDragLeave = (target: FileItem) => {
+    if (dropTargetPath === target.path) {
+      setDropTargetPath(null);
+    }
+  };
+
+  const handleItemDrop = async (event: React.DragEvent, target: FileItem) => {
+    const sourcePath = getDraggedSourcePath(event);
+    if (!sourcePath || !canDropToTarget(sourcePath, target)) {
+      return;
+    }
+
+    event.preventDefault();
+    event.stopPropagation();
+
+    const destinationPath = joinPath(target.path, getPathName(sourcePath));
+
+    try {
+      await invoke("move_file", { source: sourcePath, destination: destinationPath });
+      toast({
+        title: "Moved",
+        description: `${getPathName(sourcePath)} moved to ${target.name}`,
+      });
+
+      if (selectedFile?.path === sourcePath) {
+        setSelectedFile(null);
+        setShowDetails(false);
+      }
+
+      await loadDirectory(currentPath);
+    } catch (error) {
+      const typedError = error as FsError;
+      toast({
+        title: "Move failed",
+        description: typedError.message || "Unable to move item",
+        variant: "destructive",
+      });
+    } finally {
+      setDraggedPath(null);
+      setDropTargetPath(null);
+    }
+  };
+
+  const isExternalFileDrag = (event: React.DragEvent): boolean => {
+    const dragTypes = Array.from(event.dataTransfer.types || []);
+    const hasFiles = dragTypes.includes("Files");
+    const hasInternalFile = dragTypes.includes(INTERNAL_DRAG_MIME);
+    return hasFiles && !hasInternalFile;
+  };
+
+  const handleUploadFiles = async (droppedFiles: File[]) => {
+    if (!droppedFiles.length) {
+      return;
+    }
+
+    if (!currentPath.startsWith("tg://saved")) {
+      toast({
+        title: "Upload unavailable",
+        description: "Drag-and-drop upload is available in Saved Messages only.",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    setIsUploadingFiles(true);
+    try {
+      let uploadedCount = 0;
+      let failedCount = 0;
+      const uploadedCategories = new Set<string>();
+
+      for (const droppedFile of droppedFiles) {
+        try {
+          const fileBytes = Array.from(new Uint8Array(await droppedFile.arrayBuffer()));
+          const uploadedMessage: TelegramMessage = await invoke("tg_upload_file_to_saved_messages", {
+            fileName: droppedFile.name,
+            fileBytes,
+            filePath: virtualToSavedPath(currentPath),
+          });
+
+          uploadedCount += 1;
+          uploadedCategories.add(uploadedMessage.category);
+        } catch (error) {
+          failedCount += 1;
+          console.error("Failed to upload file:", droppedFile.name, error);
+        }
+      }
+
+      if (uploadedCount > 0) {
+        await loadDirectory(currentPath);
+
+        const categorySummary = uploadedCategories.size
+          ? ` to ${Array.from(uploadedCategories).join(", ")}`
+          : "";
+
+        toast({
+          title: "Upload complete",
+          description: `Uploaded ${uploadedCount} file${uploadedCount === 1 ? "" : "s"}${categorySummary}`,
+        });
+      }
+
+      if (failedCount > 0) {
+        toast({
+          title: "Some uploads failed",
+          description: `${failedCount} file${failedCount === 1 ? "" : "s"} could not be uploaded`,
+          variant: "destructive",
+        });
+      }
+    } finally {
+      setIsUploadingFiles(false);
+    }
+  };
+
+  const handleExplorerDragOver = (event: React.DragEvent) => {
+    if (!isExternalFileDrag(event)) {
+      return;
+    }
+
+    event.preventDefault();
+    event.dataTransfer.dropEffect = "copy";
+    setIsExternalDragging(true);
+  };
+
+  const handleExplorerDragLeave = (event: React.DragEvent<HTMLDivElement>) => {
+    const nextTarget = event.relatedTarget as Node | null;
+    if (nextTarget && event.currentTarget.contains(nextTarget)) {
+      return;
+    }
+
+    setIsExternalDragging(false);
+  };
+
+  const handleExplorerDrop = async (event: React.DragEvent) => {
+    if (!isExternalFileDrag(event)) {
+      return;
+    }
+
+    event.preventDefault();
+    setIsExternalDragging(false);
+
+    await handleUploadFiles(Array.from(event.dataTransfer.files));
+  };
+
   return (
     <div className="h-screen flex overflow-hidden">
       {/* Sidebar */}
@@ -608,6 +1111,22 @@ export default function ExplorerPage() {
         {/* Top bar */}
         <div className="h-14 bg-glass border-b border-border flex items-center justify-between px-4 gap-4">
           <div className="flex items-center gap-2 min-w-0">
+            <button
+              onClick={handleGoBack}
+              className="p-2 rounded text-muted-foreground hover:text-foreground hover:bg-secondary transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+              disabled={!backHistory.length || isLoading}
+              title="Back (Mouse Back / Alt+Left)"
+            >
+              <ChevronLeft className="w-4 h-4" />
+            </button>
+            <button
+              onClick={handleGoForward}
+              className="p-2 rounded text-muted-foreground hover:text-foreground hover:bg-secondary transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+              disabled={!forwardHistory.length || isLoading}
+              title="Forward (Mouse Forward / Alt+Right)"
+            >
+              <ChevronRight className="w-4 h-4" />
+            </button>
             <button
               onClick={handleRefresh}
               className="p-2 rounded text-muted-foreground hover:text-foreground hover:bg-secondary transition-colors"
@@ -705,7 +1224,22 @@ export default function ExplorerPage() {
 
         {/* File list */}
         <div className="flex-1 flex min-h-0">
-          <div className="flex-1 overflow-y-auto p-4">
+          <div
+            className="relative flex-1 overflow-y-auto p-4"
+            onDragOver={handleExplorerDragOver}
+            onDragLeave={handleExplorerDragLeave}
+            onDrop={handleExplorerDrop}
+          >
+            {(isExternalDragging || isUploadingFiles) && (
+              <div className="pointer-events-none absolute inset-4 z-20 rounded-xl border-2 border-dashed border-primary/60 bg-primary/10 flex items-center justify-center">
+                <p className="text-body font-medium text-foreground">
+                  {isUploadingFiles
+                    ? "Uploading files to Saved Messages..."
+                    : "Drop files here to upload to Saved Messages"}
+                </p>
+              </div>
+            )}
+
             {error ? (
               <div className="flex flex-col items-center justify-center h-full text-center">
                 <p className="text-body text-destructive mb-2">
@@ -755,6 +1289,13 @@ export default function ExplorerPage() {
                         e.preventDefault();
                         handleFileSelect(file);
                       }}
+                      draggable={isDraggableItem(file)}
+                      isDropTarget={dropTargetPath === file.path}
+                      onDragStart={(event) => handleItemDragStart(event, file)}
+                      onDragEnd={handleItemDragEnd}
+                      onDragOver={(event) => handleItemDragOver(event, file)}
+                      onDragLeave={() => handleItemDragLeave(file)}
+                      onDrop={(event) => handleItemDrop(event, file)}
                     />
                   ))
                 ) : (
@@ -767,6 +1308,13 @@ export default function ExplorerPage() {
                       e.preventDefault();
                       handleFileSelect(file);
                     }}
+                    isDraggable={isDraggableItem}
+                    isDropTarget={(file) => dropTargetPath === file.path}
+                    onDragStart={(event, file) => handleItemDragStart(event, file)}
+                    onDragEnd={handleItemDragEnd}
+                    onDragOver={(event, file) => handleItemDragOver(event, file)}
+                    onDragLeave={(_, file) => handleItemDragLeave(file)}
+                    onDrop={(event, file) => handleItemDrop(event, file)}
                   />
                 )}
               </div>

@@ -30,6 +30,13 @@ interface FileRowProps {
   onSelect?: () => void;
   onOpen?: () => void;
   onContextMenu?: (e: React.MouseEvent) => void;
+  draggable?: boolean;
+  onDragStart?: (e: React.DragEvent) => void;
+  onDragEnd?: (e: React.DragEvent) => void;
+  onDragOver?: (e: React.DragEvent) => void;
+  onDragLeave?: (e: React.DragEvent) => void;
+  onDrop?: (e: React.DragEvent) => void;
+  isDropTarget?: boolean;
 }
 
 const getFileIcon = (file: FileItem): LucideIcon => {
@@ -125,7 +132,20 @@ const formatDate = (dateStr?: string): string => {
   }
 };
 
-export function FileRow({ file, isSelected, onSelect, onOpen, onContextMenu }: FileRowProps) {
+export function FileRow({
+  file,
+  isSelected,
+  onSelect,
+  onOpen,
+  onContextMenu,
+  draggable,
+  onDragStart,
+  onDragEnd,
+  onDragOver,
+  onDragLeave,
+  onDrop,
+  isDropTarget,
+}: FileRowProps) {
   const [thumbUrl, setThumbUrl] = useState<string | undefined>(file.thumbnail);
   const Icon = getFileIcon(file);
 
@@ -151,12 +171,18 @@ export function FileRow({ file, isSelected, onSelect, onOpen, onContextMenu }: F
       onClick={onSelect}
       onDoubleClick={onOpen}
       onContextMenu={onContextMenu}
+      draggable={draggable}
+      onDragStart={onDragStart}
+      onDragEnd={onDragEnd}
+      onDragOver={onDragOver}
+      onDragLeave={onDragLeave}
+      onDrop={onDrop}
       className={`flex items-center gap-3 px-3 py-1 rounded-lg cursor-pointer transition-all duration-150 ${isSelected ? "bg-sidebar-accent text-foreground" : "hover:bg-sidebar-accent/50"
-        }`}
+        } ${isDropTarget ? "ring-1 ring-primary/60 bg-primary/10" : ""}`}
     >
       <div className="w-8 h-8 flex-shrink-0 flex items-center justify-center rounded-md overflow-hidden bg-secondary/50">
         {thumbUrl ? (
-          <img src={thumbUrl} alt={file.name} className="w-full h-full object-cover" />
+          <img src={thumbUrl} alt={file.name} className="w-5 h-5 rounded-sm object-cover" />
         ) : (
           <Icon
             className={`w-5 h-5 ${file.isDirectory ? "text-primary" : "text-muted-foreground"

@@ -84,6 +84,21 @@ pub struct TelegramMessage {
     pub file_reference: String,
 }
 
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct TelegramSavedItem {
+    pub chat_id: i64,
+    pub message_id: i32,
+    pub thumbnail: Option<String>,
+    pub file_type: String,
+    pub file_unique_id: String,
+    pub file_size: i64,
+    pub file_name: String,
+    pub file_caption: Option<String>,
+    pub file_path: String,
+    pub modified_date: String,
+    pub owner_id: String,
+}
+
 #[derive(Clone)]
 pub struct Database(Arc<Mutex<Connection>>);
 
@@ -153,6 +168,30 @@ impl Database {
             )",
         ).map_err(|e| DbError {
             message: format!("Failed to create telegram_messages table: {}", e),
+        })?;
+
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS telegram_saved_items (
+                file_unique_id TEXT PRIMARY KEY,
+                chat_id INTEGER NOT NULL,
+                message_id INTEGER NOT NULL,
+                thumbnail TEXT,
+                file_type TEXT NOT NULL,
+                file_size INTEGER NOT NULL DEFAULT 0,
+                file_name TEXT NOT NULL,
+                file_caption TEXT,
+                file_path TEXT NOT NULL,
+                modified_date TEXT NOT NULL,
+                owner_id TEXT NOT NULL
+            )",
+        ).map_err(|e| DbError {
+            message: format!("Failed to create telegram_saved_items table: {}", e),
+        })?;
+
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_telegram_saved_items_owner_path ON telegram_saved_items (owner_id, file_path)",
+        ).map_err(|e| DbError {
+            message: format!("Failed to create telegram_saved_items index: {}", e),
         })?;
 
         // Migration: Add missing columns if they don't exist
@@ -765,6 +804,146 @@ impl Database {
             }
             _ => Ok(0),
         }
+    }
+
+    pub fn upsert_telegram_saved_item(&self, item: &TelegramSavedItem) -> Result<(), DbError> {
+        let conn = self.0.lock().unwrap();
+
+        let mut statement = conn.prepare(
+            "INSERT OR REPLACE INTO telegram_saved_items (
+                file_unique_id,
+                chat_id,
+                message_id,
+                thumbnail,
+                file_type,
+                file_size,
+                file_name,
+                file_caption,
+                file_path,
+                modified_date,
+                owner_id
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        ).map_err(|e| DbError {
+            message: format!("Failed to prepare statement: {}", e),
+        })?;
+
+        statement.bind((1, item.file_unique_id.as_str())).map_err(|e| DbError {
+            message: format!("Failed to bind file_unique_id: {}", e),
+        })?;
+        statement.bind((2, item.chat_id)).map_err(|e| DbError {
+            message: format!("Failed to bind chat_id: {}", e),
+        })?;
+        statement.bind((3, item.message_id as i64)).map_err(|e| DbError {
+            message: format!("Failed to bind message_id: {}", e),
+        })?;
+        statement.bind((4, item.thumbnail.as_deref())).map_err(|e| DbError {
+            message: format!("Failed to bind thumbnail: {}", e),
+        })?;
+        statement.bind((5, item.file_type.as_str())).map_err(|e| DbError {
+            message: format!("Failed to bind file_type: {}", e),
+        })?;
+        statement.bind((6, item.file_size)).map_err(|e| DbError {
+            message: format!("Failed to bind file_size: {}", e),
+        })?;
+        statement.bind((7, item.file_name.as_str())).map_err(|e| DbError {
+            message: format!("Failed to bind file_name: {}", e),
+        })?;
+        statement.bind((8, item.file_caption.as_deref())).map_err(|e| DbError {
+            message: format!("Failed to bind file_caption: {}", e),
+        })?;
+        statement.bind((9, item.file_path.as_str())).map_err(|e| DbError {
+            message: format!("Failed to bind file_path: {}", e),
+        })?;
+        statement.bind((10, item.modified_date.as_str())).map_err(|e| DbError {
+            message: format!("Failed to bind modified_date: {}", e),
+        })?;
+        statement.bind((11, item.owner_id.as_str())).map_err(|e| DbError {
+            message: format!("Failed to bind owner_id: {}", e),
+        })?;
+
+        statement.next().map_err(|e| DbError {
+            message: format!("Failed to execute statement: {}", e),
+        })?;
+
+        Ok(())
+    }
+
+    pub fn get_telegram_saved_items_by_path(&self, owner_id: &str, file_path: &str) -> Result<Vec<TelegramSavedItem>, DbError> {
+        let conn = self.0.lock().unwrap();
+
+        let mut statement = conn.prepare(
+            "SELECT
+                chat_id,
+                message_id,
+                thumbnail,
+                file_type,
+                file_unique_id,
+                file_size,
+                file_name,
+                file_caption,
+                file_path,
+                modified_date,
+                owner_id
+             FROM telegram_saved_items
+             WHERE owner_id = ? AND file_path = ?
+             ORDER BY
+                CASE WHEN file_type = 'folder' THEN 0 ELSE 1 END,
+                LOWER(file_name) ASC",
+        ).map_err(|e| DbError {
+            message: format!("Failed to prepare statement: {}", e),
+        })?;
+
+        statement.bind((1, owner_id)).map_err(|e| DbError {
+            message: format!("Failed to bind owner_id: {}", e),
+        })?;
+        statement.bind((2, file_path)).map_err(|e| DbError {
+            message: format!("Failed to bind file_path: {}", e),
+        })?;
+
+        let mut items = Vec::new();
+        while let Ok(SqliteState::Row) = statement.next() {
+            items.push(TelegramSavedItem {
+                chat_id: statement.read::<i64, usize>(0).unwrap_or(0),
+                message_id: statement.read::<i64, usize>(1).unwrap_or(0) as i32,
+                thumbnail: statement.read::<Option<String>, usize>(2).unwrap_or(None),
+                file_type: statement.read::<String, usize>(3).unwrap_or_else(|_| "file".to_string()),
+                file_unique_id: statement.read::<String, usize>(4).unwrap_or_default(),
+                file_size: statement.read::<i64, usize>(5).unwrap_or(0),
+                file_name: statement.read::<String, usize>(6).unwrap_or_default(),
+                file_caption: statement.read::<Option<String>, usize>(7).unwrap_or(None),
+                file_path: statement.read::<String, usize>(8).unwrap_or_default(),
+                modified_date: statement.read::<String, usize>(9).unwrap_or_default(),
+                owner_id: statement.read::<String, usize>(10).unwrap_or_default(),
+            });
+        }
+
+        Ok(items)
+    }
+
+    pub fn ensure_telegram_saved_folders(&self, owner_id: &str) -> Result<(), DbError> {
+        let now = chrono::Utc::now().to_rfc3339();
+        let root = "/Home";
+        let folders = ["Images", "Videos", "Audios", "Documents", "Notes"];
+
+        for folder_name in folders {
+            let item = TelegramSavedItem {
+                chat_id: 0,
+                message_id: 0,
+                thumbnail: None,
+                file_type: "folder".to_string(),
+                file_unique_id: format!("folder_{}_{}", owner_id, folder_name.to_lowercase()),
+                file_size: 0,
+                file_name: folder_name.to_string(),
+                file_caption: Some(folder_name.to_string()),
+                file_path: root.to_string(),
+                modified_date: now.clone(),
+                owner_id: owner_id.to_string(),
+            };
+
+            self.upsert_telegram_saved_item(&item)?;
+        }
+
+        Ok(())
     }
 }
 
