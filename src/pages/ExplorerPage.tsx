@@ -358,7 +358,7 @@ export default function ExplorerPage() {
   // Listen for navigation events from sidebar
   useEffect(() => {
     const handleNavigateEvent = (event: CustomEvent) => {
-      loadDirectory(event.detail);
+      navigateToPath(event.detail);
     };
 
     window.addEventListener('navigate-to-path', handleNavigateEvent as EventListener);
@@ -366,7 +366,7 @@ export default function ExplorerPage() {
     return () => {
       window.removeEventListener('navigate-to-path', handleNavigateEvent as EventListener);
     };
-  }, []);
+  }, [currentPath, isLoading, backHistory.length, forwardHistory.length]);
 
   // Listen for logout events from sidebar
   useEffect(() => {
@@ -495,7 +495,7 @@ export default function ExplorerPage() {
   };
 
   const handleNavigateToPath = (path: string) => {
-    loadDirectory(path);
+    navigateToPath(path);
   };
 
   const breadcrumbItems = useMemo(() => {
