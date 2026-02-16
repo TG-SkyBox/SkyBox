@@ -215,6 +215,7 @@ use messages::{
     tg_index_saved_messages_impl,
     tg_get_indexed_saved_messages_impl,
     tg_get_message_thumbnail_impl,
+    tg_upload_file_to_saved_messages_impl,
 };
 
 // ===== Tauri Commands =====
@@ -278,6 +279,15 @@ pub async fn tg_get_indexed_saved_messages(db: State<'_, crate::db::Database>, c
 #[tauri::command]
 pub async fn tg_get_message_thumbnail(db: State<'_, crate::db::Database>, message_id: i32) -> Result<Option<String>, TelegramError> {
     tg_get_message_thumbnail_impl(db.inner().clone(), message_id).await
+}
+
+#[tauri::command]
+pub async fn tg_upload_file_to_saved_messages(
+    db: State<'_, crate::db::Database>,
+    file_name: String,
+    file_bytes: Vec<u8>,
+) -> Result<crate::db::TelegramMessage, TelegramError> {
+    tg_upload_file_to_saved_messages_impl(db.inner().clone(), file_name, file_bytes).await
 }
 
 // ===== Utility Functions =====
