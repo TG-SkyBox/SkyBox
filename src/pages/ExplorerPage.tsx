@@ -947,6 +947,10 @@ export default function ExplorerPage() {
     navigateToPath(path);
   };
 
+  const handleViewModeChange = useCallback((mode: ExplorerViewMode) => {
+    setViewMode((prev) => (prev === mode ? prev : mode));
+  }, []);
+
   const breadcrumbItems = useMemo(() => {
     if (!currentPath) return [];
 
@@ -1556,7 +1560,7 @@ export default function ExplorerPage() {
 
             <div className="flex items-center gap-1 ml-2">
               <button
-                onClick={() => setViewMode("list")}
+                onClick={() => handleViewModeChange("list")}
                 className={`p-2 rounded transition-colors ${viewMode === "list" ? "bg-secondary text-foreground" : "text-muted-foreground hover:text-foreground"
                   }`}
                 title="List view"
@@ -1564,7 +1568,7 @@ export default function ExplorerPage() {
                 <List className="w-4 h-4" />
               </button>
               <button
-                onClick={() => setViewMode("grid")}
+                onClick={() => handleViewModeChange("grid")}
                 className={`p-2 rounded transition-colors ${viewMode === "grid" ? "bg-secondary text-foreground" : "text-muted-foreground hover:text-foreground"
                   }`}
                 title="Grid view"
