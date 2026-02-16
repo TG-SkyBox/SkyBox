@@ -22,7 +22,6 @@ import {
   Share2,
   Scissors,
   ClipboardPaste,
-  Info,
 } from "lucide-react";
 import { useNavigate, useLocation } from "react-router-dom";
 import { toast } from "@/hooks/use-toast";
@@ -175,6 +174,9 @@ const mockRoots = [
 const INTERNAL_DRAG_MIME = "application/x-skybox-item-path";
 const SAVED_ITEMS_PAGE_SIZE = 50;
 const EXPLORER_VIEW_MODE_KEY = "explorer_view_mode";
+const RECYCLE_BIN_NAME = "Recycle Bin";
+const RECYCLE_BIN_PARENT_PATH = "/Home";
+const RECYCLE_BIN_VIRTUAL_PATH = "tg://saved/Recycle Bin";
 
 const isVirtualPath = (path: string): boolean => path.startsWith("tg://");
 const isSavedVirtualFolderPath = (path: string): boolean => path === "tg://saved" || path.startsWith("tg://saved/");
@@ -1174,25 +1176,55 @@ export default function ExplorerPage() {
     }
   };
 
+  const ensureRecycleBinFolder = async () => {
+    try {
+      await invoke("tg_create_saved_folder", {
+        parentPath: RECYCLE_BIN_PARENT_PATH,
+        folderName: RECYCLE_BIN_NAME,
+      });
+    } catch (error) {
+      const typedError = error as TelegramError;
+      const message = typedError.message?.toLowerCase() || "";
+      if (!message.includes("already exists")) {
+        throw error;
+      }
+    }
+  };
+
   const handleDelete = async () => {
     if (!deleteTarget) return;
 
     try {
-      await invoke("fs_delete", { path: deleteTarget.path });
-      toast({
-        title: "Deleted",
-        description: `${deleteTarget.name} has been deleted`,
-      });
+      const isSavedItem = isSavedVirtualFolderPath(deleteTarget.path) || isSavedVirtualFilePath(deleteTarget.path);
+
+      if (isSavedItem) {
+        await ensureRecycleBinFolder();
+        await invoke("tg_move_saved_item", {
+          sourcePath: deleteTarget.path,
+          destinationPath: RECYCLE_BIN_VIRTUAL_PATH,
+        });
+        savedPathCacheRef.current = {};
+        toast({
+          title: "Moved to Recycle Bin",
+          description: `${deleteTarget.name} moved successfully`,
+        });
+      } else {
+        await invoke("fs_delete", { path: deleteTarget.path });
+        toast({
+          title: "Deleted",
+          description: `${deleteTarget.name} has been deleted`,
+        });
+      }
 
       // Reload the current directory to reflect changes
-      loadDirectory(currentPath, { force: true });
+      await loadDirectory(currentPath, { force: true });
       setDeleteTarget(null);
       if (selectedFile?.path === deleteTarget.path) {
         setSelectedFile(null);
         setShowDetails(false);
       }
     } catch (error) {
-      const typedError = error as FsError;
+      const typedError = error as FsError | TelegramError;
       toast({
         title: "Error deleting item",
         description: typedError.message || "An unknown error occurred",
@@ -1293,31 +1325,30 @@ export default function ExplorerPage() {
       return;
     }
 
-    if (isVirtualPath(file.path)) {
-      toast({
-        title: "Rename unavailable",
-        description: "Renaming in Saved Messages is not available yet.",
-      });
-      return;
-    }
-
-    const directory = getParentPath(file.path);
-    if (!directory) {
-      toast({
-        title: "Rename failed",
-        description: "Unable to resolve target directory",
-        variant: "destructive",
-      });
-      return;
-    }
-
-    const newPath = joinPath(directory, normalizedName);
-
     try {
-      await invoke("rename_file", {
-        oldPath: file.path,
-        newPath,
-      });
+      if (isSavedVirtualFolderPath(file.path) || isSavedVirtualFilePath(file.path)) {
+        await invoke("tg_rename_saved_item", {
+          sourcePath: file.path,
+          newName: normalizedName,
+        });
+        savedPathCacheRef.current = {};
+      } else {
+        const directory = getParentPath(file.path);
+        if (!directory) {
+          toast({
+            title: "Rename failed",
+            description: "Unable to resolve target directory",
+            variant: "destructive",
+          });
+          return;
+        }
+
+        const newPath = joinPath(directory, normalizedName);
+        await invoke("rename_file", {
+          oldPath: file.path,
+          newPath,
+        });
+      }
 
       toast({
         title: "Renamed",
@@ -1325,12 +1356,12 @@ export default function ExplorerPage() {
       });
 
       if (selectedFile?.path === file.path) {
-        setSelectedFile({ ...file, name: normalizedName, path: newPath });
+        setSelectedFile({ ...file, name: normalizedName });
       }
 
       await loadDirectory(currentPath, { force: true });
     } catch (error) {
-      const typedError = error as FsError;
+      const typedError = error as FsError | TelegramError;
       toast({
         title: "Rename failed",
         description: typedError.message || "An unknown error occurred",
@@ -1457,15 +1488,6 @@ export default function ExplorerPage() {
           return;
         }
 
-        if (clipboardItem.mode === "copy") {
-          toast({
-            title: "Paste unavailable",
-            description: "Copy in Saved Messages is not available yet.",
-            variant: "destructive",
-          });
-          return;
-        }
-
         await invoke("tg_move_saved_item", {
           sourcePath,
           destinationPath: destinationFolderPath,
@@ -1475,7 +1497,7 @@ export default function ExplorerPage() {
         savedPathCacheRef.current = {};
         await loadDirectory(currentPath, { force: true });
         toast({
-          title: "Moved",
+          title: "Pasted",
           description: `${sourceName} moved successfully`,
         });
         return;
@@ -1564,16 +1586,6 @@ export default function ExplorerPage() {
 
     setSelectedFile(file);
     setDeleteTarget(file);
-  };
-
-  const handleContextProperties = () => {
-    const file = contextMenuState?.targetFile;
-    if (!file) {
-      return;
-    }
-
-    setSelectedFile(file);
-    setShowDetails(true);
   };
 
   const isDraggableItem = (file: FileItem) => {
@@ -2255,16 +2267,6 @@ export default function ExplorerPage() {
               >
                 <Trash2 className="w-4 h-4" />
                 <span>Delete</span>
-              </button>
-              <button
-                className={contextMenuItemClassName}
-                onClick={() => {
-                  closeContextMenu();
-                  handleContextProperties();
-                }}
-              >
-                <Info className="w-4 h-4 text-muted-foreground" />
-                <span>Properties</span>
               </button>
             </>
           )}
