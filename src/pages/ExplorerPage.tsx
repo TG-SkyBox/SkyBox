@@ -226,7 +226,9 @@ const savedToVirtualPath = (savedPath: string): string => {
 const savedItemToFileItem = (item: TelegramSavedItem): FileItem => {
   const resolvedName = item.file_name?.trim()
     ? item.file_name
-    : `${item.file_type}_${item.file_unique_id}`;
+    : (["image", "video", "audio"].includes(item.file_type)
+      ? `${item.file_type}_${item.file_unique_id}`
+      : `message_${item.message_id || item.file_unique_id}`);
 
   const isDirectory = item.file_type === "folder";
   if (isDirectory) {

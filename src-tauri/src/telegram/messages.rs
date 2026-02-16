@@ -163,6 +163,19 @@ fn generated_file_name(file_type: &str, extension: Option<&str>) -> String {
     }
 }
 
+fn fallback_file_name_for_non_media(message_id: i32, file_type: &str, extension: Option<&str>) -> String {
+    let base = if file_type == "text" {
+        format!("note_{}", message_id)
+    } else {
+        format!("message_{}", message_id)
+    };
+
+    match extension {
+        Some(ext) if !ext.is_empty() => format!("{}.{}", base, ext),
+        _ => base,
+    }
+}
+
 fn build_temp_upload_path(file_name: &str) -> PathBuf {
     let timestamp = SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -251,8 +264,15 @@ fn upsert_saved_item_from_message(
     let final_extension = extension_candidate
         .or_else(|| Some(default_extension_for_file_type(classification.file_type).to_string()));
 
-    let file_name = preferred_name.unwrap_or_else(|| {
-        generated_file_name(classification.file_type, final_extension.as_deref())
+    let file_name = preferred_name.unwrap_or_else(|| match classification.file_type {
+        "image" | "video" | "audio" => {
+            generated_file_name(classification.file_type, final_extension.as_deref())
+        }
+        _ => fallback_file_name_for_non_media(
+            message.message_id,
+            classification.file_type,
+            final_extension.as_deref(),
+        ),
     });
 
     let path = preferred_path

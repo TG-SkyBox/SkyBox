@@ -1072,8 +1072,6 @@ impl Database {
                      (file_type = 'image' AND LOWER(file_name) LIKE 'image_%')
                      OR (file_type = 'video' AND LOWER(file_name) LIKE 'video_%')
                      OR (file_type = 'audio' AND LOWER(file_name) LIKE 'audio_%')
-                     OR (file_type = 'text' AND LOWER(file_name) LIKE 'text_%')
-                     OR (file_type = 'document' AND LOWER(file_name) LIKE 'document_%')
                    )",
             )
             .map_err(|e| DbError {
