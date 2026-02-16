@@ -399,8 +399,8 @@ export default function ExplorerPage() {
       const canNavigateByKeyboard = !isTextInputElement(e.target);
 
       if (canNavigateByKeyboard && (e.key === "Backspace" || (e.altKey && e.key === "ArrowLeft"))) {
+        e.preventDefault();
         if (backHistory.length && !isLoading) {
-          e.preventDefault();
           const previousPath = backHistory[backHistory.length - 1];
           setBackHistory((prev) => prev.slice(0, -1));
           setForwardHistory((prev) => [...prev, currentPath]);
@@ -410,8 +410,8 @@ export default function ExplorerPage() {
       }
 
       if (canNavigateByKeyboard && e.altKey && e.key === "ArrowRight") {
+        e.preventDefault();
         if (forwardHistory.length && !isLoading) {
-          e.preventDefault();
           const nextPath = forwardHistory[forwardHistory.length - 1];
           setForwardHistory((prev) => prev.slice(0, -1));
           setBackHistory((prev) => [...prev, currentPath]);
@@ -589,7 +589,7 @@ export default function ExplorerPage() {
 
   const handleFileOpen = async (file: FileItem) => {
     if (file.isDirectory) {
-      loadDirectory(file.path);
+      navigateToPath(file.path);
       toast({
         title: "Opening folder",
         description: file.name,
@@ -1014,6 +1014,22 @@ export default function ExplorerPage() {
         {/* Top bar */}
         <div className="h-14 bg-glass border-b border-border flex items-center justify-between px-4 gap-4">
           <div className="flex items-center gap-2 min-w-0">
+            <button
+              onClick={handleGoBack}
+              className="p-2 rounded text-muted-foreground hover:text-foreground hover:bg-secondary transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+              disabled={!backHistory.length || isLoading}
+              title="Back (Backspace / Alt+Left)"
+            >
+              <ChevronLeft className="w-4 h-4" />
+            </button>
+            <button
+              onClick={handleGoForward}
+              className="p-2 rounded text-muted-foreground hover:text-foreground hover:bg-secondary transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+              disabled={!forwardHistory.length || isLoading}
+              title="Forward (Alt+Right)"
+            >
+              <ChevronRight className="w-4 h-4" />
+            </button>
             <button
               onClick={handleRefresh}
               className="p-2 rounded text-muted-foreground hover:text-foreground hover:bg-secondary transition-colors"
