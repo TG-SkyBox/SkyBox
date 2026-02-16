@@ -214,6 +214,8 @@ use photo::{
 use messages::{
     tg_index_saved_messages_impl,
     tg_get_indexed_saved_messages_impl,
+    tg_list_saved_items_impl,
+    tg_create_saved_folder_impl,
     tg_get_message_thumbnail_impl,
     tg_upload_file_to_saved_messages_impl,
 };
@@ -277,6 +279,23 @@ pub async fn tg_get_indexed_saved_messages(db: State<'_, crate::db::Database>, c
 }
 
 #[tauri::command]
+pub async fn tg_list_saved_items(
+    db: State<'_, crate::db::Database>,
+    file_path: String,
+) -> Result<Vec<crate::db::TelegramSavedItem>, TelegramError> {
+    tg_list_saved_items_impl(db.inner().clone(), file_path).await
+}
+
+#[tauri::command]
+pub async fn tg_create_saved_folder(
+    db: State<'_, crate::db::Database>,
+    parent_path: String,
+    folder_name: String,
+) -> Result<crate::db::TelegramSavedItem, TelegramError> {
+    tg_create_saved_folder_impl(db.inner().clone(), parent_path, folder_name).await
+}
+
+#[tauri::command]
 pub async fn tg_get_message_thumbnail(db: State<'_, crate::db::Database>, message_id: i32) -> Result<Option<String>, TelegramError> {
     tg_get_message_thumbnail_impl(db.inner().clone(), message_id).await
 }
@@ -286,8 +305,9 @@ pub async fn tg_upload_file_to_saved_messages(
     db: State<'_, crate::db::Database>,
     file_name: String,
     file_bytes: Vec<u8>,
+    file_path: Option<String>,
 ) -> Result<crate::db::TelegramMessage, TelegramError> {
-    tg_upload_file_to_saved_messages_impl(db.inner().clone(), file_name, file_bytes).await
+    tg_upload_file_to_saved_messages_impl(db.inner().clone(), file_name, file_bytes, file_path).await
 }
 
 // ===== Utility Functions =====

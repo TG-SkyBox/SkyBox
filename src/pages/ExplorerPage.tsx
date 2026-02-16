@@ -89,6 +89,20 @@ interface TelegramMessage {
   file_reference: string;
 }
 
+interface TelegramSavedItem {
+  chat_id: number;
+  message_id: number;
+  thumbnail?: string;
+  file_type: string;
+  file_unique_id: string;
+  file_size: number;
+  file_name: string;
+  file_caption?: string;
+  file_path: string;
+  modified_date: string;
+  owner_id: string;
+}
+
 // Convert Rust FileEntry to our FileItem type
 const convertFileEntryToFileItem = (entry: FileEntry): FileItem => {
   return {
@@ -135,6 +149,61 @@ const joinPath = (base: string, name: string): string => {
   }
 
   return `${normalizedBase}/${name}`;
+};
+
+const extensionFromFileName = (fileName: string): string | undefined => {
+  const parts = fileName.split(".");
+  if (parts.length < 2) {
+    return undefined;
+  }
+
+  return parts[parts.length - 1]?.toLowerCase();
+};
+
+const virtualToSavedPath = (virtualPath: string): string => {
+  if (virtualPath === "tg://saved") {
+    return "/Home";
+  }
+
+  const relativePath = virtualPath.replace(/^tg:\/\/saved\/?/, "").replace(/\/+$/, "");
+  return relativePath ? `/Home/${relativePath}` : "/Home";
+};
+
+const savedToVirtualPath = (savedPath: string): string => {
+  const normalized = normalizePath(savedPath).replace(/\/+$/, "");
+  if (normalized === "/Home") {
+    return "tg://saved";
+  }
+
+  if (normalized.startsWith("/Home/")) {
+    return `tg://saved/${normalized.slice(6)}`;
+  }
+
+  return "tg://saved";
+};
+
+const savedItemToFileItem = (item: TelegramSavedItem): FileItem => {
+  const isDirectory = item.file_type === "folder";
+  if (isDirectory) {
+    const folderPath = savedToVirtualPath(joinPath(item.file_path, item.file_name));
+    return {
+      name: item.file_name,
+      path: folderPath,
+      isDirectory: true,
+      modifiedAt: item.modified_date,
+    };
+  }
+
+  return {
+    name: item.file_name,
+    path: `tg://msg/${item.message_id}`,
+    isDirectory: false,
+    size: item.file_size,
+    modifiedAt: item.modified_date,
+    extension: extensionFromFileName(item.file_name),
+    messageId: item.message_id > 0 ? item.message_id : undefined,
+    thumbnail: item.thumbnail || undefined,
+  };
 };
 
 export default function ExplorerPage() {
@@ -326,30 +395,11 @@ export default function ExplorerPage() {
     setIsLoading(true);
     setError(null);
     try {
-      if (path === "tg://saved") {
-        const categories = ["Images", "Videos", "Audios", "Documents", "Notes"];
-        const virtualFolders: FileItem[] = categories.map(cat => ({
-          name: cat,
-          path: `tg://saved/${cat}`,
-          isDirectory: true,
-        }));
-        setFiles(virtualFolders);
-        setCurrentPath(path);
-      } else if (path.startsWith("tg://saved/")) {
-        const cat = path.replace("tg://saved/", "");
-        const result: TelegramMessage[] = await invoke("tg_get_indexed_saved_messages", { category: cat });
-
-        const messageFiles: FileItem[] = result.map(msg => ({
-          name: msg.filename || (msg.text ? (msg.text.length > 30 ? msg.text.substring(0, 30) + "..." : msg.text) : `Message ${msg.message_id}`),
-          path: `tg://msg/${msg.message_id}`,
-          isDirectory: false,
-          size: msg.size,
-          modifiedAt: msg.timestamp,
-          extension: msg.extension || (msg.category === "Notes" ? "txt" : ""),
-          messageId: msg.message_id,
-          thumbnail: msg.thumbnail || undefined,
-        }));
-        setFiles(messageFiles);
+      if (path.startsWith("tg://saved")) {
+        const savedPath = virtualToSavedPath(path);
+        const result: TelegramSavedItem[] = await invoke("tg_list_saved_items", { filePath: savedPath });
+        const virtualItems = result.map(savedItemToFileItem);
+        setFiles(virtualItems);
         setCurrentPath(path);
       } else {
         const result: FileEntry[] = await invoke("fs_list_dir", { path });
@@ -399,11 +449,21 @@ export default function ExplorerPage() {
     if (!currentPath) return [];
 
     if (currentPath.startsWith("tg://saved")) {
-      const part = currentPath.replace("tg://saved/", "");
-      if (part !== "tg://saved" && part !== "") {
-        return [{ name: part, path: currentPath }];
+      const relativePath = currentPath.replace(/^tg:\/\/saved\/?/, "");
+      if (!relativePath) {
+        return [];
       }
-      return [];
+
+      const parts = relativePath.split("/").filter(Boolean);
+      const breadcrumbs: { name: string; path: string }[] = [];
+      let runningPath = "tg://saved";
+
+      parts.forEach((part) => {
+        runningPath = `${runningPath}/${part}`;
+        breadcrumbs.push({ name: part, path: runningPath });
+      });
+
+      return breadcrumbs;
     }
 
     const parts = currentPath.split('/').filter(p => p);
@@ -446,6 +506,14 @@ export default function ExplorerPage() {
         description: file.name,
       });
     } else {
+      if (file.path.startsWith("tg://msg/")) {
+        toast({
+          title: "Cloud file selected",
+          description: "Direct open for Saved Messages files is not available yet.",
+        });
+        return;
+      }
+
       try {
         await invoke("fs_open_path", { path: file.path });
         toast({
@@ -591,19 +659,25 @@ export default function ExplorerPage() {
     const folderName = prompt("Enter folder name:");
     if (!folderName) return;
 
-    // Construct the new path
-    const newPath = `${currentPath}/${folderName}`.replace("//", "/");
-
     try {
-      await invoke("fs_create_dir", { path: newPath });
+      if (currentPath.startsWith("tg://saved")) {
+        await invoke("tg_create_saved_folder", {
+          parentPath: virtualToSavedPath(currentPath),
+          folderName,
+        });
+      } else {
+        const newPath = `${currentPath}/${folderName}`.replace("//", "/");
+        await invoke("fs_create_dir", { path: newPath });
+      }
+
       toast({
         title: "Folder created",
         description: `Created folder: ${folderName}`,
       });
       // Reload the current directory to show the new folder
-      loadDirectory(currentPath);
+      await loadDirectory(currentPath);
     } catch (error) {
-      const typedError = error as FsError;
+      const typedError = error as FsError | TelegramError;
       toast({
         title: "Error creating folder",
         description: typedError.message || "An unknown error occurred",
@@ -770,6 +844,7 @@ export default function ExplorerPage() {
           const uploadedMessage: TelegramMessage = await invoke("tg_upload_file_to_saved_messages", {
             fileName: droppedFile.name,
             fileBytes,
+            filePath: virtualToSavedPath(currentPath),
           });
 
           uploadedCount += 1;
