@@ -1,6 +1,24 @@
 import { FileItem, getFileIcon, formatFileSize } from "./FileRow";
 import { useState, useEffect } from "react";
-import { invoke } from "@tauri-apps/api/core";
+import { invoke, convertFileSrc } from "@tauri-apps/api/core";
+
+const resolveThumbnailSrc = (thumbnail?: string | null): string | undefined => {
+    if (!thumbnail) {
+        return undefined;
+    }
+
+    if (
+        thumbnail.startsWith("data:") ||
+        thumbnail.startsWith("http://") ||
+        thumbnail.startsWith("https://") ||
+        thumbnail.startsWith("asset:") ||
+        thumbnail.startsWith("blob:")
+    ) {
+        return thumbnail;
+    }
+
+    return convertFileSrc(thumbnail);
+};
 
 interface FileGridProps {
     files: FileItem[];
@@ -83,8 +101,12 @@ function FileGridItem({
     onDragLeave,
     onDrop,
 }: FileGridItemProps) {
-    const [thumbUrl, setThumbUrl] = useState<string | undefined>(file.thumbnail);
+    const [thumbUrl, setThumbUrl] = useState<string | undefined>(resolveThumbnailSrc(file.thumbnail));
     const Icon = getFileIcon(file);
+
+    useEffect(() => {
+        setThumbUrl(resolveThumbnailSrc(file.thumbnail));
+    }, [file.thumbnail]);
 
     useEffect(() => {
         // If we have a messageId but no thumbnail, try to fetch it
@@ -93,7 +115,7 @@ function FileGridItem({
                 try {
                     const result: string | null = await invoke("tg_get_message_thumbnail", { messageId: file.messageId });
                     if (result) {
-                        setThumbUrl(result);
+                        setThumbUrl(resolveThumbnailSrc(result));
                     }
                 } catch (e) {
                     console.error("Failed to fetch thumbnail for message:", file.messageId, e);
