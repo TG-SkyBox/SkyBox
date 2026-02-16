@@ -2,31 +2,99 @@ use serde::{Deserialize, Serialize};
 use std::sync::{Arc, Mutex};
 use tauri::State;
 use sqlite::{Connection, State as SqliteState};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::fs;
-use directories::ProjectDirs;
+use directories::BaseDirs;
+
 // Helper function to get the app data directory
 fn get_app_data_dir() -> Result<PathBuf, DbError> {
-    let project_dirs = ProjectDirs::from("com", "skybox", "Skybox")
-        .ok_or_else(|| DbError {
-            message: "Failed to get project directories".to_string(),
-        })?;
-    
-    let data_dir = project_dirs.data_local_dir();
-    
+    let base_dirs = BaseDirs::new().ok_or_else(|| DbError {
+        message: "Failed to resolve local app data directory".to_string(),
+    })?;
+
+    let data_dir = base_dirs.data_local_dir().join("skybox");
+
     // Create the directory if it doesn't exist
-    fs::create_dir_all(data_dir)
+    fs::create_dir_all(&data_dir)
         .map_err(|e| DbError {
             message: format!("Failed to create app data directory: {}", e),
         })?;
-    
-    Ok(data_dir.to_path_buf())
+
+    Ok(data_dir)
+}
+
+fn get_legacy_database_path() -> Result<PathBuf, DbError> {
+    let base_dirs = BaseDirs::new().ok_or_else(|| DbError {
+        message: "Failed to resolve local app data directory".to_string(),
+    })?;
+
+    Ok(base_dirs
+        .data_local_dir()
+        .join("skybox")
+        .join("Skybox")
+        .join("data")
+        .join("Skybox.db"))
+}
+
+fn migrate_legacy_database_if_needed(new_db_path: &Path) -> Result<(), DbError> {
+    if new_db_path.exists() {
+        return Ok(());
+    }
+
+    let legacy_db_path = get_legacy_database_path()?;
+    if !legacy_db_path.exists() {
+        return Ok(());
+    }
+
+    if let Some(parent_dir) = new_db_path.parent() {
+        fs::create_dir_all(parent_dir).map_err(|e| DbError {
+            message: format!(
+                "Failed to create new database directory {}: {}",
+                parent_dir.display(),
+                e
+            ),
+        })?;
+    }
+
+    fs::copy(&legacy_db_path, new_db_path).map_err(|e| DbError {
+        message: format!(
+            "Failed to migrate legacy database from {} to {}: {}",
+            legacy_db_path.display(),
+            new_db_path.display(),
+            e
+        ),
+    })?;
+
+    for sidecar_suffix in ["-wal", "-shm"] {
+        let legacy_sidecar = PathBuf::from(format!("{}{}", legacy_db_path.to_string_lossy(), sidecar_suffix));
+        if !legacy_sidecar.exists() {
+            continue;
+        }
+
+        let new_sidecar = PathBuf::from(format!("{}{}", new_db_path.to_string_lossy(), sidecar_suffix));
+        if new_sidecar.exists() {
+            continue;
+        }
+
+        fs::copy(&legacy_sidecar, &new_sidecar).map_err(|e| DbError {
+            message: format!(
+                "Failed to migrate legacy database sidecar from {} to {}: {}",
+                legacy_sidecar.display(),
+                new_sidecar.display(),
+                e
+            ),
+        })?;
+    }
+
+    Ok(())
 }
 
 // Helper function to get the full database path
 fn get_database_path() -> Result<PathBuf, DbError> {
     let app_data_dir = get_app_data_dir()?;
-    Ok(app_data_dir.join("Skybox.db"))
+    let db_path = app_data_dir.join("Skybox.db");
+    migrate_legacy_database_if_needed(&db_path)?;
+    Ok(db_path)
 }
 
 #[derive(Debug, Serialize, Deserialize)]
