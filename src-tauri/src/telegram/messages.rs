@@ -7,6 +7,7 @@ use serde_json::json;
 use std::fs;
 use std::path::PathBuf;
 use std::time::{SystemTime, UNIX_EPOCH};
+use uuid::Uuid;
 
 const DEFAULT_BATCH_SIZE: usize = 50;
 const MAX_BATCH_SIZE: usize = 200;
@@ -24,7 +25,7 @@ fn clamp_batch_size(input: Option<i32>) -> usize {
     parsed.min(MAX_BATCH_SIZE)
 }
 
-fn sanitize_upload_file_name(file_name: &str) -> String {
+fn sanitize_file_name(file_name: &str) -> String {
     let trimmed = file_name.trim();
     if trimmed.is_empty() {
         return "upload.bin".to_string();
@@ -40,6 +41,68 @@ fn sanitize_upload_file_name(file_name: &str) -> String {
             }
         })
         .collect()
+}
+
+fn optional_sanitized_name(file_name: &str) -> Option<String> {
+    let trimmed = file_name.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+
+    Some(sanitize_file_name(trimmed))
+}
+
+#[derive(Clone, Copy)]
+struct ExtensionClassification {
+    category: &'static str,
+    file_type: &'static str,
+}
+
+fn classify_extension(extension: Option<&str>) -> ExtensionClassification {
+    match extension.unwrap_or_default() {
+        "jpg" | "jpeg" | "png" | "webp" | "gif" | "bmp" | "tiff" | "svg" | "heic" => {
+            ExtensionClassification {
+                category: "Images",
+                file_type: "image",
+            }
+        }
+        "mp4" | "mkv" | "webm" | "mov" | "avi" | "wmv" | "m4v" | "flv" => {
+            ExtensionClassification {
+                category: "Videos",
+                file_type: "video",
+            }
+        }
+        "mp3" | "m4a" | "ogg" | "wav" | "flac" | "aac" | "opus" | "wma" => {
+            ExtensionClassification {
+                category: "Audios",
+                file_type: "audio",
+            }
+        }
+        "txt" | "md" | "rtf" | "log" | "json" | "xml" | "yaml" | "yml" | "csv" | "ini" | "toml" => {
+            ExtensionClassification {
+                category: "Notes",
+                file_type: "text",
+            }
+        }
+        _ => ExtensionClassification {
+            category: "Documents",
+            file_type: "document",
+        },
+    }
+}
+
+fn normalize_extension(raw_extension: Option<&str>) -> Option<String> {
+    raw_extension
+        .map(|ext| ext.trim().trim_start_matches('.').to_lowercase())
+        .filter(|ext| !ext.is_empty())
+}
+
+fn generated_file_name(file_type: &str, extension: Option<&str>) -> String {
+    let uuid = Uuid::new_v4().simple().to_string();
+    match extension {
+        Some(ext) if !ext.is_empty() => format!("{}_{}.{}", file_type, uuid, ext),
+        _ => format!("{}_{}", file_type, uuid),
+    }
 }
 
 fn build_temp_upload_path(file_name: &str) -> PathBuf {
@@ -86,26 +149,6 @@ fn category_to_saved_path(category: &str) -> String {
     }
 }
 
-fn category_from_extension(extension: &str) -> String {
-    match extension {
-        "jpg" | "jpeg" | "png" | "webp" | "gif" => "Images".to_string(),
-        "mp4" | "mkv" | "webm" | "mov" => "Videos".to_string(),
-        "mp3" | "m4a" | "ogg" | "wav" | "flac" => "Audios".to_string(),
-        _ => "Documents".to_string(),
-    }
-}
-
-fn category_to_file_type(category: &str) -> String {
-    match category {
-        "Images" => "image".to_string(),
-        "Videos" => "video".to_string(),
-        "Audios" => "audio".to_string(),
-        "Documents" => "document".to_string(),
-        "Notes" => "text".to_string(),
-        _ => "file".to_string(),
-    }
-}
-
 fn build_folder_unique_id(owner_id: &str, parent_path: &str, folder_name: &str) -> String {
     let token = format!("{}_{}_{}", owner_id, parent_path, folder_name)
         .chars()
@@ -116,7 +159,7 @@ fn build_folder_unique_id(owner_id: &str, parent_path: &str, folder_name: &str) 
 
 fn extension_from_name(file_name: &str) -> Option<String> {
     let mut parts = file_name.rsplit('.');
-    let maybe_extension = parts.next()?.trim().to_lowercase();
+    let maybe_extension = parts.next()?.trim().trim_start_matches('.').to_lowercase();
     let has_name_part = parts.next().is_some();
 
     if !has_name_part || maybe_extension.is_empty() {
@@ -133,14 +176,21 @@ fn upsert_saved_item_from_message(
     preferred_path: Option<&str>,
     fallback_file_name: Option<&str>,
 ) -> Result<(), TelegramError> {
-    let file_name = fallback_file_name
-        .map(|name| name.to_string())
-        .or_else(|| message.filename.clone())
-        .unwrap_or_else(|| format!("message_{}", message.message_id));
+    let preferred_name = fallback_file_name
+        .and_then(optional_sanitized_name)
+        .or_else(|| message.filename.as_deref().and_then(optional_sanitized_name));
+
+    let extension = normalize_extension(message.extension.as_deref())
+        .or_else(|| preferred_name.as_deref().and_then(extension_from_name));
+    let classification = classify_extension(extension.as_deref());
+
+    let file_name = preferred_name.unwrap_or_else(|| {
+        generated_file_name(classification.file_type, extension.as_deref())
+    });
 
     let path = preferred_path
         .map(normalize_saved_path)
-        .unwrap_or_else(|| category_to_saved_path(&message.category));
+        .unwrap_or_else(|| category_to_saved_path(classification.category));
 
     let file_unique_id = if message.message_id > 0 {
         format!("msg_{}_{}", message.chat_id, message.message_id)
@@ -156,7 +206,7 @@ fn upsert_saved_item_from_message(
         chat_id: message.chat_id,
         message_id: message.message_id,
         thumbnail: message.thumbnail.clone(),
-        file_type: category_to_file_type(&message.category),
+        file_type: classification.file_type.to_string(),
         file_unique_id,
         file_size: message.size.unwrap_or(0),
         file_name,
@@ -193,19 +243,27 @@ fn hydrate_saved_items_from_cached_messages(
             message: format!("Failed to count saved items: {}", e.message),
         })?;
 
-    if existing_items >= indexed_messages_count {
+    let unnamed_items = db
+        .count_telegram_saved_items_with_empty_name(owner_id)
+        .map_err(|e| TelegramError {
+            message: format!("Failed to count unnamed saved items: {}", e.message),
+        })?;
+
+    if existing_items >= indexed_messages_count && unnamed_items == 0 {
         log::debug!(
-            "Saved-item hydration already up-to-date (saved_items={}, indexed_messages={})",
+            "Saved-item hydration already up-to-date (saved_items={}, indexed_messages={}, unnamed_items={})",
             existing_items,
-            indexed_messages_count
+            indexed_messages_count,
+            unnamed_items
         );
         return Ok(0);
     }
 
     log::info!(
-        "Hydrating saved-item metadata from cache (saved_items={}, indexed_messages={})",
+        "Hydrating saved-item metadata from cache (saved_items={}, indexed_messages={}, unnamed_items={})",
         existing_items,
-        indexed_messages_count
+        indexed_messages_count,
+        unnamed_items
     );
 
     let cached_messages = db.get_all_indexed_messages(chat_id).map_err(|e| TelegramError {
@@ -552,8 +610,13 @@ pub async fn tg_rebuild_saved_items_index_impl(db: Database) -> Result<serde_jso
         .map_err(|e| TelegramError {
             message: format!("Failed to count saved items: {}", e.message),
         })?;
+    let unnamed_items_count = db
+        .count_telegram_saved_items_with_empty_name(&owner_id)
+        .map_err(|e| TelegramError {
+            message: format!("Failed to count unnamed saved items: {}", e.message),
+        })?;
 
-    if indexed_messages_count == 0 || saved_items_count >= indexed_messages_count {
+    if indexed_messages_count == 0 || (saved_items_count >= indexed_messages_count && unnamed_items_count == 0) {
         return Ok(json!({
             "upserted_count": 0,
             "oldest_message_id": db.get_oldest_indexed_message_id(chat_id).unwrap_or(0)
@@ -792,7 +855,7 @@ pub async fn tg_upload_file_to_saved_messages_impl(
         });
     }
 
-    let safe_file_name = sanitize_upload_file_name(&file_name);
+    let safe_file_name = sanitize_file_name(&file_name);
 
     let client = {
         let state_guard = AUTH_STATE.lock().await;
@@ -852,16 +915,14 @@ pub async fn tg_upload_file_to_saved_messages_impl(
     let telegram_message = if let Some(message) = categorize_message(&sent_message, chat_id) {
         message
     } else {
-        let extension = extension_from_name(&safe_file_name);
-        let category = extension
-            .as_deref()
-            .map(category_from_extension)
-            .unwrap_or_else(|| "Documents".to_string());
+        let extracted_extension = extension_from_name(&safe_file_name);
+        let extension = normalize_extension(extracted_extension.as_deref());
+        let classification = classify_extension(extension.as_deref());
 
         TelegramMessage {
             message_id: sent_message.id(),
             chat_id,
-            category,
+            category: classification.category.to_string(),
             filename: Some(safe_file_name.clone()),
             extension,
             mime_type: None,
@@ -906,12 +967,13 @@ fn categorize_message(message: &Message, chat_id: i64) -> Option<TelegramMessage
                 Some(tl::enums::Photo::Photo(p)) => (p.id, p.access_hash, p.file_reference.clone()),
                 _ => return None,
             };
-            let ext = "jpg".to_string();
-            let name = format!("photo_{}.{}", message.id(), ext);
+            let ext = Some("jpg".to_string());
+            let classification = classify_extension(ext.as_deref());
+            let name = Some(format!("photo_{}.jpg", message.id()));
             (
-                "Images".to_string(),
-                Some(name),
-                Some(ext),
+                classification.category.to_string(),
+                name,
+                ext,
                 Some("image/jpeg".to_string()),
                 None,
                 None,
@@ -923,25 +985,20 @@ fn categorize_message(message: &Message, chat_id: i64) -> Option<TelegramMessage
                 Some(tl::enums::Document::Document(d)) => (d.id, d.access_hash, d.file_reference.clone()),
                 _ => return None,
             };
-            let fname = doc.name().to_string();
-            let ext = fname.split('.').last().unwrap_or("").to_lowercase();
+            let file_name = optional_sanitized_name(&doc.name().to_string());
+            let extracted_extension = file_name.as_deref().and_then(extension_from_name);
+            let ext = normalize_extension(extracted_extension.as_deref());
+            let classification = classify_extension(ext.as_deref());
             let mime = match doc.mime_type() {
                 Some(m) => Some(m.to_string()),
                 None => None,
             };
             let sz = Some(doc.size() as i64);
-            
-            let category = match ext.as_str() {
-                "jpg" | "jpeg" | "png" | "webp" | "gif" => "Images",
-                "mp4" | "mkv" | "webm" | "mov" => "Videos",
-                "mp3" | "m4a" | "ogg" | "wav" | "flac" => "Audios",
-                _ => "Documents"
-            }.to_string();
 
             (
-                category,
-                Some(fname),
-                Some(ext),
+                classification.category.to_string(),
+                file_name,
+                ext,
                 mime,
                 sz,
                 None,
@@ -950,12 +1007,14 @@ fn categorize_message(message: &Message, chat_id: i64) -> Option<TelegramMessage
         },
         _ => {
             if !message.text().is_empty() {
+                let ext = Some("txt".to_string());
+                let classification = classify_extension(ext.as_deref());
                 (
-                    "Notes".to_string(),
+                    classification.category.to_string(),
                     None,
-                    None,
-                    None,
-                    None,
+                    ext,
+                    Some("text/plain".to_string()),
+                    Some(message.text().len() as i64),
                     None,
                     json!({"type": "text"}).to_string()
                 )

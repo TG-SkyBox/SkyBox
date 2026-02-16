@@ -1025,6 +1025,37 @@ impl Database {
         }
     }
 
+    pub fn count_telegram_saved_items_with_empty_name(&self, owner_id: &str) -> Result<i64, DbError> {
+        let conn = self.0.lock().unwrap();
+
+        let mut statement = conn
+            .prepare(
+                "SELECT COUNT(*)
+                 FROM telegram_saved_items
+                 WHERE owner_id = ?
+                   AND file_type != 'folder'
+                   AND (file_name IS NULL OR TRIM(file_name) = '')",
+            )
+            .map_err(|e| DbError {
+                message: format!("Failed to prepare statement: {}", e),
+            })?;
+
+        statement.bind((1, owner_id)).map_err(|e| DbError {
+            message: format!("Failed to bind owner_id: {}", e),
+        })?;
+
+        match statement.next() {
+            Ok(SqliteState::Row) => {
+                let count: i64 = statement.read::<i64, usize>(0).unwrap_or(0);
+                Ok(count)
+            }
+            Ok(SqliteState::Done) => Ok(0),
+            Err(e) => Err(DbError {
+                message: format!("Failed to count unnamed saved items: {}", e),
+            }),
+        }
+    }
+
     pub fn get_telegram_saved_items_by_path_paginated(
         &self,
         owner_id: &str,

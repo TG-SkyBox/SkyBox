@@ -224,11 +224,15 @@ const savedToVirtualPath = (savedPath: string): string => {
 };
 
 const savedItemToFileItem = (item: TelegramSavedItem): FileItem => {
+  const resolvedName = item.file_name?.trim()
+    ? item.file_name
+    : `${item.file_type}_${item.file_unique_id}`;
+
   const isDirectory = item.file_type === "folder";
   if (isDirectory) {
-    const folderPath = savedToVirtualPath(joinPath(item.file_path, item.file_name));
+    const folderPath = savedToVirtualPath(joinPath(item.file_path, resolvedName));
     return {
-      name: item.file_name,
+      name: resolvedName,
       path: folderPath,
       isDirectory: true,
       modifiedAt: item.modified_date,
@@ -236,12 +240,12 @@ const savedItemToFileItem = (item: TelegramSavedItem): FileItem => {
   }
 
   return {
-    name: item.file_name,
+    name: resolvedName,
     path: `tg://msg/${item.message_id}`,
     isDirectory: false,
     size: item.file_size,
     modifiedAt: item.modified_date,
-    extension: extensionFromFileName(item.file_name),
+    extension: extensionFromFileName(resolvedName),
     messageId: item.message_id > 0 ? item.message_id : undefined,
     thumbnail: item.thumbnail || undefined,
   };
