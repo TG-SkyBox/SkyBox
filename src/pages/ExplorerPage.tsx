@@ -10,7 +10,7 @@ import { TelegramButton } from "@/components/skybox/TelegramButton";
 import { FolderPlus, Grid, List, SortAsc, RefreshCw, Copy, Trash2, Edit3, ChevronLeft, ChevronRight } from "lucide-react";
 import { useNavigate, useLocation } from "react-router-dom";
 import { toast } from "@/hooks/use-toast";
-import { invoke } from "@tauri-apps/api/core";
+import { invoke, convertFileSrc } from "@tauri-apps/api/core";
 
 interface FsError {
   message: string;
@@ -217,6 +217,24 @@ const savedToVirtualPath = (savedPath: string): string => {
   return "tg://saved";
 };
 
+const resolveThumbnailSrc = (thumbnail?: string | null): string | undefined => {
+  if (!thumbnail) {
+    return undefined;
+  }
+
+  if (
+    thumbnail.startsWith("data:") ||
+    thumbnail.startsWith("http://") ||
+    thumbnail.startsWith("https://") ||
+    thumbnail.startsWith("asset:") ||
+    thumbnail.startsWith("blob:")
+  ) {
+    return thumbnail;
+  }
+
+  return convertFileSrc(thumbnail);
+};
+
 const savedItemToFileItem = (item: TelegramSavedItem): FileItem => {
   const resolvedName = item.file_name?.trim()
     ? item.file_name
@@ -243,7 +261,7 @@ const savedItemToFileItem = (item: TelegramSavedItem): FileItem => {
     modifiedAt: item.modified_date,
     extension: extensionFromFileName(resolvedName),
     messageId: item.message_id > 0 ? item.message_id : undefined,
-    thumbnail: item.thumbnail || undefined,
+    thumbnail: resolveThumbnailSrc(item.thumbnail),
   };
 };
 

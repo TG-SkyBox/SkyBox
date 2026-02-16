@@ -1041,11 +1041,43 @@ pub async fn tg_get_message_thumbnail_impl(db: Database, message_id: i32) -> Res
         Ok(Some(msg)) => {
             if let Some(thumb) = msg.thumbnail {
                 if !thumb.is_empty() {
-                    log::info!("tg_get_message_thumbnail_impl: Found cached thumbnail in database for message_id={}", message_id);
-                    return Ok(Some(thumb));
+                    if thumb.starts_with("data:") {
+                        if let Some(image_bytes) = decode_data_url_image_bytes(&thumb) {
+                            if let Ok(cached_path) = cache_thumbnail_bytes(chat_id, message_id, &image_bytes) {
+                                if let Err(e) = db.update_telegram_message_thumbnail(chat_id, message_id, &cached_path) {
+                                    log::error!(
+                                        "tg_get_message_thumbnail_impl: Failed to update cached thumbnail path in telegram_messages: {}",
+                                        e.message
+                                    );
+                                }
+
+                                let owner_id = chat_id.to_string();
+                                if let Err(e) =
+                                    db.update_telegram_saved_item_thumbnail(&owner_id, message_id, &cached_path)
+                                {
+                                    log::error!(
+                                        "tg_get_message_thumbnail_impl: Failed to update cached thumbnail path in telegram_saved_items: {}",
+                                        e.message
+                                    );
+                                }
+
+                                return Ok(Some(cached_path));
+                            }
+                        }
+
+                        return Ok(Some(thumb));
+                    }
+
+                    if Path::new(&thumb).exists() {
+                        log::info!(
+                            "tg_get_message_thumbnail_impl: Found thumbnail cache file in database for message_id={}",
+                            message_id
+                        );
+                        return Ok(Some(thumb));
+                    }
                 }
             }
-        },
+        }
         _ => {}
     }
 
@@ -1150,16 +1182,25 @@ pub async fn tg_get_message_thumbnail_impl(db: Database, message_id: i32) -> Res
         return Ok(None);
     }
 
-    // 5. Encode and Update DB
-    use base64::Engine;
-    let b64 = base64::engine::general_purpose::STANDARD.encode(&bytes);
-    let data_url = format!("data:image/jpeg;base64,{}", b64);
+    // 5. Store thumbnail on disk and save path in DB
+    let cached_path = cache_thumbnail_bytes(chat_id, message_id, &bytes)?;
 
-    if let Err(e) = db.update_telegram_message_thumbnail(chat_id, message_id, &data_url) {
-        log::error!("tg_get_message_thumbnail_impl: Failed to update database: {}", e.message);
+    if let Err(e) = db.update_telegram_message_thumbnail(chat_id, message_id, &cached_path) {
+        log::error!(
+            "tg_get_message_thumbnail_impl: Failed to update telegram_messages thumbnail path: {}",
+            e.message
+        );
     }
 
-    Ok(Some(data_url))
+    let owner_id = chat_id.to_string();
+    if let Err(e) = db.update_telegram_saved_item_thumbnail(&owner_id, message_id, &cached_path) {
+        log::error!(
+            "tg_get_message_thumbnail_impl: Failed to update telegram_saved_items thumbnail path: {}",
+            e.message
+        );
+    }
+
+    Ok(Some(cached_path))
 }
 
 pub async fn tg_upload_file_to_saved_messages_impl(
