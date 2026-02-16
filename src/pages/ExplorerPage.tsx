@@ -363,7 +363,7 @@ export default function ExplorerPage() {
         if (!cancelled && rebuildResult.upserted_count > 0) {
           setHasMoreSavedItems(true);
           if (currentPathRef.current.startsWith("tg://saved")) {
-            await loadDirectory(currentPathRef.current);
+            await loadDirectory(currentPathRef.current, { force: true });
           }
         }
       } catch (error) {
@@ -409,6 +409,10 @@ export default function ExplorerPage() {
           if (syncComplete) {
             setHasMoreSavedItems(false);
           }
+        }
+
+        if (!cancelled && syncComplete && currentPathRef.current.startsWith("tg://saved")) {
+          await loadAllSavedItems(currentPathRef.current);
         }
       } catch (error) {
         console.error("Error backfilling saved messages:", error);
@@ -1491,7 +1495,7 @@ export default function ExplorerPage() {
                 <p className="text-body text-destructive mb-2">
                   Error: {error}
                 </p>
-                <TelegramButton onClick={() => loadDirectory(currentPath)}>
+                <TelegramButton onClick={() => loadDirectory(currentPath, { force: true })}>
                   Retry
                 </TelegramButton>
               </div>
