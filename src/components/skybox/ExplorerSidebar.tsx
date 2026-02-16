@@ -195,13 +195,13 @@ export function ExplorerSidebar({ roots = [], onAddRoot, currentPath, userInfo, 
             <button
               key={item.id}
               onClick={() => item.path && handleRootClick(item.path)}
-              className={`ml-8 flex items-center gap-3 px-3 py-2 rounded-lg transition-all duration-150 w-[calc(100%-2rem)] text-left ${isActive
+              className={`flex items-center gap-3 px-3 py-2.5 rounded-lg transition-all duration-150 w-full text-left ${isActive
                 ? "bg-sidebar-accent text-primary font-medium"
                 : "text-foreground hover:bg-sidebar-accent/50"
                 }`}
             >
-              <Icon className="w-4 h-4" />
-              <span className="text-body">{item.label}</span>
+              <Icon className="w-5 h-5" />
+              <span className="text-body font-medium">{item.label}</span>
             </button>
           );
         })}
