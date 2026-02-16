@@ -2135,7 +2135,7 @@ export default function ExplorerPage() {
       {contextMenuState && (
         <div
           ref={contextMenuRef}
-          className="fixed z-[80] min-w-[220px] rounded-xl border border-border/70 bg-glass shadow-2xl shadow-black/50 backdrop-saturate-150 p-1"
+          className="fixed z-[80] min-w-[220px] rounded-xl bg-glass shadow-2xl shadow-black/50 backdrop-saturate-150 p-1"
           style={{ left: `${contextMenuState.x}px`, top: `${contextMenuState.y}px` }}
           onClick={(event) => event.stopPropagation()}
           onContextMenu={(event) => event.preventDefault()}
