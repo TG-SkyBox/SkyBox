@@ -759,49 +759,50 @@ export default function ExplorerPage() {
     }
 
     setIsUploadingFiles(true);
+    try {
+      let uploadedCount = 0;
+      let failedCount = 0;
+      const uploadedCategories = new Set<string>();
 
-    let uploadedCount = 0;
-    let failedCount = 0;
-    const uploadedCategories = new Set<string>();
+      for (const droppedFile of droppedFiles) {
+        try {
+          const fileBytes = Array.from(new Uint8Array(await droppedFile.arrayBuffer()));
+          const uploadedMessage: TelegramMessage = await invoke("tg_upload_file_to_saved_messages", {
+            file_name: droppedFile.name,
+            file_bytes: fileBytes,
+          });
 
-    for (const droppedFile of droppedFiles) {
-      try {
-        const fileBytes = Array.from(new Uint8Array(await droppedFile.arrayBuffer()));
-        const uploadedMessage: TelegramMessage = await invoke("tg_upload_file_to_saved_messages", {
-          file_name: droppedFile.name,
-          file_bytes: fileBytes,
-        });
-
-        uploadedCount += 1;
-        uploadedCategories.add(uploadedMessage.category);
-      } catch (error) {
-        failedCount += 1;
-        console.error("Failed to upload file:", droppedFile.name, error);
+          uploadedCount += 1;
+          uploadedCategories.add(uploadedMessage.category);
+        } catch (error) {
+          failedCount += 1;
+          console.error("Failed to upload file:", droppedFile.name, error);
+        }
       }
+
+      if (uploadedCount > 0) {
+        await loadDirectory(currentPath);
+
+        const categorySummary = uploadedCategories.size
+          ? ` to ${Array.from(uploadedCategories).join(", ")}`
+          : "";
+
+        toast({
+          title: "Upload complete",
+          description: `Uploaded ${uploadedCount} file${uploadedCount === 1 ? "" : "s"}${categorySummary}`,
+        });
+      }
+
+      if (failedCount > 0) {
+        toast({
+          title: "Some uploads failed",
+          description: `${failedCount} file${failedCount === 1 ? "" : "s"} could not be uploaded`,
+          variant: "destructive",
+        });
+      }
+    } finally {
+      setIsUploadingFiles(false);
     }
-
-    if (uploadedCount > 0) {
-      await loadDirectory(currentPath);
-
-      const categorySummary = uploadedCategories.size
-        ? ` to ${Array.from(uploadedCategories).join(", ")}`
-        : "";
-
-      toast({
-        title: "Upload complete",
-        description: `Uploaded ${uploadedCount} file${uploadedCount === 1 ? "" : "s"}${categorySummary}`,
-      });
-    }
-
-    if (failedCount > 0) {
-      toast({
-        title: "Some uploads failed",
-        description: `${failedCount} file${failedCount === 1 ? "" : "s"} could not be uploaded`,
-        variant: "destructive",
-      });
-    }
-
-    setIsUploadingFiles(false);
   };
 
   const handleExplorerDragOver = (event: React.DragEvent) => {

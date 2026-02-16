@@ -137,3 +137,14 @@ Creates a new user session.
 Clears the current user session.
 
 **Returns:** `Result<(), DbError>`
+
+## Telegram Commands
+
+### `tg_upload_file_to_saved_messages(file_name: String, file_bytes: Vec<u8>)`
+Uploads a dropped file to Telegram Saved Messages and stores its indexed metadata locally.
+
+**Parameters:**
+- `file_name`: Original file name
+- `file_bytes`: Raw file bytes from drag-and-drop payload
+
+**Returns:** `Result<TelegramMessage, TelegramError>`
