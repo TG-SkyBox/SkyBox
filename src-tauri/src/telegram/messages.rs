@@ -690,8 +690,17 @@ pub async fn tg_rebuild_saved_items_index_impl(db: Database) -> Result<serde_jso
         .map_err(|e| TelegramError {
             message: format!("Failed to count unnamed saved items: {}", e.message),
         })?;
+    let generated_without_extension_count = db
+        .count_telegram_generated_names_missing_extension(&owner_id)
+        .map_err(|e| TelegramError {
+            message: format!("Failed to count generated names without extension: {}", e.message),
+        })?;
 
-    if indexed_messages_count == 0 || (saved_items_count >= indexed_messages_count && unnamed_items_count == 0) {
+    if indexed_messages_count == 0
+        || (saved_items_count >= indexed_messages_count
+            && unnamed_items_count == 0
+            && generated_without_extension_count == 0)
+    {
         return Ok(json!({
             "upserted_count": 0,
             "oldest_message_id": db.get_oldest_indexed_message_id(chat_id).unwrap_or(0)
