@@ -148,11 +148,40 @@ export function FileRow({
   isDropTarget,
 }: FileRowProps) {
   const [thumbUrl, setThumbUrl] = useState<string | undefined>(resolveThumbnailSrc(file.thumbnail));
+  const [hasRetriedBrokenThumbnail, setHasRetriedBrokenThumbnail] = useState(false);
   const Icon = getFileIcon(file);
 
   useEffect(() => {
     setThumbUrl(resolveThumbnailSrc(file.thumbnail));
+    setHasRetriedBrokenThumbnail(false);
   }, [file.thumbnail]);
+
+  const refetchThumbnail = async () => {
+    if (!file.messageId) {
+      setThumbUrl(undefined);
+      return;
+    }
+
+    if (hasRetriedBrokenThumbnail) {
+      setThumbUrl(undefined);
+      return;
+    }
+
+    setHasRetriedBrokenThumbnail(true);
+
+    try {
+      const result: string | null = await invoke("tg_get_message_thumbnail", { messageId: file.messageId });
+      const resolved = resolveThumbnailSrc(result);
+      if (resolved) {
+        setThumbUrl(resolved);
+        return;
+      }
+    } catch (e) {
+      console.error("Failed to refetch missing thumbnail for message:", file.messageId, e);
+    }
+
+    setThumbUrl(undefined);
+  };
 
   useEffect(() => {
     // If we have a messageId but no thumbnail, try to fetch it
@@ -187,7 +216,14 @@ export function FileRow({
     >
       <div className="w-8 h-8 flex-shrink-0 flex items-center justify-center rounded-md overflow-hidden bg-secondary/50">
         {thumbUrl ? (
-          <img src={thumbUrl} alt={file.name} className="w-5 h-5 rounded-sm object-cover" />
+          <img
+            src={thumbUrl}
+            alt={file.name}
+            className="w-5 h-5 rounded-sm object-cover"
+            onError={() => {
+              void refetchThumbnail();
+            }}
+          />
         ) : (
           <Icon
             className={`w-5 h-5 ${file.isDirectory ? "text-primary" : "text-muted-foreground"
