@@ -70,6 +70,15 @@ fn category_to_saved_path(category: &str) -> String {
     }
 }
 
+fn category_from_extension(extension: &str) -> String {
+    match extension {
+        "jpg" | "jpeg" | "png" | "webp" | "gif" => "Images".to_string(),
+        "mp4" | "mkv" | "webm" | "mov" => "Videos".to_string(),
+        "mp3" | "m4a" | "ogg" | "wav" | "flac" => "Audios".to_string(),
+        _ => "Documents".to_string(),
+    }
+}
+
 fn category_to_file_type(category: &str) -> String {
     match category {
         "Images" => "image".to_string(),
@@ -87,6 +96,18 @@ fn build_folder_unique_id(owner_id: &str, parent_path: &str, folder_name: &str) 
         .map(|ch| if ch.is_ascii_alphanumeric() { ch } else { '_' })
         .collect::<String>();
     format!("folder_{}", token)
+}
+
+fn extension_from_name(file_name: &str) -> Option<String> {
+    let mut parts = file_name.rsplit('.');
+    let maybe_extension = parts.next()?.trim().to_lowercase();
+    let has_name_part = parts.next().is_some();
+
+    if !has_name_part || maybe_extension.is_empty() {
+        return None;
+    }
+
+    Some(maybe_extension)
 }
 
 fn upsert_saved_item_from_message(
@@ -490,9 +511,33 @@ pub async fn tg_upload_file_to_saved_messages_impl(
             message: format!("Failed to send uploaded file: {}", e),
         })?;
 
-    let telegram_message = categorize_message(&sent_message, chat_id).ok_or_else(|| TelegramError {
-        message: "Uploaded message could not be indexed".to_string(),
-    })?;
+    let telegram_message = if let Some(message) = categorize_message(&sent_message, chat_id) {
+        message
+    } else {
+        let extension = extension_from_name(&safe_file_name);
+        let category = extension
+            .as_deref()
+            .map(category_from_extension)
+            .unwrap_or_else(|| "Documents".to_string());
+
+        TelegramMessage {
+            message_id: sent_message.id(),
+            chat_id,
+            category,
+            filename: Some(safe_file_name.clone()),
+            extension,
+            mime_type: None,
+            timestamp: sent_message.date().to_rfc3339(),
+            size: Some(file_bytes.len() as i64),
+            text: if sent_message.text().is_empty() {
+                None
+            } else {
+                Some(sent_message.text().to_string())
+            },
+            thumbnail: None,
+            file_reference: format!("upload:{}:{}", chat_id, sent_message.id()),
+        }
+    };
 
     db.save_telegram_message(&telegram_message).map_err(|e| TelegramError {
         message: format!("Failed to save uploaded message metadata: {}", e.message),
