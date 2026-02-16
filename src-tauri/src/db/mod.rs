@@ -1647,7 +1647,7 @@ impl Database {
     pub fn ensure_telegram_saved_folders(&self, owner_id: &str) -> Result<(), DbError> {
         let now = chrono::Utc::now().to_rfc3339();
         let root = "/Home";
-        let folders = ["Images", "Videos", "Audios", "Documents", "Notes"];
+        let folders = ["Images", "Videos", "Audios", "Documents", "Notes", "Recycle Bin"];
 
         for folder_name in folders {
             let item = TelegramSavedItem {
