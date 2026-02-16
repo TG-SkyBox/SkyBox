@@ -11,7 +11,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { getVersion } from "@tauri-apps/api/app";
 import { logger } from "@/lib/logger";
-import appStartIcon from "../../image.png";
+import appStartIcon from "@/assets/images/icon.png";
 
 interface DbError {
   message: string;

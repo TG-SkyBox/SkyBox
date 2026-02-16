@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { invoke } from "@tauri-apps/api/core";
 import { getVersion } from "@tauri-apps/api/app";
-import appStartIcon from "../../image.png";
+import appStartIcon from "@/assets/images/icon.png";
 
 import { logger } from "../lib/logger";
 
