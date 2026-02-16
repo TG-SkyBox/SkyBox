@@ -247,7 +247,7 @@ fn cache_thumbnail_bytes(chat_id: i64, message_id: i32, bytes: &[u8]) -> Result<
         ),
     })?;
 
-    Ok(thumbnail_path.to_string_lossy().to_string())
+    Ok(thumbnail_path.to_string_lossy().replace('\\', "/"))
 }
 
 fn decode_data_url_image_bytes(data_url: &str) -> Option<Vec<u8>> {
