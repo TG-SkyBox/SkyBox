@@ -110,7 +110,7 @@ const INTERNAL_DRAG_MIME = "application/x-skybox-item-path";
 
 const isVirtualPath = (path: string): boolean => path.startsWith("tg://");
 
-const normalizePath = (path: string): string => path.replace(/\\/g, "/").replace(/\/+/g, "/");
+const normalizePath = (path: string): string => path.replace(/\\/g, "/");
 
 const getPathName = (path: string): string => {
   const normalized = normalizePath(path).replace(/\/+$/, "");
