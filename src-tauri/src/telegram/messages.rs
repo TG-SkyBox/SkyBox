@@ -183,6 +183,7 @@ fn hydrate_saved_items_from_cached_messages(
         })?;
 
     if indexed_messages_count == 0 {
+        log::debug!("No cached telegram_messages rows found; skipping saved-item hydration");
         return Ok(0);
     }
 
@@ -193,8 +194,19 @@ fn hydrate_saved_items_from_cached_messages(
         })?;
 
     if existing_items >= indexed_messages_count {
+        log::debug!(
+            "Saved-item hydration already up-to-date (saved_items={}, indexed_messages={})",
+            existing_items,
+            indexed_messages_count
+        );
         return Ok(0);
     }
+
+    log::info!(
+        "Hydrating saved-item metadata from cache (saved_items={}, indexed_messages={})",
+        existing_items,
+        indexed_messages_count
+    );
 
     let cached_messages = db.get_all_indexed_messages(chat_id).map_err(|e| TelegramError {
         message: format!("Failed to read cached telegram messages: {}", e.message),
