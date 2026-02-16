@@ -355,7 +355,7 @@ export default function ExplorerPage() {
     lastNavigationAtRef.current = Date.now();
   }, []);
 
-  const indexSavedMessages = async (): Promise<TelegramIndexSavedMessagesResult | null> => {
+  const indexSavedMessages = useCallback(async (): Promise<TelegramIndexSavedMessagesResult | null> => {
     try {
       const result: TelegramIndexSavedMessagesResult = await invoke("tg_index_saved_messages");
 
@@ -366,10 +366,6 @@ export default function ExplorerPage() {
           title: "Saved Messages Synced",
           description: `Found ${result.total_new_messages} new item${result.total_new_messages === 1 ? "" : "s"}.`,
         });
-
-        if (currentPathRef.current.startsWith("tg://saved")) {
-          loadDirectory(currentPathRef.current, { force: true });
-        }
       }
 
       return result;
@@ -377,7 +373,7 @@ export default function ExplorerPage() {
       console.error("Error indexing saved messages:", error);
       return null;
     }
-  };
+  }, []);
 
   useEffect(() => {
     if (startupSyncRanRef.current) {
