@@ -8,7 +8,7 @@ use serde_json::json;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
-use tauri::{AppHandle, Emitter};
+use tauri::{AppHandle, Emitter, Manager};
 use tauri_plugin_dialog::DialogExt;
 use tokio::io::AsyncWriteExt;
 use uuid::Uuid;
@@ -2229,6 +2229,7 @@ async fn download_saved_media_with_progress(
 }
 
 pub async fn tg_prepare_saved_media_preview_impl(
+    app: AppHandle,
     db: Database,
     source_path: String,
 ) -> Result<String, TelegramError> {
@@ -2298,6 +2299,18 @@ pub async fn tg_prepare_saved_media_preview_impl(
         .unwrap_or(fallback_name);
 
     let cache_dir = get_media_preview_cache_dir()?;
+
+    let scopes = app.state::<tauri::scope::Scopes>();
+    scopes
+        .allow_directory(&cache_dir, true)
+        .map_err(|e| TelegramError {
+            message: format!(
+                "Failed to grant asset access for media preview cache {}: {}",
+                cache_dir.display(),
+                e
+            ),
+        })?;
+
     let cache_file_path = build_preview_cache_path(&cache_dir, message_id, &target_file_name);
 
     if let Ok(metadata) = fs::metadata(&cache_file_path) {

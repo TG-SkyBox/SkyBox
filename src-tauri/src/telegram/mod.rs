@@ -397,10 +397,11 @@ pub async fn tg_download_saved_file(
 
 #[tauri::command]
 pub async fn tg_prepare_saved_media_preview(
+    app: tauri::AppHandle,
     db: State<'_, crate::db::Database>,
     source_path: String,
 ) -> Result<String, TelegramError> {
-    tg_prepare_saved_media_preview_impl(db.inner().clone(), source_path).await
+    tg_prepare_saved_media_preview_impl(app, db.inner().clone(), source_path).await
 }
 
 #[tauri::command]
