@@ -5,6 +5,7 @@ import { Breadcrumbs } from "@/components/skybox/Breadcrumbs";
 import { FileRow, FileItem, formatFileSize } from "@/components/skybox/FileRow";
 import { FileGrid } from "@/components/skybox/FileGrid";
 import { DetailsPanel } from "@/components/skybox/DetailsPanel";
+import { SavedMediaViewer, type SavedMediaKind } from "@/components/skybox/SavedMediaViewer";
 import { ConfirmDialog } from "@/components/skybox/ConfirmDialog";
 import { TextInputDialog } from "@/components/skybox/TextInputDialog";
 import { TelegramButton } from "@/components/skybox/TelegramButton";
@@ -196,6 +197,10 @@ const EXPLORER_VIEW_MODE_KEY = "explorer_view_mode";
 const RECYCLE_BIN_VIRTUAL_PATH = "tg://saved/Recycle Bin";
 const DETAILS_PANEL_ANIMATION_MS = 220;
 
+const IMAGE_EXTENSIONS = new Set(["jpg", "jpeg", "png", "gif", "webp", "bmp", "svg"]);
+const VIDEO_EXTENSIONS = new Set(["mp4", "mkv", "mov", "avi", "webm", "wmv", "m4v"]);
+const AUDIO_EXTENSIONS = new Set(["mp3", "wav", "flac", "aac", "ogg", "m4a", "opus", "wma"]);
+
 const getDownloadStageLabel = (stage: DownloadStage): string => {
   switch (stage) {
     case "selecting":
@@ -224,6 +229,33 @@ const isRecycleBinPath = (path: string): boolean => (
 );
 
 const normalizePath = (path: string): string => path.replace(/\\/g, "/");
+
+const getSavedMediaKind = (file: FileItem): SavedMediaKind | null => {
+  if (file.isDirectory || !isSavedVirtualFilePath(file.path)) {
+    return null;
+  }
+
+  const extension = (file.extension || extensionFromFileName(file.name) || "").toLowerCase();
+  if (!extension) {
+    return null;
+  }
+
+  if (IMAGE_EXTENSIONS.has(extension)) {
+    return "image";
+  }
+
+  if (VIDEO_EXTENSIONS.has(extension)) {
+    return "video";
+  }
+
+  if (AUDIO_EXTENSIONS.has(extension)) {
+    return "audio";
+  }
+
+  return null;
+};
+
+const isSavedPreviewableFile = (file: FileItem): boolean => getSavedMediaKind(file) !== null;
 
 const getPathName = (path: string): string => {
   const normalized = normalizePath(path).replace(/\/+$/, "");
@@ -354,6 +386,12 @@ export default function ExplorerPage() {
   const [isExternalDragging, setIsExternalDragging] = useState(false);
   const [isUploadingFiles, setIsUploadingFiles] = useState(false);
   const [activeDownload, setActiveDownload] = useState<DownloadProgressPayload | null>(null);
+  const [isMediaViewerOpen, setIsMediaViewerOpen] = useState(false);
+  const [mediaViewerItems, setMediaViewerItems] = useState<FileItem[]>([]);
+  const [mediaViewerIndex, setMediaViewerIndex] = useState(0);
+  const [mediaViewerSrc, setMediaViewerSrc] = useState<string | null>(null);
+  const [mediaViewerError, setMediaViewerError] = useState<string | null>(null);
+  const [isMediaViewerLoading, setIsMediaViewerLoading] = useState(false);
   const [savedItemsOffset, setSavedItemsOffset] = useState(0);
   const [hasMoreSavedItems, setHasMoreSavedItems] = useState(false);
   const [isLoadingMoreSavedItems, setIsLoadingMoreSavedItems] = useState(false);
@@ -793,6 +831,19 @@ export default function ExplorerPage() {
   // Handle keyboard shortcuts
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
+      if (isMediaViewerOpen) {
+        if (e.key === "Escape") {
+          e.preventDefault();
+          setIsMediaViewerOpen(false);
+          setMediaViewerItems([]);
+          setMediaViewerIndex(0);
+          setMediaViewerSrc(null);
+          setMediaViewerError(null);
+          setIsMediaViewerLoading(false);
+        }
+        return;
+      }
+
       const canNavigateByKeyboard = !isTextInputElement(e.target);
       const isBackShortcut = e.key === "BrowserBack" || (e.altKey && e.key === "ArrowLeft");
       const isForwardShortcut = e.key === "BrowserForward" || (e.altKey && e.key === "ArrowRight");
@@ -842,7 +893,7 @@ export default function ExplorerPage() {
     return () => {
       window.removeEventListener('keydown', handleKeyDown);
     };
-  }, [selectedFile, showDetails, backHistory, forwardHistory, currentPath, isLoading, markNavigationActivity, closeDetailsPanel]);
+  }, [selectedFile, showDetails, backHistory, forwardHistory, currentPath, isLoading, markNavigationActivity, closeDetailsPanel, isMediaViewerOpen]);
 
   useEffect(() => {
     const suppressDefaultMouseNavigation = (event: MouseEvent) => {
@@ -1249,6 +1300,12 @@ export default function ExplorerPage() {
   const contextTargetFile = contextMenuState?.targetFile ?? null;
   const canPaste = !!clipboardItem;
   const isRecycleBinView = isRecycleBinPath(currentPath);
+  const currentMediaViewerFile = isMediaViewerOpen
+    ? mediaViewerItems[mediaViewerIndex] ?? null
+    : null;
+  const currentMediaKind = currentMediaViewerFile ? getSavedMediaKind(currentMediaViewerFile) : null;
+  const canGoToPreviousMedia = mediaViewerIndex > 0;
+  const canGoToNextMedia = mediaViewerIndex < mediaViewerItems.length - 1;
   const isPermanentDeleteTarget =
     isRecycleBinView &&
     !!deleteTarget &&
@@ -1261,6 +1318,99 @@ export default function ExplorerPage() {
       closeDetailsPanel();
     }
   };
+
+  const closeSavedMediaViewer = useCallback(() => {
+    setIsMediaViewerOpen(false);
+    setMediaViewerItems([]);
+    setMediaViewerIndex(0);
+    setMediaViewerSrc(null);
+    setMediaViewerError(null);
+    setIsMediaViewerLoading(false);
+  }, []);
+
+  const openSavedMediaViewer = useCallback((targetFile: FileItem) => {
+    const targetKind = getSavedMediaKind(targetFile);
+    if (!targetKind) {
+      return;
+    }
+
+    const mediaItems = targetKind === "image"
+      ? sortedFiles.filter((item) => getSavedMediaKind(item) === "image")
+      : [targetFile];
+
+    const initialIndex = mediaItems.findIndex((item) => item.path === targetFile.path);
+
+    if (initialIndex < 0) {
+      return;
+    }
+
+    setMediaViewerItems(mediaItems);
+    setMediaViewerIndex(initialIndex);
+    setMediaViewerSrc(null);
+    setMediaViewerError(null);
+    setIsMediaViewerOpen(true);
+  }, [sortedFiles]);
+
+  const goToPreviousMedia = useCallback(() => {
+    setMediaViewerIndex((prev) => Math.max(0, prev - 1));
+  }, []);
+
+  const goToNextMedia = useCallback(() => {
+    setMediaViewerIndex((prev) => Math.min(mediaViewerItems.length - 1, prev + 1));
+  }, [mediaViewerItems.length]);
+
+  useEffect(() => {
+    if (!isMediaViewerOpen || !currentMediaViewerFile) {
+      return;
+    }
+
+    if (!isSavedPreviewableFile(currentMediaViewerFile)) {
+      setMediaViewerError("This file cannot be previewed.");
+      setIsMediaViewerLoading(false);
+      return;
+    }
+
+    let cancelled = false;
+
+    setIsMediaViewerLoading(true);
+    setMediaViewerSrc(null);
+    setMediaViewerError(null);
+
+    invoke<string>("tg_prepare_saved_media_preview", {
+      sourcePath: currentMediaViewerFile.path,
+    })
+      .then((localPath) => {
+        if (cancelled) {
+          return;
+        }
+
+        const resolvedPath = resolveThumbnailSrc(localPath) || localPath;
+        setMediaViewerSrc(resolvedPath);
+      })
+      .catch((error) => {
+        if (cancelled) {
+          return;
+        }
+
+        const typedError = error as TelegramError;
+        setMediaViewerError(typedError.message || "Failed to load media preview.");
+      })
+      .finally(() => {
+        if (!cancelled) {
+          setIsMediaViewerLoading(false);
+        }
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [currentMediaViewerFile, isMediaViewerOpen]);
+
+  useEffect(() => {
+    if (isMediaViewerOpen) {
+      closeSavedMediaViewer();
+    }
+  }, [currentPath, isMediaViewerOpen, closeSavedMediaViewer]);
 
   const handleDownloadSavedFile = async (targetFile?: FileItem | null) => {
     const file = targetFile ?? selectedFile;
@@ -1333,6 +1483,11 @@ export default function ExplorerPage() {
       navigateToPath(file.path);
     } else {
       if (isSavedVirtualFilePath(file.path)) {
+        if (isSavedPreviewableFile(file)) {
+          openSavedMediaViewer(file);
+          return;
+        }
+
         await handleDownloadSavedFile(file);
         return;
       }
@@ -2529,6 +2684,20 @@ export default function ExplorerPage() {
           />
         </div>
       )}
+
+      <SavedMediaViewer
+        isOpen={isMediaViewerOpen}
+        fileName={currentMediaViewerFile?.name || "Media"}
+        mediaKind={currentMediaKind}
+        mediaSrc={mediaViewerSrc}
+        isLoading={isMediaViewerLoading}
+        error={mediaViewerError}
+        canGoPrevious={currentMediaKind === "image" && canGoToPreviousMedia}
+        canGoNext={currentMediaKind === "image" && canGoToNextMedia}
+        onPrevious={goToPreviousMedia}
+        onNext={goToNextMedia}
+        onClose={closeSavedMediaViewer}
+      />
 
       {activeDownload && (
         <div className="absolute bottom-4 right-4 z-[92] w-80 rounded-xl bg-glass shadow-2xl shadow-black/50 backdrop-saturate-150 p-3">

@@ -226,6 +226,7 @@ use messages::{
     tg_rename_saved_item_impl,
     tg_get_message_thumbnail_impl,
     tg_prefetch_message_thumbnails_impl,
+    tg_prepare_saved_media_preview_impl,
     tg_download_saved_file_impl,
     tg_upload_file_to_saved_messages_impl,
 };
@@ -392,6 +393,14 @@ pub async fn tg_download_saved_file(
     source_path: String,
 ) -> Result<Option<String>, TelegramError> {
     tg_download_saved_file_impl(app, db.inner().clone(), source_path).await
+}
+
+#[tauri::command]
+pub async fn tg_prepare_saved_media_preview(
+    db: State<'_, crate::db::Database>,
+    source_path: String,
+) -> Result<String, TelegramError> {
+    tg_prepare_saved_media_preview_impl(db.inner().clone(), source_path).await
 }
 
 #[tauri::command]

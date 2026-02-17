@@ -160,6 +160,16 @@ Progress events are emitted on `tg-download-progress` during select/download/mov
 
 **Returns:** `Result<Option<String>, TelegramError>` (absolute final path when saved, `null` if user cancels)
 
+### `tg_prepare_saved_media_preview(source_path: String)`
+Downloads (or reuses cached) Saved Messages media for in-app preview/player usage.
+
+Media is cached in `AppData\\Local\\Skybox\\.media-preview`.
+
+**Parameters:**
+- `source_path`: Source virtual file path (`tg://msg/<id>`)
+
+**Returns:** `Result<String, TelegramError>` (absolute cached media file path)
+
 ### `tg_list_saved_items(file_path: String)`
 Lists locally indexed Saved Messages items for a virtual path.
 

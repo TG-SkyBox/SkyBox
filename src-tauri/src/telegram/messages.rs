@@ -478,6 +478,47 @@ fn get_device_downloads_dir() -> Result<PathBuf, TelegramError> {
     Ok(downloads_dir)
 }
 
+fn get_media_preview_cache_dir() -> Result<PathBuf, TelegramError> {
+    let base_dirs = BaseDirs::new().ok_or_else(|| TelegramError {
+        message: "Failed to resolve app data directory".to_string(),
+    })?;
+
+    let cache_dir = base_dirs
+        .data_local_dir()
+        .join("Skybox")
+        .join(".media-preview");
+    fs::create_dir_all(&cache_dir).map_err(|e| TelegramError {
+        message: format!(
+            "Failed to create media preview cache directory {}: {}",
+            cache_dir.display(),
+            e
+        ),
+    })?;
+
+    Ok(cache_dir)
+}
+
+fn build_preview_cache_path(cache_dir: &Path, message_id: i32, file_name: &str) -> PathBuf {
+    let safe_name = sanitize_file_name(file_name);
+    let safe_path = Path::new(&safe_name);
+
+    let stem = safe_path
+        .file_stem()
+        .and_then(|value| value.to_str())
+        .filter(|value| !value.trim().is_empty())
+        .unwrap_or("media")
+        .to_string();
+
+    let extension = safe_path
+        .extension()
+        .and_then(|value| value.to_str())
+        .filter(|value| !value.trim().is_empty())
+        .map(|value| value.to_string())
+        .unwrap_or_else(|| "bin".to_string());
+
+    cache_dir.join(format!("{}_{}.{}", message_id, stem, extension))
+}
+
 fn build_unique_file_path(directory: &Path, file_name: &str) -> PathBuf {
     let safe_name = sanitize_file_name(file_name);
     let safe_path = Path::new(&safe_name);
@@ -2185,6 +2226,109 @@ async fn download_saved_media_with_progress(
     );
 
     Ok((downloaded_bytes, total_bytes))
+}
+
+pub async fn tg_prepare_saved_media_preview_impl(
+    db: Database,
+    source_path: String,
+) -> Result<String, TelegramError> {
+    let message_id = parse_message_id_from_virtual_path(&source_path).ok_or_else(|| TelegramError {
+        message: "Only Saved Message files can be previewed".to_string(),
+    })?;
+
+    let client = {
+        let state_guard = AUTH_STATE.lock().await;
+        let state = state_guard.as_ref().ok_or_else(|| TelegramError {
+            message: "Not authorized".to_string(),
+        })?;
+        state.client.clone()
+    };
+
+    let me = client.get_me().await.map_err(|e| TelegramError {
+        message: format!("Failed to get user info: {}", e),
+    })?;
+
+    let chat_id = me.raw.id();
+    let owner_id = chat_id.to_string();
+    let input_peer = match &me.raw {
+        tl::enums::User::User(user) => tl::enums::InputPeer::User(tl::types::InputPeerUser {
+            user_id: user.id,
+            access_hash: user.access_hash.unwrap_or(0),
+        }),
+        _ => {
+            return Err(TelegramError {
+                message: "Invalid user type".to_string(),
+            })
+        }
+    };
+
+    let mut messages = client
+        .get_messages_by_id(input_peer, &[message_id])
+        .await
+        .map_err(|e| TelegramError {
+            message: format!("Failed to fetch message for preview: {}", e),
+        })?;
+
+    let message = messages.pop().flatten().ok_or_else(|| TelegramError {
+        message: "Message not found for preview".to_string(),
+    })?;
+
+    let categorized = categorize_message(&message, chat_id);
+    let preferred_name = db
+        .get_telegram_saved_file_name_by_message_id(&owner_id, message_id)
+        .map_err(|e| TelegramError {
+            message: format!("Failed to read saved file metadata: {}", e.message),
+        })?;
+
+    let fallback_name = categorized
+        .as_ref()
+        .and_then(|item| item.filename.clone())
+        .filter(|value| !value.trim().is_empty())
+        .unwrap_or_else(|| {
+            let ext = categorized
+                .as_ref()
+                .and_then(|item| item.extension.clone())
+                .filter(|value| !value.trim().is_empty())
+                .unwrap_or_else(|| "bin".to_string());
+            format!("message_{}.{}", message_id, ext)
+        });
+
+    let target_file_name = preferred_name
+        .filter(|value| !value.trim().is_empty())
+        .unwrap_or(fallback_name);
+
+    let cache_dir = get_media_preview_cache_dir()?;
+    let cache_file_path = build_preview_cache_path(&cache_dir, message_id, &target_file_name);
+
+    if let Ok(metadata) = fs::metadata(&cache_file_path) {
+        if metadata.is_file() && metadata.len() > 0 {
+            return Ok(cache_file_path.to_string_lossy().replace('\\', "/"));
+        }
+    }
+
+    let has_media = match message.download_media(&cache_file_path).await {
+        Ok(value) => value,
+        Err(error) => {
+            if cache_file_path.exists() {
+                let _ = fs::remove_file(&cache_file_path);
+            }
+            return Err(TelegramError {
+                message: format!("Failed to prepare media preview: {}", error),
+            });
+        }
+    };
+
+    if !has_media {
+        if cache_file_path.exists() {
+            let _ = fs::remove_file(&cache_file_path);
+        }
+
+        return Err(TelegramError {
+            message: "Selected item does not contain previewable media".to_string(),
+        });
+    }
+
+    Ok(cache_file_path.to_string_lossy().replace('\\', "/"))
 }
 
 pub async fn tg_download_saved_file_impl(
