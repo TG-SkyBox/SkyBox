@@ -410,6 +410,7 @@ export default function ExplorerPage() {
   const contextMenuRef = useRef<HTMLDivElement | null>(null);
   const detailsPanelRef = useRef<HTMLDivElement | null>(null);
   const detailsPanelCloseTimerRef = useRef<number | null>(null);
+  const mediaViewerOpenedPathRef = useRef<string | null>(null);
   const navigationStateRef = useRef({
     backHistory: [] as string[],
     forwardHistory: [] as string[],
@@ -1320,6 +1321,7 @@ export default function ExplorerPage() {
   };
 
   const closeSavedMediaViewer = useCallback(() => {
+    mediaViewerOpenedPathRef.current = null;
     setIsMediaViewerOpen(false);
     setMediaViewerItems([]);
     setMediaViewerIndex(0);
@@ -1348,8 +1350,9 @@ export default function ExplorerPage() {
     setMediaViewerIndex(initialIndex);
     setMediaViewerSrc(null);
     setMediaViewerError(null);
+    mediaViewerOpenedPathRef.current = currentPath;
     setIsMediaViewerOpen(true);
-  }, [sortedFiles]);
+  }, [currentPath, sortedFiles]);
 
   const goToPreviousMedia = useCallback(() => {
     setMediaViewerIndex((prev) => Math.max(0, prev - 1));
@@ -1407,7 +1410,11 @@ export default function ExplorerPage() {
   }, [currentMediaViewerFile, isMediaViewerOpen]);
 
   useEffect(() => {
-    if (isMediaViewerOpen) {
+    if (!isMediaViewerOpen) {
+      return;
+    }
+
+    if (mediaViewerOpenedPathRef.current && mediaViewerOpenedPathRef.current !== currentPath) {
       closeSavedMediaViewer();
     }
   }, [currentPath, isMediaViewerOpen, closeSavedMediaViewer]);
