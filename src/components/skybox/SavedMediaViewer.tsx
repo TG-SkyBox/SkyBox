@@ -3,6 +3,7 @@ import type { MutableRefObject } from "react";
 import { ChevronLeft, ChevronRight, Loader2, X } from "lucide-react";
 import Plyr from "plyr";
 import "plyr/dist/plyr.css";
+import "./saved-media-viewer.css";
 import { TelegramButton } from "./TelegramButton";
 
 export type SavedMediaKind = "image" | "video" | "audio";
@@ -126,12 +127,12 @@ export function SavedMediaViewer({
   }
 
   return (
-    <div className="fixed inset-0 z-[94] bg-black/80 backdrop-blur-sm">
+    <div className="saved-media-viewer fixed inset-0 z-[94] bg-black/80 backdrop-blur-sm">
       <div className="absolute inset-0" onClick={onClose} />
 
       <div className="relative z-[95] h-full w-full p-4 sm:p-6">
         <div className="mx-auto flex h-full max-w-6xl flex-col rounded-2xl bg-glass shadow-2xl shadow-black/60">
-          <div className="flex items-center justify-between border-b border-border/60 px-4 py-3">
+          <div className="flex items-center justify-between border-b border-primary/20 px-4 py-3">
             <p className="truncate text-body font-medium text-foreground">{fileName}</p>
             <button
               className="rounded-lg p-2 text-muted-foreground transition-colors hover:bg-sidebar-accent/60 hover:text-foreground"
@@ -165,14 +166,14 @@ export function SavedMediaViewer({
             )}
 
             {!isLoading && !error && mediaSrc && (mediaKind === "video" || mediaKind === "audio") && (
-              <div className={`w-full ${mediaKind === "video" ? "h-full" : "max-w-2xl"}`}>
+            <div className={`saved-media-player w-full ${mediaKind === "video" ? "h-full" : "max-w-2xl"}`}>
                 <PlyrMedia kind={mediaKind} src={mediaSrc} />
               </div>
             )}
           </div>
 
           {mediaKind === "image" && (
-            <div className="flex items-center justify-center gap-3 border-t border-border/60 px-4 py-3">
+            <div className="flex items-center justify-center gap-3 border-t border-primary/20 px-4 py-3">
               <TelegramButton
                 variant="secondary"
                 onClick={onPrevious}
