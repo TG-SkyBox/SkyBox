@@ -1,10 +1,30 @@
 import { useEffect, useRef, useState } from "react";
 import type { MutableRefObject } from "react";
 import { ChevronLeft, ChevronRight, Loader2, X } from "lucide-react";
-import Plyr from "plyr";
+import * as PlyrModule from "plyr";
 import "plyr/dist/plyr.css";
 import "./saved-media-viewer.css";
 import { TelegramButton } from "./TelegramButton";
+
+type PlyrInstance = {
+  destroy: () => void;
+  on?: (event: string, callback: () => void) => void;
+};
+
+type PlyrConstructor = new (
+  target: HTMLElement,
+  options?: {
+    controls?: string[];
+    resetOnEnd?: boolean;
+    hideControls?: boolean;
+    keyboard?: { focused?: boolean; global?: boolean };
+  },
+) => PlyrInstance;
+
+const Plyr = (
+  (PlyrModule as unknown as { default?: PlyrConstructor }).default
+  || (PlyrModule as unknown as PlyrConstructor)
+);
 
 export type SavedMediaKind = "image" | "video" | "audio";
 
@@ -31,7 +51,7 @@ interface PlyrMediaProps {
 
 function PlyrMedia({ kind, src, onReady }: PlyrMediaProps) {
   const mediaRef = useRef<HTMLVideoElement | HTMLAudioElement | null>(null);
-  const playerRef = useRef<Plyr | null>(null);
+  const playerRef = useRef<PlyrInstance | null>(null);
 
   useEffect(() => {
     const target = mediaRef.current;
@@ -39,14 +59,19 @@ function PlyrMedia({ kind, src, onReady }: PlyrMediaProps) {
       return;
     }
 
-    const controls = kind === "video"
-      ? ["play-large", "play", "progress", "current-time", "mute", "volume", "settings", "pip", "fullscreen"]
-      : ["play", "progress", "current-time", "mute", "volume", "settings"];
+    target.controls = true;
 
     const player = new Plyr(target, {
-      controls,
       resetOnEnd: false,
+      hideControls: false,
       keyboard: { focused: true, global: true },
+    });
+
+    player.on?.("ready", () => {
+      onReady?.();
+    });
+    player.on?.("loadedmetadata", () => {
+      onReady?.();
     });
 
     playerRef.current = player;
@@ -55,7 +80,7 @@ function PlyrMedia({ kind, src, onReady }: PlyrMediaProps) {
       playerRef.current?.destroy();
       playerRef.current = null;
     };
-  }, [kind, src]);
+  }, [kind, onReady, src]);
 
   if (kind === "video") {
     return (

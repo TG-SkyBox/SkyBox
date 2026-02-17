@@ -44,3 +44,14 @@
   backdrop-filter: blur(16px);
   -webkit-backdrop-filter: blur(16px);
 }
+
+.saved-media-viewer .plyr--video .plyr__controls {
+  opacity: 1;
+  transform: translateY(0);
+}
+
+.saved-media-viewer .plyr--hide-controls .plyr__controls {
+  opacity: 1;
+  pointer-events: auto;
+  transform: translateY(0);
+}

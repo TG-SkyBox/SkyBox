@@ -2746,7 +2746,7 @@ export default function ExplorerPage() {
                 {viewMode === "list" ? (
                   <div className="space-y-1">
                     {Array.from({ length: 10 }).map((_, index) => (
-                      <div key={`list-skeleton-${index}`} className="flex items-center gap-3 px-3 py-1 rounded-lg">
+                      <div key={`list-skeleton-${index}`} className="flex items-center gap-3 px-3 py-1 rounded-lg border border-primary/12 bg-secondary/20">
                         <Skeleton className="skeleton-shimmer animate-none h-8 w-8 rounded-md bg-secondary/55" />
                         <Skeleton className="skeleton-shimmer animate-none h-4 flex-1 max-w-[45%] bg-secondary/45" />
                         <Skeleton className="skeleton-shimmer animate-none h-3 w-14 bg-secondary/40" />
@@ -2757,7 +2757,7 @@ export default function ExplorerPage() {
                 ) : (
                   <div className="grid [grid-template-columns:repeat(auto-fill,minmax(8.75rem,8.75rem))] justify-start gap-3">
                     {Array.from({ length: 12 }).map((_, index) => (
-                      <div key={`grid-skeleton-${index}`} className="flex flex-col items-center p-2 rounded-xl border border-border/20">
+                      <div key={`grid-skeleton-${index}`} className="flex flex-col items-center p-2 rounded-xl border border-primary/12 bg-secondary/20">
                         <Skeleton className="skeleton-shimmer animate-none h-24 w-24 rounded-lg bg-secondary/50" />
                         <Skeleton className="skeleton-shimmer animate-none h-4 w-20 mt-3 bg-secondary/45" />
                         <Skeleton className="skeleton-shimmer animate-none h-3 w-12 mt-1.5 bg-secondary/40" />
