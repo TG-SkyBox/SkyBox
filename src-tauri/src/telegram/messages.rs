@@ -2103,6 +2103,14 @@ async fn get_or_fetch_message_thumbnail_impl(
 pub async fn tg_get_message_thumbnail_impl(db: Database, message_id: i32) -> Result<Option<String>, TelegramError> {
     log::info!("tg_get_message_thumbnail_impl: Request for message_id={}", message_id);
 
+    if is_thumbnail_flood_wait_active() {
+        log::debug!(
+            "tg_get_message_thumbnail_impl: Skip message {} due to active flood-wait cooldown",
+            message_id
+        );
+        return Ok(None);
+    }
+
     let client = {
         let state_guard = AUTH_STATE.lock().await;
         let state = state_guard.as_ref().ok_or_else(|| TelegramError {
@@ -2124,7 +2132,21 @@ pub async fn tg_get_message_thumbnail_impl(db: Database, message_id: i32) -> Res
         _ => return Err(TelegramError { message: "Invalid user type".to_string() }),
     };
 
-    get_or_fetch_message_thumbnail_impl(&db, &client, chat_id, &input_peer, message_id).await
+    match get_or_fetch_message_thumbnail_impl(&db, &client, chat_id, &input_peer, message_id).await {
+        Ok(result) => Ok(result),
+        Err(error) => {
+            if let Some(wait_seconds) = parse_flood_wait_seconds(&error.message) {
+                set_thumbnail_flood_wait(wait_seconds);
+                log::warn!(
+                    "tg_get_message_thumbnail_impl: Flood wait detected ({}s), deferring thumbnail fetch",
+                    wait_seconds
+                );
+                return Ok(None);
+            }
+
+            Err(error)
+        }
+    }
 }
 
 pub async fn tg_prefetch_message_thumbnails_impl(
@@ -2158,14 +2180,38 @@ pub async fn tg_prefetch_message_thumbnails_impl(
 
     let mut cached_count = 0usize;
     let mut failed_count = 0usize;
+    let mut deferred_count = 0usize;
 
-    for message_id in ids {
+    if is_thumbnail_flood_wait_active() {
+        return Ok(json!({
+            "cached_count": 0,
+            "failed_count": 0,
+            "deferred_count": ids.len()
+        }));
+    }
+
+    for (index, message_id) in ids.iter().copied().enumerate() {
+        if is_thumbnail_flood_wait_active() {
+            deferred_count += ids.len().saturating_sub(index);
+            break;
+        }
+
         match get_or_fetch_message_thumbnail_impl(&db, &client, chat_id, &input_peer, message_id).await {
             Ok(Some(_)) => {
                 cached_count += 1;
             }
             Ok(None) => {}
             Err(error) => {
+                if let Some(wait_seconds) = parse_flood_wait_seconds(&error.message) {
+                    set_thumbnail_flood_wait(wait_seconds);
+                    deferred_count += ids.len().saturating_sub(index + 1);
+                    log::warn!(
+                        "tg_prefetch_message_thumbnails_impl: Flood wait detected ({}s), deferring remaining thumbnail prefetches",
+                        wait_seconds
+                    );
+                    break;
+                }
+
                 failed_count += 1;
                 log::warn!(
                     "tg_prefetch_message_thumbnails_impl: Failed to prefetch thumbnail for message {}: {}",
@@ -2174,11 +2220,14 @@ pub async fn tg_prefetch_message_thumbnails_impl(
                 );
             }
         }
+
+        tokio::time::sleep(Duration::from_millis(THUMBNAIL_PREFETCH_DELAY_MS)).await;
     }
 
     Ok(json!({
         "cached_count": cached_count,
-        "failed_count": failed_count
+        "failed_count": failed_count,
+        "deferred_count": deferred_count
     }))
 }
 
