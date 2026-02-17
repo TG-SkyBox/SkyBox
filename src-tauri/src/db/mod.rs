@@ -317,6 +317,8 @@ impl Database {
                 })?;
         }
 
+        drop(saved_items_table_info);
+
         Ok(Database(Mutex::new(conn).into()))
     }
 
