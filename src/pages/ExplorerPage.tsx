@@ -144,9 +144,9 @@ interface DownloadProgressPayload {
   stage: DownloadStage;
   progress: number;
   downloadedBytes: number;
-  totalBytes?: number;
-  destinationPath?: string;
-  message?: string;
+  totalBytes?: number | null;
+  destinationPath?: string | null;
+  message?: string | null;
 }
 
 interface SavedPathCacheEntry {
