@@ -1302,11 +1302,6 @@ export default function ExplorerPage() {
         return;
       }
 
-      toast({
-        title: "Downloaded",
-        description: `${file.name} saved successfully`,
-      });
-
       console.info("Saved Messages download completed:", destinationPath);
     } catch (error) {
       const typedError = error as TelegramError;
@@ -2536,7 +2531,7 @@ export default function ExplorerPage() {
       )}
 
       {activeDownload && (
-        <div className="absolute bottom-4 right-4 z-[92] w-80 rounded-xl bg-glass border border-border/70 shadow-2xl shadow-black/50 backdrop-saturate-150 p-3">
+        <div className="absolute bottom-4 right-4 z-[92] w-80 rounded-xl bg-glass shadow-2xl shadow-black/50 backdrop-saturate-150 p-3">
           <div className="flex items-start justify-between gap-2">
             <div className="min-w-0">
               <p className="text-body font-medium text-foreground truncate">{activeDownload.fileName}</p>
