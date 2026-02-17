@@ -6,6 +6,7 @@ import { FileRow, FileItem } from "@/components/skybox/FileRow";
 import { FileGrid } from "@/components/skybox/FileGrid";
 import { DetailsPanel } from "@/components/skybox/DetailsPanel";
 import { ConfirmDialog } from "@/components/skybox/ConfirmDialog";
+import { TextInputDialog } from "@/components/skybox/TextInputDialog";
 import { TelegramButton } from "@/components/skybox/TelegramButton";
 import {
   FolderPlus,
@@ -15,6 +16,7 @@ import {
   RefreshCw,
   Copy,
   Trash2,
+  RotateCcw,
   Edit3,
   ChevronLeft,
   ChevronRight,
@@ -177,10 +179,15 @@ const EXPLORER_VIEW_MODE_KEY = "explorer_view_mode";
 const RECYCLE_BIN_NAME = "Recycle Bin";
 const RECYCLE_BIN_PARENT_PATH = "/Home";
 const RECYCLE_BIN_VIRTUAL_PATH = "tg://saved/Recycle Bin";
+const RECYCLE_BIN_DELETED_VIRTUAL_PATH = "tg://saved/.skybox-deleted";
 
 const isVirtualPath = (path: string): boolean => path.startsWith("tg://");
 const isSavedVirtualFolderPath = (path: string): boolean => path === "tg://saved" || path.startsWith("tg://saved/");
 const isSavedVirtualFilePath = (path: string): boolean => path.startsWith("tg://msg/");
+const isSavedVirtualItemPath = (path: string): boolean => isSavedVirtualFolderPath(path) || isSavedVirtualFilePath(path);
+const isRecycleBinPath = (path: string): boolean => (
+  path === RECYCLE_BIN_VIRTUAL_PATH || path.startsWith(`${RECYCLE_BIN_VIRTUAL_PATH}/`)
+);
 
 const normalizePath = (path: string): string => path.replace(/\\/g, "/");
 
@@ -296,6 +303,10 @@ export default function ExplorerPage() {
   const [clipboardItem, setClipboardItem] = useState<ExplorerClipboardItem | null>(null);
   const [favorites, setFavorites] = useState<string[]>([]);
   const [deleteTarget, setDeleteTarget] = useState<FileItem | null>(null);
+  const [isNewFolderDialogOpen, setIsNewFolderDialogOpen] = useState(false);
+  const [newFolderName, setNewFolderName] = useState("");
+  const [renameTarget, setRenameTarget] = useState<FileItem | null>(null);
+  const [renameValue, setRenameValue] = useState("");
   const [isLoading, setIsLoading] = useState(false);
   const [files, setFiles] = useState<FileItem[]>([]);
   const [currentPath, setCurrentPath] = useState<string>("tg://saved");
@@ -1061,10 +1072,24 @@ export default function ExplorerPage() {
   }, [currentPath]);
 
   const filteredFiles = useMemo(() => {
-    if (!search.trim()) return files;
-    const query = search.toLowerCase();
-    return files.filter((f) => f.name.toLowerCase().includes(query));
-  }, [search, files]);
+    const query = search.trim().toLowerCase();
+
+    return files.filter((file) => {
+      if (
+        currentPath === "tg://saved" &&
+        file.isDirectory &&
+        file.path === RECYCLE_BIN_VIRTUAL_PATH
+      ) {
+        return false;
+      }
+
+      if (!query) {
+        return true;
+      }
+
+      return file.name.toLowerCase().includes(query);
+    });
+  }, [currentPath, search, files]);
 
   // Sort: directories first, then by name
   const sortedFiles = useMemo(() => {
@@ -1091,10 +1116,15 @@ export default function ExplorerPage() {
   const contextMenuDangerItemClassName = "w-full flex items-center gap-2 rounded-lg px-3 py-2 text-left text-body text-destructive transition-colors hover:bg-destructive/10 outline-none focus-visible:outline-none";
   const contextTargetFile = contextMenuState?.targetFile ?? null;
   const canPaste = !!clipboardItem;
+  const isRecycleBinView = isRecycleBinPath(currentPath);
+  const isPermanentDeleteTarget =
+    isRecycleBinView &&
+    !!deleteTarget &&
+    isSavedVirtualItemPath(deleteTarget.path);
 
   const handleFileSelect = (file: FileItem) => {
     setSelectedFile(file);
-    setShowDetails(true);
+    setShowDetails(!isRecycleBinPath(currentPath));
   };
 
   const handleFileOpen = async (file: FileItem) => {
@@ -1195,31 +1225,44 @@ export default function ExplorerPage() {
     if (!deleteTarget) return;
 
     try {
-      const isSavedItem = isSavedVirtualFolderPath(deleteTarget.path) || isSavedVirtualFilePath(deleteTarget.path);
+      const target = deleteTarget;
+      const isSavedItem = isSavedVirtualItemPath(target.path);
 
       if (isSavedItem) {
-        await ensureRecycleBinFolder();
-        await invoke("tg_move_saved_item", {
-          sourcePath: deleteTarget.path,
-          destinationPath: RECYCLE_BIN_VIRTUAL_PATH,
-        });
+        if (isRecycleBinPath(currentPath)) {
+          await invoke("tg_move_saved_item", {
+            sourcePath: target.path,
+            destinationPath: RECYCLE_BIN_DELETED_VIRTUAL_PATH,
+          });
+          toast({
+            title: "Deleted",
+            description: `${target.name} removed from Recycle Bin`,
+          });
+        } else {
+          await ensureRecycleBinFolder();
+          await invoke("tg_move_saved_item", {
+            sourcePath: target.path,
+            destinationPath: RECYCLE_BIN_VIRTUAL_PATH,
+          });
+          toast({
+            title: "Moved to Recycle Bin",
+            description: `${target.name} moved successfully`,
+          });
+        }
+
         savedPathCacheRef.current = {};
-        toast({
-          title: "Moved to Recycle Bin",
-          description: `${deleteTarget.name} moved successfully`,
-        });
       } else {
-        await invoke("fs_delete", { path: deleteTarget.path });
+        await invoke("fs_delete", { path: target.path });
         toast({
           title: "Deleted",
-          description: `${deleteTarget.name} has been deleted`,
+          description: `${target.name} has been deleted`,
         });
       }
 
       // Reload the current directory to reflect changes
       await loadDirectory(currentPath, { force: true });
       setDeleteTarget(null);
-      if (selectedFile?.path === deleteTarget.path) {
+      if (selectedFile?.path === target.path) {
         setSelectedFile(null);
         setShowDetails(false);
       }
@@ -1227,6 +1270,44 @@ export default function ExplorerPage() {
       const typedError = error as FsError | TelegramError;
       toast({
         title: "Error deleting item",
+        description: typedError.message || "An unknown error occurred",
+        variant: "destructive",
+      });
+    }
+  };
+
+  const handleRestoreFromRecycleBin = async (targetFile?: FileItem | null) => {
+    const file = targetFile ?? selectedFile;
+    if (!file || !isRecycleBinPath(currentPath)) {
+      return;
+    }
+
+    if (!isSavedVirtualItemPath(file.path)) {
+      return;
+    }
+
+    try {
+      await invoke("tg_move_saved_item", {
+        sourcePath: file.path,
+        destinationPath: "tg://saved",
+      });
+
+      savedPathCacheRef.current = {};
+      toast({
+        title: "Restored",
+        description: `${file.name} restored to Saved Messages`,
+      });
+
+      if (selectedFile?.path === file.path) {
+        setSelectedFile(null);
+        setShowDetails(false);
+      }
+
+      await loadDirectory(currentPath, { force: true });
+    } catch (error) {
+      const typedError = error as TelegramError;
+      toast({
+        title: "Restore failed",
         description: typedError.message || "An unknown error occurred",
         variant: "destructive",
       });
@@ -1281,9 +1362,29 @@ export default function ExplorerPage() {
     });
   };
 
-  const handleNewFolder = async () => {
-    const folderName = prompt("Enter folder name:");
-    if (!folderName) return;
+  const handleNewFolder = () => {
+    if (isRecycleBinPath(currentPath)) {
+      toast({
+        title: "Action unavailable",
+        description: "Cannot create folders inside Recycle Bin.",
+      });
+      return;
+    }
+
+    setNewFolderName("");
+    setIsNewFolderDialogOpen(true);
+  };
+
+  const handleConfirmNewFolder = async () => {
+    const folderName = newFolderName.trim();
+    if (!folderName) {
+      toast({
+        title: "Folder name required",
+        description: "Please enter a folder name.",
+        variant: "destructive",
+      });
+      return;
+    }
 
     try {
       if (currentPath.startsWith("tg://saved")) {
@@ -1297,11 +1398,12 @@ export default function ExplorerPage() {
         await invoke("fs_create_dir", { path: newPath });
       }
 
+      setIsNewFolderDialogOpen(false);
+      setNewFolderName("");
       toast({
         title: "Folder created",
         description: `Created folder: ${folderName}`,
       });
-      // Reload the current directory to show the new folder
       await loadDirectory(currentPath, { force: true });
     } catch (error) {
       const typedError = error as FsError | TelegramError;
@@ -1313,20 +1415,48 @@ export default function ExplorerPage() {
     }
   };
 
-  const handleRename = async (targetFile?: FileItem | null) => {
+  const handleRename = (targetFile?: FileItem | null) => {
     const file = targetFile ?? selectedFile;
     if (!file) {
       return;
     }
 
-    const newName = prompt("Enter new name:", file.name);
-    const normalizedName = newName?.trim();
-    if (!normalizedName || normalizedName === file.name) {
+    if (isRecycleBinPath(currentPath)) {
+      toast({
+        title: "Action unavailable",
+        description: "Cannot rename items inside Recycle Bin.",
+      });
+      return;
+    }
+
+    setRenameTarget(file);
+    setRenameValue(file.name);
+  };
+
+  const handleConfirmRename = async () => {
+    const file = renameTarget;
+    if (!file) {
+      return;
+    }
+
+    const normalizedName = renameValue.trim();
+    if (!normalizedName) {
+      toast({
+        title: "Name required",
+        description: "Please enter a new name.",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    if (normalizedName === file.name) {
+      setRenameTarget(null);
+      setRenameValue("");
       return;
     }
 
     try {
-      if (isSavedVirtualFolderPath(file.path) || isSavedVirtualFilePath(file.path)) {
+      if (isSavedVirtualItemPath(file.path)) {
         await invoke("tg_rename_saved_item", {
           sourcePath: file.path,
           newName: normalizedName,
@@ -1350,6 +1480,8 @@ export default function ExplorerPage() {
         });
       }
 
+      setRenameTarget(null);
+      setRenameValue("");
       toast({
         title: "Renamed",
         description: `${file.name} renamed to ${normalizedName}`,
@@ -1379,8 +1511,11 @@ export default function ExplorerPage() {
     event.stopPropagation();
 
     const menuWidth = 236;
+    const isRecycleBinMenu = isRecycleBinPath(currentPath) && !!targetFile;
     const menuHeight = isEmptyArea
       ? 140
+      : isRecycleBinMenu
+        ? 112
       : (targetFile && !targetFile.isDirectory ? 288 : 254);
     const clampedX = Math.max(8, Math.min(event.clientX, window.innerWidth - menuWidth - 8));
     const clampedY = Math.max(8, Math.min(event.clientY, window.innerHeight - menuHeight - 8));
@@ -1401,6 +1536,12 @@ export default function ExplorerPage() {
   const handleEmptyAreaContextMenu = (event: React.MouseEvent<HTMLDivElement>) => {
     setSelectedFile(null);
     setShowDetails(false);
+
+    if (isRecycleBinPath(currentPath)) {
+      setContextMenuState(null);
+      return;
+    }
+
     openContextMenu(event, null, true);
   };
 
@@ -1441,6 +1582,14 @@ export default function ExplorerPage() {
       return;
     }
 
+    if (isRecycleBinPath(currentPath)) {
+      toast({
+        title: "Action unavailable",
+        description: "Cannot modify items inside Recycle Bin.",
+      });
+      return;
+    }
+
     setClipboardItem({
       path: file.path,
       name: file.name,
@@ -1476,8 +1625,17 @@ export default function ExplorerPage() {
       return;
     }
 
+    if (isRecycleBinPath(destinationFolderPath)) {
+      toast({
+        title: "Paste unavailable",
+        description: "Cannot paste items inside Recycle Bin.",
+        variant: "destructive",
+      });
+      return;
+    }
+
     try {
-      const sourceIsSaved = isSavedVirtualFolderPath(sourcePath) || isSavedVirtualFilePath(sourcePath);
+      const sourceIsSaved = isSavedVirtualItemPath(sourcePath);
       const destinationIsSaved = isSavedVirtualFolderPath(destinationFolderPath);
 
       if (sourceIsSaved || destinationIsSaved) {
@@ -1591,6 +1749,10 @@ export default function ExplorerPage() {
   };
 
   const isDraggableItem = (file: FileItem) => {
+    if (isRecycleBinPath(currentPath)) {
+      return false;
+    }
+
     if (isSavedVirtualFolderPath(file.path)) {
       return file.path !== "tg://saved";
     }
@@ -1612,6 +1774,10 @@ export default function ExplorerPage() {
   };
 
   const canDropToTarget = (sourcePath: string, target: FileItem): boolean => {
+    if (isRecycleBinPath(currentPath)) {
+      return false;
+    }
+
     if (!target.isDirectory) {
       return false;
     }
@@ -1713,6 +1879,10 @@ export default function ExplorerPage() {
       return;
     }
 
+    if (isRecycleBinPath(currentPath)) {
+      return;
+    }
+
     const sourceItem = files.find((file) => file.path === sourcePath);
     const sourceDisplayName = sourceItem?.name || getPathName(sourcePath);
 
@@ -1801,6 +1971,15 @@ export default function ExplorerPage() {
       return;
     }
 
+    if (isRecycleBinPath(currentPath)) {
+      toast({
+        title: "Upload unavailable",
+        description: "Cannot upload files inside Recycle Bin.",
+        variant: "destructive",
+      });
+      return;
+    }
+
     setIsUploadingFiles(true);
     try {
       let uploadedCount = 0;
@@ -1851,7 +2030,7 @@ export default function ExplorerPage() {
   };
 
   const handleExplorerDragOver = (event: React.DragEvent) => {
-    if (!isExternalFileDrag(event)) {
+    if (!isExternalFileDrag(event) || isRecycleBinPath(currentPath)) {
       return;
     }
 
@@ -1870,7 +2049,7 @@ export default function ExplorerPage() {
   };
 
   const handleExplorerDrop = async (event: React.DragEvent) => {
-    if (!isExternalFileDrag(event)) {
+    if (!isExternalFileDrag(event) || isRecycleBinPath(currentPath)) {
       return;
     }
 
@@ -1964,13 +2143,15 @@ export default function ExplorerPage() {
         {/* Toolbar */}
         <div className="h-12 bg-glass border-b border-border flex items-center justify-between px-4">
           <div className="flex items-center gap-2">
-            <TelegramButton variant="secondary" size="sm" onClick={handleNewFolder}>
-              <FolderPlus className="w-4 h-4" />
-              New Folder
-            </TelegramButton>
+            {!isRecycleBinView && (
+              <TelegramButton variant="secondary" size="sm" onClick={handleNewFolder}>
+                <FolderPlus className="w-4 h-4" />
+                New Folder
+              </TelegramButton>
+            )}
 
             {/* Contextual actions for selected file */}
-            {selectedFile && (
+            {selectedFile && !isRecycleBinView && (
               <>
                 <TelegramButton
                   variant="secondary"
@@ -2068,9 +2249,11 @@ export default function ExplorerPage() {
             ) : sortedFiles.length === 0 ? (
               <div className="flex flex-col items-center justify-center h-full text-center">
                 <p className="text-body text-muted-foreground mb-2">
-                  {search ? "No files match your search" : "This folder is empty"}
+                  {search
+                    ? "No files match your search"
+                    : (isRecycleBinView ? "Recycle bin is empty" : "This folder is empty")}
                 </p>
-                {!search && (
+                {!search && !isRecycleBinView && (
                   <TelegramButton onClick={handleNewFolder}>
                     Create New Folder
                   </TelegramButton>
@@ -2131,7 +2314,7 @@ export default function ExplorerPage() {
           </div>
 
           {/* Details panel */}
-          {showDetails && (
+          {showDetails && !isRecycleBinView && (
             <DetailsPanel
               file={selectedFile}
               onClose={() => setShowDetails(false)}
@@ -2179,6 +2362,32 @@ export default function ExplorerPage() {
               >
                 <ClipboardPaste className="w-4 h-4 text-muted-foreground" />
                 <span>Paste</span>
+              </button>
+            </>
+          ) : isRecycleBinView ? (
+            <>
+              <button
+                className={contextMenuItemClassName}
+                onClick={() => {
+                  closeContextMenu();
+                  void handleRestoreFromRecycleBin(contextTargetFile);
+                }}
+              >
+                <RotateCcw className="w-4 h-4 text-muted-foreground" />
+                <span>Restore</span>
+              </button>
+
+              <div className="my-1 h-px bg-border/70" />
+
+              <button
+                className={contextMenuDangerItemClassName}
+                onClick={() => {
+                  closeContextMenu();
+                  handleContextDelete();
+                }}
+              >
+                <Trash2 className="w-4 h-4" />
+                <span>Delete</span>
               </button>
             </>
           ) : (
@@ -2277,17 +2486,66 @@ export default function ExplorerPage() {
         </div>
       )}
 
+      <TextInputDialog
+        isOpen={isNewFolderDialogOpen}
+        title="Create Folder"
+        description="Enter a name for the new folder."
+        value={newFolderName}
+        placeholder="Folder name"
+        confirmLabel="Create"
+        cancelLabel="Cancel"
+        onValueChange={setNewFolderName}
+        onConfirm={() => {
+          void handleConfirmNewFolder();
+        }}
+        onCancel={() => {
+          setIsNewFolderDialogOpen(false);
+          setNewFolderName("");
+        }}
+      />
+
+      <TextInputDialog
+        isOpen={!!renameTarget}
+        title="Rename Item"
+        description={renameTarget ? `Rename ${renameTarget.name}` : undefined}
+        value={renameValue}
+        placeholder="New name"
+        confirmLabel="Rename"
+        cancelLabel="Cancel"
+        icon={<Edit3 className="w-4 h-4 text-primary" />}
+        framed
+        onValueChange={setRenameValue}
+        onConfirm={() => {
+          void handleConfirmRename();
+        }}
+        onCancel={() => {
+          setRenameTarget(null);
+          setRenameValue("");
+        }}
+      />
+
       {/* Delete confirmation dialog */}
       <ConfirmDialog
         isOpen={!!deleteTarget}
-        title="Delete Item"
+        title={isPermanentDeleteTarget ? "Delete Permanently" : "Delete Item"}
         message={
           <p>
-            Are you sure you want to delete <strong>{deleteTarget?.name}</strong>?
-            This action cannot be undone.
+            {isPermanentDeleteTarget
+              ? (
+                <>
+                  Delete <strong>{deleteTarget?.name}</strong> from Recycle Bin permanently?
+                  This action cannot be undone.
+                </>
+              )
+              : (
+                <>
+                  Are you sure you want to delete <strong>{deleteTarget?.name}</strong>?
+                  This action cannot be undone.
+                </>
+              )}
           </p>
         }
-        confirmLabel="Delete"
+        confirmLabel={isPermanentDeleteTarget ? "Delete Permanently" : "Delete"}
         cancelLabel="Cancel"
         variant="danger"
         onConfirm={handleDelete}

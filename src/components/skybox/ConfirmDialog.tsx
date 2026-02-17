@@ -26,20 +26,17 @@ export function ConfirmDialog({
   if (!isOpen) return null;
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center">
-      {/* Backdrop */}
+    <div className="fixed inset-0 z-[90] flex items-center justify-center">
       <div
-        className="absolute inset-0 bg-background/80 backdrop-blur-sm animate-fade-in"
+        className="absolute inset-0 bg-background/70 backdrop-blur-sm animate-fade-in"
         onClick={onCancel}
       />
 
-      {/* Dialog */}
-      <div className="relative bg-card border border-border rounded-lg shadow-xl max-w-md w-full mx-4 animate-scale-in">
-        {/* Header */}
-        <div className="flex items-center justify-between p-4 border-b border-border">
+      <div className="relative max-w-md w-full mx-4 rounded-xl bg-glass shadow-2xl shadow-black/50 backdrop-saturate-150 animate-scale-in">
+        <div className="flex items-center justify-between p-4">
           <div className="flex items-center gap-3">
             {variant === "danger" && (
-              <div className="w-8 h-8 rounded-full bg-destructive/20 flex items-center justify-center">
+              <div className="w-8 h-8 rounded-full bg-destructive/15 flex items-center justify-center">
                 <AlertTriangle className="w-4 h-4 text-destructive" />
               </div>
             )}
@@ -47,13 +44,12 @@ export function ConfirmDialog({
           </div>
           <button
             onClick={onCancel}
-            className="p-1 rounded hover:bg-secondary transition-colors"
+            className="p-1 rounded hover:bg-sidebar-accent/50 transition-colors outline-none focus-visible:outline-none"
           >
             <X className="w-4 h-4 text-muted-foreground" />
           </button>
         </div>
 
-        {/* Content */}
         <div className="p-4">
           {typeof message === "string" ? (
             <p className="text-body text-muted-foreground">{message}</p>
@@ -62,14 +58,18 @@ export function ConfirmDialog({
           )}
         </div>
 
-        {/* Actions */}
-        <div className="flex justify-end gap-3 p-4 border-t border-border">
-          <TelegramButton variant="secondary" onClick={onCancel}>
+        <div className="flex justify-end gap-3 p-4">
+          <TelegramButton
+            variant="secondary"
+            onClick={onCancel}
+            className="outline-none focus-visible:outline-none focus-visible:ring-0"
+          >
             {cancelLabel}
           </TelegramButton>
           <TelegramButton
             variant={variant === "danger" ? "danger" : "primary"}
             onClick={onConfirm}
+            className="outline-none focus-visible:outline-none focus-visible:ring-0"
           >
             {confirmLabel}
           </TelegramButton>

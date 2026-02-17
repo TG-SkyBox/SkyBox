@@ -18,49 +18,74 @@ jobs:
         github.event.head_commit.committer.name != 'github-actions[bot]'
       )
     env:
-        TAURI_PRIVATE_KEY: ${{ secrets.TAURI_PRIVATE_KEY }}
-        TAURI_KEY_PASSWORD: ${{ secrets.TAURI_KEY_PASSWORD }}
         TELEGRAM_API_ID: ${{ secrets.TELEGRAM_API_ID }}
         TELEGRAM_API_HASH: ${{ secrets.TELEGRAM_API_HASH }}
     
     steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
+
+      - name: Check if merge commit
+        id: check_merge
+        shell: bash
+        run: |
+          # Get the number of parents for the head commit
+          PARENT_COUNT=$(git rev-list --parents -n1 HEAD | wc -w)
+          # Subtract 1 because rev-list includes the commit itself
+          PARENT_COUNT=$((PARENT_COUNT - 1))
+          
+          echo "Parent count: $PARENT_COUNT"
+          if [ "$PARENT_COUNT" -gt 1 ]; then
+            echo "This is a merge commit (PR merge), skipping build"
+            echo "is_merge=true" >> $GITHUB_OUTPUT
+          else
+            echo "is_merge=false" >> $GITHUB_OUTPUT
+          fi
+
       - name: Debug env presence
+        if: steps.check_merge.outputs.is_merge != 'true'
         shell: pwsh
         run: |
           ""
           if ($env:TELEGRAM_API_ID) { "TELEGRAM_API_ID is set" } else { "TELEGRAM_API_ID is MISSING" }
           if ($env:TELEGRAM_API_HASH) { "TELEGRAM_API_HASH is set" } else { "TELEGRAM_API_HASH is MISSING" }
-          
-      - name: Checkout repository
-        uses: actions/checkout@v4
 
       - name: Setup Node.js
+        if: steps.check_merge.outputs.is_merge != 'true'
         uses: actions/setup-node@v4
         with:
           node-version: '20'
           cache: 'npm'
 
       - name: Install Rust stable
+        if: steps.check_merge.outputs.is_merge != 'true'
         uses: dtolnay/rust-toolchain@stable
         with:
           toolchain: stable
 
       - name: Rust cache
+        if: steps.check_merge.outputs.is_merge != 'true'
         uses: swatinem/rust-cache@v2
         with:
           workspaces: './src-tauri -> target'
 
       - name: Install dependencies
+        if: steps.check_merge.outputs.is_merge != 'true'
         run: npm install
 
       - name: Install Tauri CLI
+        if: steps.check_merge.outputs.is_merge != 'true'
         run: npm install -g @tauri-apps/cli
 
       - name: Build Tauri app
+        if: steps.check_merge.outputs.is_merge != 'true'
         run: npm run tauri build
         
 
       - name: Upload Windows installer (MSI)
+        if: steps.check_merge.outputs.is_merge != 'true'
         uses: actions/upload-artifact@v4
         with:
           name: windows-msi-installer
@@ -68,6 +93,7 @@ jobs:
           if-no-files-found: warn
 
       - name: Upload Windows installer (NSIS)
+        if: steps.check_merge.outputs.is_merge != 'true'
         uses: actions/upload-artifact@v4
         with:
           name: windows-nsis-installer
@@ -75,6 +101,7 @@ jobs:
           if-no-files-found: warn
 
       - name: Upload Windows executable
+        if: steps.check_merge.outputs.is_merge != 'true'
         uses: actions/upload-artifact@v4
         with:
           name: windows-executable
