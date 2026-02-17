@@ -305,8 +305,8 @@ jobs:
           # Try to fetch existing download branch to preserve previous releases
           git init upload
           cd upload
-          git config user.name "${{ github.actor }}"
-          git config user.email "${{ github.actor }}@users.noreply.github.com"
+          git config user.name "pamod-madubashana"
+          git config user.email "pamod.main@gmail.com"
           git remote add origin "https://x-access-token:${TOKEN}@github.com/${OWNER_REPO}.git"
           
           # Try to fetch existing download branch, but don't fail if it doesn't exist
