@@ -21,6 +21,7 @@ const RECYCLE_BIN_SAVED_PATH: &str = "/Home/Recycle Bin";
 const TELEGRAM_DELETE_BATCH_SIZE: usize = 100;
 const PHOTO_SIZE_REPAIR_LIMIT: i64 = 200;
 const THUMBNAIL_PREFETCH_DELAY_MS: u64 = 90;
+const MAX_UPLOAD_FLOOD_WAIT_RETRIES: usize = 3;
 
 static THUMBNAIL_FLOOD_WAIT_UNTIL: LazyLock<StdMutex<Option<Instant>>> =
     LazyLock::new(|| StdMutex::new(None));
@@ -2802,7 +2803,95 @@ pub async fn tg_upload_file_to_saved_messages_impl(
         ),
     })?;
 
-    let upload_result = client.upload_file(&temp_path).await;
+    let upload_and_send_result: Result<Message, TelegramError> = async {
+        let mut flood_wait_retries = 0_usize;
+
+        loop {
+            let uploaded_file = match client.upload_file(&temp_path).await {
+                Ok(file) => file,
+                Err(error) => {
+                    let error_message = error.to_string();
+                    if let Some(wait_seconds) = parse_flood_wait_seconds(&error_message) {
+                        if flood_wait_retries < MAX_UPLOAD_FLOOD_WAIT_RETRIES {
+                            flood_wait_retries += 1;
+                            log::warn!(
+                                "tg_upload_file_to_saved_messages_impl: Flood wait during upload ({}s), retry {}/{}",
+                                wait_seconds,
+                                flood_wait_retries,
+                                MAX_UPLOAD_FLOOD_WAIT_RETRIES
+                            );
+                            tokio::time::sleep(Duration::from_secs(wait_seconds)).await;
+                            continue;
+                        }
+
+                        return Err(TelegramError {
+                            message: format!(
+                                "Telegram rate limited upload requests (wait {}s). Please try again shortly.",
+                                wait_seconds
+                            ),
+                        });
+                    }
+
+                    return Err(TelegramError {
+                        message: format!("Failed to upload file to Telegram: {}", error_message),
+                    });
+                }
+            };
+
+            let input_message = match upload_media_kind {
+                UploadMediaKind::Photo => InputMessage::new().photo(uploaded_file),
+                UploadMediaKind::Video | UploadMediaKind::Audio => {
+                    let message = match upload_mime_type {
+                        Some(mime_type) => InputMessage::new().mime_type(mime_type).document(uploaded_file),
+                        None => InputMessage::new().document(uploaded_file),
+                    };
+
+                    message.attribute(Attribute::FileName(upload_file_name.clone()))
+                }
+                UploadMediaKind::Document => {
+                    let message = match upload_mime_type {
+                        Some(mime_type) => InputMessage::new().mime_type(mime_type).file(uploaded_file),
+                        None => InputMessage::new().file(uploaded_file),
+                    };
+
+                    message.attribute(Attribute::FileName(upload_file_name.clone()))
+                }
+            };
+
+            match client.send_message(input_peer.clone(), input_message).await {
+                Ok(message) => break Ok(message),
+                Err(error) => {
+                    let error_message = error.to_string();
+                    if let Some(wait_seconds) = parse_flood_wait_seconds(&error_message) {
+                        if flood_wait_retries < MAX_UPLOAD_FLOOD_WAIT_RETRIES {
+                            flood_wait_retries += 1;
+                            log::warn!(
+                                "tg_upload_file_to_saved_messages_impl: Flood wait during send ({}s), retry {}/{}",
+                                wait_seconds,
+                                flood_wait_retries,
+                                MAX_UPLOAD_FLOOD_WAIT_RETRIES
+                            );
+                            tokio::time::sleep(Duration::from_secs(wait_seconds)).await;
+                            continue;
+                        }
+
+                        return Err(TelegramError {
+                            message: format!(
+                                "Telegram rate limited message sends (wait {}s). Please try again shortly.",
+                                wait_seconds
+                            ),
+                        });
+                    }
+
+                    return Err(TelegramError {
+                        message: format!("Failed to send uploaded file: {}", error_message),
+                    });
+                }
+            }
+        }
+    }
+    .await;
+
     if let Err(cleanup_error) = fs::remove_file(&temp_path) {
         log::warn!(
             "Failed to delete temporary upload file {}: {}",
@@ -2811,36 +2900,7 @@ pub async fn tg_upload_file_to_saved_messages_impl(
         );
     }
 
-    let uploaded_file = upload_result.map_err(|e| TelegramError {
-        message: format!("Failed to upload file to Telegram: {}", e),
-    })?;
-
-    let input_message = match upload_media_kind {
-        UploadMediaKind::Photo => InputMessage::new().photo(uploaded_file),
-        UploadMediaKind::Video | UploadMediaKind::Audio => {
-            let message = match upload_mime_type {
-                Some(mime_type) => InputMessage::new().mime_type(mime_type).document(uploaded_file),
-                None => InputMessage::new().document(uploaded_file),
-            };
-
-            message.attribute(Attribute::FileName(upload_file_name.clone()))
-        }
-        UploadMediaKind::Document => {
-            let message = match upload_mime_type {
-                Some(mime_type) => InputMessage::new().mime_type(mime_type).file(uploaded_file),
-                None => InputMessage::new().file(uploaded_file),
-            };
-
-            message.attribute(Attribute::FileName(upload_file_name.clone()))
-        }
-    };
-
-    let sent_message = client
-        .send_message(input_peer, input_message)
-        .await
-        .map_err(|e| TelegramError {
-            message: format!("Failed to send uploaded file: {}", e),
-        })?;
+    let sent_message = upload_and_send_result?;
 
     let mut telegram_message = if let Some(message) = categorize_message(&sent_message, chat_id) {
         message

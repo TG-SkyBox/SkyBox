@@ -203,6 +203,7 @@ const SAVED_ITEMS_PAGE_SIZE = 50;
 const EXPLORER_VIEW_MODE_KEY = "explorer_view_mode";
 const RECYCLE_BIN_VIRTUAL_PATH = "tg://saved/Recycle Bin";
 const DETAILS_PANEL_ANIMATION_MS = 220;
+const TELEGRAM_UPLOAD_REQUEST_DELAY_MS = 450;
 
 const IMAGE_EXTENSIONS = new Set(["jpg", "jpeg", "png", "gif", "webp", "bmp", "svg"]);
 const VIDEO_EXTENSIONS = new Set(["mp4", "mkv", "mov", "avi", "webm", "wmv", "m4v"]);
@@ -2510,7 +2511,9 @@ export default function ExplorerPage() {
       let failedCount = 0;
       const uploadedCategories = new Set<string>();
 
-      for (const droppedFile of droppedFiles) {
+      for (let index = 0; index < droppedFiles.length; index += 1) {
+        const droppedFile = droppedFiles[index];
+
         try {
           const fileBytes = Array.from(new Uint8Array(await droppedFile.arrayBuffer()));
           const uploadedMessage: TelegramMessage = await invoke("tg_upload_file_to_saved_messages", {
@@ -2531,6 +2534,12 @@ export default function ExplorerPage() {
           uploadedFiles: uploadedCount,
           failedFiles: failedCount,
         });
+
+        if (index < droppedFiles.length - 1) {
+          await new Promise((resolve) => {
+            window.setTimeout(resolve, TELEGRAM_UPLOAD_REQUEST_DELAY_MS);
+          });
+        }
       }
 
       if (uploadedCount > 0) {
