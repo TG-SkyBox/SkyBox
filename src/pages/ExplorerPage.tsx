@@ -1061,10 +1061,24 @@ export default function ExplorerPage() {
   }, [currentPath]);
 
   const filteredFiles = useMemo(() => {
-    if (!search.trim()) return files;
-    const query = search.toLowerCase();
-    return files.filter((f) => f.name.toLowerCase().includes(query));
-  }, [search, files]);
+    const query = search.trim().toLowerCase();
+
+    return files.filter((file) => {
+      if (
+        currentPath === "tg://saved" &&
+        file.isDirectory &&
+        file.path === RECYCLE_BIN_VIRTUAL_PATH
+      ) {
+        return false;
+      }
+
+      if (!query) {
+        return true;
+      }
+
+      return file.name.toLowerCase().includes(query);
+    });
+  }, [currentPath, search, files]);
 
   // Sort: directories first, then by name
   const sortedFiles = useMemo(() => {
