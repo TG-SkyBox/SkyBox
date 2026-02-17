@@ -4,8 +4,6 @@ on:
   pull_request:
     types: [closed]
     branches: [ main, master ]
-  push:
-    branches: [ main, master ]
 
 permissions:
   contents: write
@@ -18,11 +16,13 @@ jobs:
     outputs:
       version: ${{ steps.get_version.outputs.version }}
       release_notes: ${{ steps.get_release_notes.outputs.release_notes }}
+      bump_sha: ${{ steps.commit_version.outputs.bump_sha }}
     
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
+          ref: ${{ github.event.pull_request.base.ref }}
           token: ${{ secrets.PERSONAL_ACCESS_TOKEN }}
 
       - name: Bump version
@@ -112,10 +112,16 @@ jobs:
         shell: bash
 
       - name: Commit and Push Version Bump
+        id: commit_version
         run: |
-          git config --global user.name "pamod-madubashana"
-          git config --global user.email "pamod.main@gmail.com"
+          git config user.name "pamod-madubashana"
+          git config user.email "pamod.main@gmail.com"
           git add VERSION package.json src-tauri/tauri.conf.json src-tauri/Cargo.toml
+
+          if git diff --cached --quiet; then
+            echo "No version changes to commit."
+            exit 1
+          fi
           
           # Include release notes in commit message
           RELEASE_NOTES=$(cat <<'EOF'
@@ -125,59 +131,13 @@ jobs:
           
           # Create commit message with release notes
           git commit -m "chore: new release v${{ steps.get_version.outputs.version }}" -m "${RELEASE_NOTES}"
-          git push origin HEAD:main
-        shell: bash
-
-  # Step 2: Prepare release (triggered by version bump commit)
-  prepare-release:
-    needs: bump-version
-    runs-on: ubuntu-latest
-    outputs:
-      version: ${{ steps.extract_version.outputs.version }}
-      release_notes: ${{ steps.extract_notes.outputs.release_notes }}
-    
-    steps:
-      - name: Extract version from commit message
-        id: extract_version
-        run: |
-          # Extract version from commit message like "chore: bump version to 1.0.2"
-          VERSION=$(echo "${{ github.event.head_commit.message }}" | grep -oP 'chore: bump version to \K[0-9]+\.[0-9]+\.[0-9]+')
-          echo "version=${VERSION}" >> $GITHUB_OUTPUT
-          echo "Extracted version: ${VERSION}"
-        shell: bash
-
-      - name: Extract release notes from commit body
-        id: extract_notes
-        run: |
-          python - <<'PY'
-          import json, os
-
-          ev_path = os.environ.get('GITHUB_EVENT_PATH')
-          if not ev_path:
-              raise SystemExit('GITHUB_EVENT_PATH not set')
-
-          with open(ev_path, 'r', encoding='utf-8') as f:
-              ev = json.load(f)
-
-          msg = ev.get('head_commit', {}).get('message') or ''
-          # Skip the first line (commit title), get everything after
-          lines = msg.splitlines()
-          release = '\n'.join(lines[1:]).strip()
-
-          out_path = os.environ.get('GITHUB_OUTPUT')
-          if not out_path:
-              raise SystemExit('GITHUB_OUTPUT not set')
-
-          with open(out_path, 'a', encoding='utf-8') as out:
-              out.write('release_notes<<EOF\n')
-              out.write(release + '\n')
-              out.write('EOF\n')
-          PY
+          git push origin "HEAD:${{ github.event.pull_request.base.ref }}"
+          echo "bump_sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
         shell: bash
 
   # Step 2: Build on all platforms in parallel
   build:
-    needs: prepare-release
+    needs: bump-version
     env:
       TAURI_PRIVATE_KEY: ${{ secrets.TAURI_PRIVATE_KEY }}
       TAURI_KEY_PASSWORD: ${{ secrets.TAURI_KEY_PASSWORD }}
@@ -194,7 +154,7 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
-          ref: main  # Use the updated version from bump-version job
+          ref: ${{ needs.bump-version.outputs.bump_sha }}
           token: ${{ secrets.PERSONAL_ACCESS_TOKEN }}
 
       # Install system dependencies for Linux
@@ -289,7 +249,7 @@ jobs:
 
   # Step 3: Publish release and push to download branch (after all builds complete)
   publish:
-    needs: [prepare-release, build]
+    needs: [bump-version, build]
     runs-on: ubuntu-latest
     
     steps:
@@ -315,9 +275,10 @@ jobs:
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v1
         with:
-          tag_name: ${{ needs.prepare-release.outputs.version }}
-          name: Release ${{ needs.prepare-release.outputs.version }}
-          body: ${{ needs.prepare-release.outputs.release_notes }}
+          tag_name: ${{ needs.bump-version.outputs.version }}
+          name: Release ${{ needs.bump-version.outputs.version }}
+          body: ${{ needs.bump-version.outputs.release_notes }}
+          target_commitish: ${{ needs.bump-version.outputs.bump_sha }}
           draft: false
           prerelease: false
           repository: pamod-madubashana/SkyBox
@@ -327,7 +288,7 @@ jobs:
       - name: Push release files to "download" branch
         shell: bash
         env:
-          TAG_NAME: ${{ needs.prepare-release.outputs.version }}
+          TAG_NAME: ${{ needs.bump-version.outputs.version }}
           OWNER_REPO: pamod-madubashana/SkyBox
           TOKEN: ${{ secrets.PERSONAL_ACCESS_TOKEN }}
         run: |
