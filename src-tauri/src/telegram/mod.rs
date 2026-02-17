@@ -387,10 +387,11 @@ pub async fn tg_prefetch_message_thumbnails(
 
 #[tauri::command]
 pub async fn tg_download_saved_file(
+    app: tauri::AppHandle,
     db: State<'_, crate::db::Database>,
     source_path: String,
-) -> Result<String, TelegramError> {
-    tg_download_saved_file_impl(db.inner().clone(), source_path).await
+) -> Result<Option<String>, TelegramError> {
+    tg_download_saved_file_impl(app, db.inner().clone(), source_path).await
 }
 
 #[tauri::command]

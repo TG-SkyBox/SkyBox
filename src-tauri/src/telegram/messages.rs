@@ -2,12 +2,15 @@ use crate::db::{Database, TelegramMessage, TelegramSavedItem};
 use crate::telegram::{AUTH_STATE, TelegramError};
 use directories::{BaseDirs, UserDirs};
 use grammers_client::InputMessage;
-use grammers_client::types::{Attribute, Media, Message};
+use grammers_client::types::{Attribute, Downloadable, Media, Message};
 use grammers_client::grammers_tl_types as tl;
 use serde_json::json;
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+use tauri::{AppHandle, Emitter};
+use tauri_plugin_dialog::DialogExt;
+use tokio::io::AsyncWriteExt;
 use uuid::Uuid;
 
 const DEFAULT_BATCH_SIZE: usize = 50;
@@ -16,6 +19,35 @@ const SAVED_ROOT_PATH: &str = "/Home";
 const RECYCLE_BIN_SAVED_PATH: &str = "/Home/Recycle Bin";
 const TELEGRAM_DELETE_BATCH_SIZE: usize = 100;
 const PHOTO_SIZE_REPAIR_LIMIT: i64 = 200;
+
+#[derive(serde::Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+struct DownloadProgressPayload {
+    source_path: String,
+    file_name: String,
+    stage: String,
+    progress: f64,
+    downloaded_bytes: u64,
+    total_bytes: Option<u64>,
+    destination_path: Option<String>,
+    message: Option<String>,
+}
+
+fn emit_download_progress(app: &AppHandle, payload: DownloadProgressPayload) {
+    if let Err(error) = app.emit("tg-download-progress", payload) {
+        log::warn!("Failed to emit download progress event: {}", error);
+    }
+}
+
+fn download_progress_percent(downloaded_bytes: u64, total_bytes: Option<u64>) -> f64 {
+    match total_bytes {
+        Some(total) if total > 0 => {
+            let ratio = downloaded_bytes as f64 / total as f64;
+            (ratio * 100.0).clamp(0.0, 100.0)
+        }
+        _ => 0.0,
+    }
+}
 
 fn backfill_cursor_key(chat_id: i64) -> String {
     format!("tg_saved_backfill_cursor_{}", chat_id)
@@ -485,6 +517,16 @@ fn build_unique_file_path(directory: &Path, file_name: &str) -> PathBuf {
 }
 
 fn move_staged_download(staged_path: &Path, destination_path: &Path) -> Result<(), TelegramError> {
+    if destination_path.exists() {
+        fs::remove_file(destination_path).map_err(|e| TelegramError {
+            message: format!(
+                "Failed to replace existing destination file {}: {}",
+                destination_path.display(),
+                e
+            ),
+        })?;
+    }
+
     match fs::rename(staged_path, destination_path) {
         Ok(()) => Ok(()),
         Err(rename_error) => {
@@ -2041,10 +2083,115 @@ pub async fn tg_prefetch_message_thumbnails_impl(
     }))
 }
 
+async fn download_saved_media_with_progress(
+    client: &grammers_client::Client,
+    message: &Message,
+    staged_file_path: &Path,
+    source_path: &str,
+    file_name: &str,
+    total_bytes_hint: Option<u64>,
+    app: &AppHandle,
+) -> Result<(u64, Option<u64>), TelegramError> {
+    let media = message.media().ok_or_else(|| TelegramError {
+        message: "Selected item does not contain downloadable media".to_string(),
+    })?;
+
+    let mut total_bytes = media.size().map(|value| value as u64);
+    if total_bytes.is_none() {
+        total_bytes = total_bytes_hint.filter(|value| *value > 0);
+    }
+
+    let mut staged_file = tokio::fs::File::create(staged_file_path)
+        .await
+        .map_err(|e| TelegramError {
+            message: format!(
+                "Failed to create staged download file {}: {}",
+                staged_file_path.display(),
+                e
+            ),
+        })?;
+
+    let mut download = client.iter_download(&media);
+    let mut downloaded_bytes = 0_u64;
+    let mut last_emit_at = Instant::now();
+
+    emit_download_progress(
+        app,
+        DownloadProgressPayload {
+            source_path: source_path.to_string(),
+            file_name: file_name.to_string(),
+            stage: "downloading".to_string(),
+            progress: 0.0,
+            downloaded_bytes,
+            total_bytes,
+            destination_path: None,
+            message: None,
+        },
+    );
+
+    loop {
+        let maybe_chunk = download.next().await.map_err(|e| TelegramError {
+            message: format!("Failed while downloading media chunks: {}", e),
+        })?;
+
+        let Some(chunk) = maybe_chunk else {
+            break;
+        };
+
+        staged_file
+            .write_all(&chunk)
+            .await
+            .map_err(|e| TelegramError {
+                message: format!("Failed writing staged download chunk: {}", e),
+            })?;
+
+        downloaded_bytes += chunk.len() as u64;
+
+        if last_emit_at.elapsed() >= Duration::from_millis(120) {
+            emit_download_progress(
+                app,
+                DownloadProgressPayload {
+                    source_path: source_path.to_string(),
+                    file_name: file_name.to_string(),
+                    stage: "downloading".to_string(),
+                    progress: download_progress_percent(downloaded_bytes, total_bytes),
+                    downloaded_bytes,
+                    total_bytes,
+                    destination_path: None,
+                    message: None,
+                },
+            );
+
+            last_emit_at = Instant::now();
+        }
+    }
+
+    staged_file.flush().await.map_err(|e| TelegramError {
+        message: format!("Failed to flush staged download file: {}", e),
+    })?;
+
+    emit_download_progress(
+        app,
+        DownloadProgressPayload {
+            source_path: source_path.to_string(),
+            file_name: file_name.to_string(),
+            stage: "downloading".to_string(),
+            progress: download_progress_percent(downloaded_bytes, total_bytes),
+            downloaded_bytes,
+            total_bytes,
+            destination_path: None,
+            message: None,
+        },
+    );
+
+    Ok((downloaded_bytes, total_bytes))
+}
+
 pub async fn tg_download_saved_file_impl(
+    app: AppHandle,
     db: Database,
     source_path: String,
-) -> Result<String, TelegramError> {
+) -> Result<Option<String>, TelegramError> {
     let message_id = parse_message_id_from_virtual_path(&source_path).ok_or_else(|| TelegramError {
         message: "Only Saved Message files can be downloaded".to_string(),
     })?;
@@ -2110,37 +2257,187 @@ pub async fn tg_download_saved_file_impl(
         .filter(|value| !value.trim().is_empty())
         .unwrap_or(fallback_name);
 
+    let total_bytes_hint = categorized
+        .as_ref()
+        .and_then(|item| item.size)
+        .filter(|value| *value > 0)
+        .map(|value| value as u64);
+
+    let default_downloads_dir = get_device_downloads_dir()?;
+
+    emit_download_progress(
+        &app,
+        DownloadProgressPayload {
+            source_path: source_path.clone(),
+            file_name: target_file_name.clone(),
+            stage: "selecting".to_string(),
+            progress: 0.0,
+            downloaded_bytes: 0,
+            total_bytes: total_bytes_hint,
+            destination_path: None,
+            message: Some("Choose where to save the file".to_string()),
+        },
+    );
+
+    let selected_destination = app
+        .dialog()
+        .file()
+        .set_title("Save Download")
+        .set_directory(&default_downloads_dir)
+        .set_file_name(target_file_name.clone())
+        .blocking_save_file();
+
+    let Some(selected_destination) = selected_destination else {
+        emit_download_progress(
+            &app,
+            DownloadProgressPayload {
+                source_path: source_path,
+                file_name: target_file_name,
+                stage: "cancelled".to_string(),
+                progress: 0.0,
+                downloaded_bytes: 0,
+                total_bytes: total_bytes_hint,
+                destination_path: None,
+                message: Some("Download cancelled".to_string()),
+            },
+        );
+
+        return Ok(None);
+    };
+
+    let destination_file_path = selected_destination
+        .into_path()
+        .map_err(|_| TelegramError {
+            message: "Selected destination is not a local filesystem path".to_string(),
+        })?;
+
+    if let Some(parent_dir) = destination_file_path.parent() {
+        fs::create_dir_all(parent_dir).map_err(|e| TelegramError {
+            message: format!(
+                "Failed to prepare destination directory {}: {}",
+                parent_dir.display(),
+                e
+            ),
+        })?;
+    }
+
     let staging_dir = get_download_staging_dir()?;
-    let device_downloads_dir = get_device_downloads_dir()?;
-
     let staged_file_path = build_unique_file_path(&staging_dir, &target_file_name);
-    let destination_file_path = build_unique_file_path(&device_downloads_dir, &target_file_name);
 
-    let has_media = match message.download_media(&staged_file_path).await {
-        Ok(value) => value,
+    let download_result = download_saved_media_with_progress(
+        &client,
+        &message,
+        &staged_file_path,
+        &source_path,
+        &target_file_name,
+        total_bytes_hint,
+        &app,
+    )
+    .await;
+
+    let (downloaded_bytes, total_bytes) = match download_result {
+        Ok(result) => result,
         Err(error) => {
             if staged_file_path.exists() {
                 let _ = fs::remove_file(&staged_file_path);
             }
-            return Err(TelegramError {
-                message: format!("Failed to download message media: {}", error),
-            });
+
+            emit_download_progress(
+                &app,
+                DownloadProgressPayload {
+                    source_path: source_path.clone(),
+                    file_name: target_file_name.clone(),
+                    stage: "failed".to_string(),
+                    progress: 0.0,
+                    downloaded_bytes: 0,
+                    total_bytes: total_bytes_hint,
+                    destination_path: None,
+                    message: Some(error.message.clone()),
+                },
+            );
+
+            return Err(error);
         }
     };
 
-    if !has_media {
+    if downloaded_bytes == 0 {
         if staged_file_path.exists() {
             let _ = fs::remove_file(&staged_file_path);
         }
 
-        return Err(TelegramError {
+        let error = TelegramError {
             message: "Selected item does not contain downloadable media".to_string(),
-        });
+        };
+
+        emit_download_progress(
+            &app,
+            DownloadProgressPayload {
+                source_path: source_path.clone(),
+                file_name: target_file_name.clone(),
+                stage: "failed".to_string(),
+                progress: 0.0,
+                downloaded_bytes: 0,
+                total_bytes,
+                destination_path: None,
+                message: Some(error.message.clone()),
+            },
+        );
+
+        return Err(error);
     }
 
-    move_staged_download(&staged_file_path, &destination_file_path)?;
+    let moving_progress = download_progress_percent(downloaded_bytes, total_bytes)
+        .max(95.0)
+        .min(99.0);
+    emit_download_progress(
+        &app,
+        DownloadProgressPayload {
+            source_path: source_path.clone(),
+            file_name: target_file_name.clone(),
+            stage: "moving".to_string(),
+            progress: moving_progress,
+            downloaded_bytes,
+            total_bytes,
+            destination_path: Some(destination_file_path.to_string_lossy().replace('\\', "/")),
+            message: Some("Moving file to your selected location".to_string()),
+        },
+    );
 
-    Ok(destination_file_path.to_string_lossy().replace('\\', "/"))
+    if let Err(error) = move_staged_download(&staged_file_path, &destination_file_path) {
+        emit_download_progress(
+            &app,
+            DownloadProgressPayload {
+                source_path: source_path.clone(),
+                file_name: target_file_name.clone(),
+                stage: "failed".to_string(),
+                progress: moving_progress,
+                downloaded_bytes,
+                total_bytes,
+                destination_path: Some(destination_file_path.to_string_lossy().replace('\\', "/")),
+                message: Some(error.message.clone()),
+            },
+        );
+
+        return Err(error);
+    }
+
+    let destination_path_string = destination_file_path.to_string_lossy().replace('\\', "/");
+
+    emit_download_progress(
+        &app,
+        DownloadProgressPayload {
+            source_path,
+            file_name: target_file_name,
+            stage: "completed".to_string(),
+            progress: 100.0,
+            downloaded_bytes,
+            total_bytes,
+            destination_path: Some(destination_path_string.clone()),
+            message: Some("Download complete".to_string()),
+        },
+    );
+
+    Ok(Some(destination_path_string))
 }
 
 pub async fn tg_upload_file_to_saved_messages_impl(

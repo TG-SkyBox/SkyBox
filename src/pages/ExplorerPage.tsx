@@ -2,12 +2,13 @@ import { useState, useEffect, useMemo, useCallback, useRef } from "react";
 import { ExplorerSidebar } from "@/components/skybox/ExplorerSidebar";
 import { SearchBar } from "@/components/skybox/SearchBar";
 import { Breadcrumbs } from "@/components/skybox/Breadcrumbs";
-import { FileRow, FileItem } from "@/components/skybox/FileRow";
+import { FileRow, FileItem, formatFileSize } from "@/components/skybox/FileRow";
 import { FileGrid } from "@/components/skybox/FileGrid";
 import { DetailsPanel } from "@/components/skybox/DetailsPanel";
 import { ConfirmDialog } from "@/components/skybox/ConfirmDialog";
 import { TextInputDialog } from "@/components/skybox/TextInputDialog";
 import { TelegramButton } from "@/components/skybox/TelegramButton";
+import { Progress } from "@/components/ui/progress";
 import {
   FolderPlus,
   Grid,
@@ -30,6 +31,7 @@ import {
 import { useNavigate, useLocation } from "react-router-dom";
 import { toast } from "@/hooks/use-toast";
 import { invoke } from "@tauri-apps/api/core";
+import { listen } from "@tauri-apps/api/event";
 import { resolveThumbnailSrc } from "@/lib/thumbnail-src";
 
 interface FsError {
@@ -134,6 +136,19 @@ interface TelegramIndexSavedMessagesResult {
   started_from_empty_db?: boolean;
 }
 
+type DownloadStage = "selecting" | "downloading" | "moving" | "completed" | "failed" | "cancelled";
+
+interface DownloadProgressPayload {
+  sourcePath: string;
+  fileName: string;
+  stage: DownloadStage;
+  progress: number;
+  downloadedBytes: number;
+  totalBytes?: number;
+  destinationPath?: string;
+  message?: string;
+}
+
 interface SavedPathCacheEntry {
   items: FileItem[];
   nextOffset: number;
@@ -180,6 +195,25 @@ const SAVED_ITEMS_PAGE_SIZE = 50;
 const EXPLORER_VIEW_MODE_KEY = "explorer_view_mode";
 const RECYCLE_BIN_VIRTUAL_PATH = "tg://saved/Recycle Bin";
 const DETAILS_PANEL_ANIMATION_MS = 220;
+
+const getDownloadStageLabel = (stage: DownloadStage): string => {
+  switch (stage) {
+    case "selecting":
+      return "Waiting for save location";
+    case "downloading":
+      return "Downloading";
+    case "moving":
+      return "Saving file";
+    case "completed":
+      return "Completed";
+    case "failed":
+      return "Failed";
+    case "cancelled":
+      return "Cancelled";
+    default:
+      return "Downloading";
+  }
+};
 
 const isVirtualPath = (path: string): boolean => path.startsWith("tg://");
 const isSavedVirtualFolderPath = (path: string): boolean => path === "tg://saved" || path.startsWith("tg://saved/");
@@ -319,6 +353,7 @@ export default function ExplorerPage() {
   const [dropTargetPath, setDropTargetPath] = useState<string | null>(null);
   const [isExternalDragging, setIsExternalDragging] = useState(false);
   const [isUploadingFiles, setIsUploadingFiles] = useState(false);
+  const [activeDownload, setActiveDownload] = useState<DownloadProgressPayload | null>(null);
   const [savedItemsOffset, setSavedItemsOffset] = useState(0);
   const [hasMoreSavedItems, setHasMoreSavedItems] = useState(false);
   const [isLoadingMoreSavedItems, setIsLoadingMoreSavedItems] = useState(false);
@@ -452,6 +487,30 @@ export default function ExplorerPage() {
       console.error("Error saving explorer view mode setting:", error);
     });
   }, [isViewModeLoaded, viewMode]);
+
+  useEffect(() => {
+    if (!activeDownload) {
+      return;
+    }
+
+    if (!["completed", "failed", "cancelled"].includes(activeDownload.stage)) {
+      return;
+    }
+
+    const timeout = window.setTimeout(() => {
+      setActiveDownload((prev) => {
+        if (!prev || prev.sourcePath !== activeDownload.sourcePath) {
+          return prev;
+        }
+
+        return null;
+      });
+    }, 2500);
+
+    return () => {
+      window.clearTimeout(timeout);
+    };
+  }, [activeDownload]);
 
   useEffect(() => {
     if (!contextMenuState) {
@@ -1209,29 +1268,68 @@ export default function ExplorerPage() {
       return;
     }
 
-    try {
+    if (activeDownload && !["completed", "failed", "cancelled"].includes(activeDownload.stage)) {
       toast({
-        title: "Downloading",
-        description: file.name,
+        title: "Download in progress",
+        description: `Please wait for ${activeDownload.fileName} to finish.`,
       });
+      return;
+    }
 
-      const destinationPath: string = await invoke("tg_download_saved_file", {
+    setActiveDownload({
+      sourcePath: file.path,
+      fileName: file.name,
+      stage: "selecting",
+      progress: 0,
+      downloadedBytes: 0,
+    });
+
+    const unlisten = await listen<DownloadProgressPayload>("tg-download-progress", (event) => {
+      const payload = event.payload;
+      if (!payload || payload.sourcePath !== file.path) {
+        return;
+      }
+
+      setActiveDownload(payload);
+    });
+
+    try {
+      const destinationPath: string | null = await invoke("tg_download_saved_file", {
         sourcePath: file.path,
       });
 
+      if (!destinationPath) {
+        return;
+      }
+
       toast({
         title: "Downloaded",
-        description: `${file.name} saved to Downloads`,
+        description: `${file.name} saved successfully`,
       });
 
       console.info("Saved Messages download completed:", destinationPath);
     } catch (error) {
       const typedError = error as TelegramError;
+
+      setActiveDownload((prev) => {
+        if (!prev || prev.sourcePath !== file.path) {
+          return prev;
+        }
+
+        return {
+          ...prev,
+          stage: "failed",
+          message: typedError.message || "An unknown error occurred",
+        };
+      });
+
       toast({
         title: "Download failed",
         description: typedError.message || "An unknown error occurred",
         variant: "destructive",
       });
+    } finally {
+      unlisten();
     }
   };
 
@@ -2434,6 +2532,40 @@ export default function ExplorerPage() {
             onOpenLocation={() => toast({ title: "Reveal in folder" })}
             isFavorite={selectedFile ? favorites.includes(selectedFile.path) : false}
           />
+        </div>
+      )}
+
+      {activeDownload && (
+        <div className="absolute bottom-4 right-4 z-[92] w-80 rounded-xl bg-glass border border-border/70 shadow-2xl shadow-black/50 backdrop-saturate-150 p-3">
+          <div className="flex items-start justify-between gap-2">
+            <div className="min-w-0">
+              <p className="text-body font-medium text-foreground truncate">{activeDownload.fileName}</p>
+              <p className="text-small text-muted-foreground">{getDownloadStageLabel(activeDownload.stage)}</p>
+            </div>
+            <span className="text-small text-muted-foreground">
+              {activeDownload.stage === "selecting"
+                ? ""
+                : `${Math.round(Math.max(0, Math.min(100, activeDownload.progress)))}%`}
+            </span>
+          </div>
+
+          <div className="mt-3">
+            <Progress
+              value={Math.max(0, Math.min(100, activeDownload.progress))}
+              className="h-2 bg-secondary/60"
+            />
+          </div>
+
+          <div className="mt-2 flex items-center justify-between text-small text-muted-foreground">
+            <span>
+              {activeDownload.totalBytes && activeDownload.totalBytes > 0
+                ? `${formatFileSize(activeDownload.downloadedBytes)} / ${formatFileSize(activeDownload.totalBytes)}`
+                : formatFileSize(activeDownload.downloadedBytes)}
+            </span>
+            {activeDownload.message && (
+              <span className="max-w-[140px] truncate text-right">{activeDownload.message}</span>
+            )}
+          </div>
         </div>
       )}
 

@@ -151,12 +151,14 @@ Uploads a dropped file to Telegram Saved Messages and stores its indexed metadat
 **Returns:** `Result<TelegramMessage, TelegramError>`
 
 ### `tg_download_saved_file(source_path: String)`
-Downloads a Saved Messages file by virtual path to `AppData\\Local\\Skybox\\Downloads`, then moves it to `Downloads\\SkyBox` in the device Downloads folder.
+Opens a native Save dialog, downloads the Saved Messages file to `AppData\\Local\\Skybox\\Downloads`, then moves it to the user-selected destination path.
+
+Progress events are emitted on `tg-download-progress` during select/download/move/complete stages.
 
 **Parameters:**
 - `source_path`: Source virtual file path (`tg://msg/<id>`)
 
-**Returns:** `Result<String, TelegramError>` (absolute final file path in Downloads)
+**Returns:** `Result<Option<String>, TelegramError>` (absolute final path when saved, `null` if user cancels)
 
 ### `tg_list_saved_items(file_path: String)`
 Lists locally indexed Saved Messages items for a virtual path.
