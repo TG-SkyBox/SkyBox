@@ -6,6 +6,7 @@ import { FileRow, FileItem } from "@/components/skybox/FileRow";
 import { FileGrid } from "@/components/skybox/FileGrid";
 import { DetailsPanel } from "@/components/skybox/DetailsPanel";
 import { ConfirmDialog } from "@/components/skybox/ConfirmDialog";
+import { TextInputDialog } from "@/components/skybox/TextInputDialog";
 import { TelegramButton } from "@/components/skybox/TelegramButton";
 import {
   FolderPlus,
@@ -302,6 +303,10 @@ export default function ExplorerPage() {
   const [clipboardItem, setClipboardItem] = useState<ExplorerClipboardItem | null>(null);
   const [favorites, setFavorites] = useState<string[]>([]);
   const [deleteTarget, setDeleteTarget] = useState<FileItem | null>(null);
+  const [isNewFolderDialogOpen, setIsNewFolderDialogOpen] = useState(false);
+  const [newFolderName, setNewFolderName] = useState("");
+  const [renameTarget, setRenameTarget] = useState<FileItem | null>(null);
+  const [renameValue, setRenameValue] = useState("");
   const [isLoading, setIsLoading] = useState(false);
   const [files, setFiles] = useState<FileItem[]>([]);
   const [currentPath, setCurrentPath] = useState<string>("tg://saved");
@@ -1112,6 +1117,10 @@ export default function ExplorerPage() {
   const contextTargetFile = contextMenuState?.targetFile ?? null;
   const canPaste = !!clipboardItem;
   const isRecycleBinView = isRecycleBinPath(currentPath);
+  const isPermanentDeleteTarget =
+    isRecycleBinView &&
+    !!deleteTarget &&
+    isSavedVirtualItemPath(deleteTarget.path);
 
   const handleFileSelect = (file: FileItem) => {
     setSelectedFile(file);
@@ -1353,7 +1362,7 @@ export default function ExplorerPage() {
     });
   };
 
-  const handleNewFolder = async () => {
+  const handleNewFolder = () => {
     if (isRecycleBinPath(currentPath)) {
       toast({
         title: "Action unavailable",
@@ -1362,8 +1371,20 @@ export default function ExplorerPage() {
       return;
     }
 
-    const folderName = prompt("Enter folder name:");
-    if (!folderName) return;
+    setNewFolderName("");
+    setIsNewFolderDialogOpen(true);
+  };
+
+  const handleConfirmNewFolder = async () => {
+    const folderName = newFolderName.trim();
+    if (!folderName) {
+      toast({
+        title: "Folder name required",
+        description: "Please enter a folder name.",
+        variant: "destructive",
+      });
+      return;
+    }
 
     try {
       if (currentPath.startsWith("tg://saved")) {
@@ -1377,11 +1398,12 @@ export default function ExplorerPage() {
         await invoke("fs_create_dir", { path: newPath });
       }
 
+      setIsNewFolderDialogOpen(false);
+      setNewFolderName("");
       toast({
         title: "Folder created",
         description: `Created folder: ${folderName}`,
       });
-      // Reload the current directory to show the new folder
       await loadDirectory(currentPath, { force: true });
     } catch (error) {
       const typedError = error as FsError | TelegramError;
@@ -1393,7 +1415,7 @@ export default function ExplorerPage() {
     }
   };
 
-  const handleRename = async (targetFile?: FileItem | null) => {
+  const handleRename = (targetFile?: FileItem | null) => {
     const file = targetFile ?? selectedFile;
     if (!file) {
       return;
@@ -1407,14 +1429,34 @@ export default function ExplorerPage() {
       return;
     }
 
-    const newName = prompt("Enter new name:", file.name);
-    const normalizedName = newName?.trim();
-    if (!normalizedName || normalizedName === file.name) {
+    setRenameTarget(file);
+    setRenameValue(file.name);
+  };
+
+  const handleConfirmRename = async () => {
+    const file = renameTarget;
+    if (!file) {
+      return;
+    }
+
+    const normalizedName = renameValue.trim();
+    if (!normalizedName) {
+      toast({
+        title: "Name required",
+        description: "Please enter a new name.",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    if (normalizedName === file.name) {
+      setRenameTarget(null);
+      setRenameValue("");
       return;
     }
 
     try {
-      if (isSavedVirtualFolderPath(file.path) || isSavedVirtualFilePath(file.path)) {
+      if (isSavedVirtualItemPath(file.path)) {
         await invoke("tg_rename_saved_item", {
           sourcePath: file.path,
           newName: normalizedName,
@@ -1438,6 +1480,8 @@ export default function ExplorerPage() {
         });
       }
 
+      setRenameTarget(null);
+      setRenameValue("");
       toast({
         title: "Renamed",
         description: `${file.name} renamed to ${normalizedName}`,
@@ -2442,17 +2486,64 @@ export default function ExplorerPage() {
         </div>
       )}
 
+      <TextInputDialog
+        isOpen={isNewFolderDialogOpen}
+        title="Create Folder"
+        description="Enter a name for the new folder."
+        value={newFolderName}
+        placeholder="Folder name"
+        confirmLabel="Create"
+        cancelLabel="Cancel"
+        onValueChange={setNewFolderName}
+        onConfirm={() => {
+          void handleConfirmNewFolder();
+        }}
+        onCancel={() => {
+          setIsNewFolderDialogOpen(false);
+          setNewFolderName("");
+        }}
+      />
+
+      <TextInputDialog
+        isOpen={!!renameTarget}
+        title="Rename Item"
+        description={renameTarget ? `Rename ${renameTarget.name}` : undefined}
+        value={renameValue}
+        placeholder="New name"
+        confirmLabel="Rename"
+        cancelLabel="Cancel"
+        onValueChange={setRenameValue}
+        onConfirm={() => {
+          void handleConfirmRename();
+        }}
+        onCancel={() => {
+          setRenameTarget(null);
+          setRenameValue("");
+        }}
+      />
+
       {/* Delete confirmation dialog */}
       <ConfirmDialog
         isOpen={!!deleteTarget}
-        title="Delete Item"
+        title={isPermanentDeleteTarget ? "Delete Permanently" : "Delete Item"}
         message={
           <p>
-            Are you sure you want to delete <strong>{deleteTarget?.name}</strong>?
-            This action cannot be undone.
+            {isPermanentDeleteTarget
+              ? (
+                <>
+                  Delete <strong>{deleteTarget?.name}</strong> from Recycle Bin permanently?
+                  This action cannot be undone.
+                </>
+              )
+              : (
+                <>
+                  Are you sure you want to delete <strong>{deleteTarget?.name}</strong>?
+                  This action cannot be undone.
+                </>
+              )}
           </p>
         }
-        confirmLabel="Delete"
+        confirmLabel={isPermanentDeleteTarget ? "Delete Permanently" : "Delete"}
         cancelLabel="Cancel"
         variant="danger"
         onConfirm={handleDelete}

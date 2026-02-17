@@ -1,0 +1,116 @@
+import { useEffect, useRef } from "react";
+import { X } from "lucide-react";
+import { TelegramButton } from "./TelegramButton";
+
+interface TextInputDialogProps {
+  isOpen: boolean;
+  title: string;
+  description?: string;
+  value: string;
+  placeholder?: string;
+  confirmLabel?: string;
+  cancelLabel?: string;
+  onValueChange: (value: string) => void;
+  onConfirm: () => void;
+  onCancel: () => void;
+}
+
+export function TextInputDialog({
+  isOpen,
+  title,
+  description,
+  value,
+  placeholder,
+  confirmLabel = "Confirm",
+  cancelLabel = "Cancel",
+  onValueChange,
+  onConfirm,
+  onCancel,
+}: TextInputDialogProps) {
+  const inputRef = useRef<HTMLInputElement | null>(null);
+
+  useEffect(() => {
+    if (!isOpen) {
+      return;
+    }
+
+    const timer = window.setTimeout(() => {
+      inputRef.current?.focus();
+      inputRef.current?.select();
+    }, 0);
+
+    return () => {
+      window.clearTimeout(timer);
+    };
+  }, [isOpen]);
+
+  if (!isOpen) {
+    return null;
+  }
+
+  const handleInputKeyDown = (event: React.KeyboardEvent<HTMLInputElement>) => {
+    if (event.key === "Enter") {
+      event.preventDefault();
+      onConfirm();
+      return;
+    }
+
+    if (event.key === "Escape") {
+      event.preventDefault();
+      onCancel();
+    }
+  };
+
+  return (
+    <div className="fixed inset-0 z-[90] flex items-center justify-center">
+      <div
+        className="absolute inset-0 bg-background/70 backdrop-blur-sm animate-fade-in"
+        onClick={onCancel}
+      />
+
+      <div className="relative max-w-md w-full mx-4 rounded-xl bg-glass shadow-2xl shadow-black/50 backdrop-saturate-150 animate-scale-in">
+        <div className="flex items-center justify-between p-4">
+          <h2 className="text-body font-semibold text-foreground">{title}</h2>
+          <button
+            onClick={onCancel}
+            className="p-1 rounded hover:bg-sidebar-accent/50 transition-colors outline-none focus-visible:outline-none"
+            aria-label="Close"
+          >
+            <X className="w-4 h-4 text-muted-foreground" />
+          </button>
+        </div>
+
+        <div className="p-4 space-y-3">
+          {description && (
+            <p className="text-body text-muted-foreground">{description}</p>
+          )}
+          <input
+            ref={inputRef}
+            value={value}
+            onChange={(event) => onValueChange(event.target.value)}
+            onKeyDown={handleInputKeyDown}
+            className="w-full bg-secondary/60 border-none rounded-lg px-3 py-2 text-body text-foreground placeholder:text-muted-foreground outline-none focus:outline-none focus:ring-0 transition-all duration-150"
+            placeholder={placeholder}
+          />
+        </div>
+
+        <div className="flex justify-end gap-3 p-4">
+          <TelegramButton
+            variant="secondary"
+            onClick={onCancel}
+            className="outline-none focus-visible:outline-none focus-visible:ring-0"
+          >
+            {cancelLabel}
+          </TelegramButton>
+          <TelegramButton
+            variant="primary"
+            onClick={onConfirm}
+            className="outline-none focus-visible:outline-none focus-visible:ring-0"
+          >
+            {confirmLabel}
+          </TelegramButton>
+        </div>
+      </div>
+    </div>
+  );
+}
