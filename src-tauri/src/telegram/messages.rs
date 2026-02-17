@@ -2014,13 +2014,47 @@ pub async fn tg_upload_file_to_saved_messages_impl(
 }
 
 
+fn estimate_photo_message_size(photo: &tl::types::Photo) -> Option<i64> {
+    let mut max_size = 0_i64;
+
+    for size in &photo.sizes {
+        let estimated = match size {
+            tl::enums::PhotoSize::Size(sz) => sz.size.max(0) as i64,
+            tl::enums::PhotoSize::Progressive(sz) => {
+                sz.sizes.iter().copied().max().unwrap_or(0).max(0) as i64
+            }
+            tl::enums::PhotoSize::PhotoCachedSize(sz) => sz.bytes.len() as i64,
+            tl::enums::PhotoSize::PhotoStrippedSize(sz) => {
+                if sz.bytes.len() >= 3 && sz.bytes[0] == 0x01 {
+                    (sz.bytes.len() + 622) as i64
+                } else {
+                    sz.bytes.len() as i64
+                }
+            }
+            tl::enums::PhotoSize::PhotoPathSize(sz) => sz.bytes.len() as i64,
+            tl::enums::PhotoSize::Empty(_) => 0,
+        };
+
+        if estimated > max_size {
+            max_size = estimated;
+        }
+    }
+
+    (max_size > 0).then_some(max_size)
+}
+
 fn categorize_message(message: &Message, chat_id: i64) -> Option<TelegramMessage> {
     let media = message.media();
     
     let (category, filename, extension, mime_type, size, thumbnail, file_ref) = match media {
         Some(Media::Photo(photo)) => {
-            let (id, access_hash, file_ref_bytes) = match &photo.raw.photo {
-                Some(tl::enums::Photo::Photo(p)) => (p.id, p.access_hash, p.file_reference.clone()),
+            let (id, access_hash, file_ref_bytes, size) = match &photo.raw.photo {
+                Some(tl::enums::Photo::Photo(p)) => (
+                    p.id,
+                    p.access_hash,
+                    p.file_reference.clone(),
+                    estimate_photo_message_size(p),
+                ),
                 _ => return None,
             };
             let ext = Some("jpg".to_string());
@@ -2031,7 +2065,7 @@ fn categorize_message(message: &Message, chat_id: i64) -> Option<TelegramMessage
                 name,
                 ext,
                 Some("image/jpeg".to_string()),
-                None,
+                size,
                 None,
                 json!({"type": "photo", "id": id, "access_hash": access_hash, "file_reference": base64_encode(&file_ref_bytes)}).to_string()
             )
