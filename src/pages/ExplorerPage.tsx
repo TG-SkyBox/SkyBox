@@ -1201,6 +1201,7 @@ export default function ExplorerPage() {
     if (isRecycleBinPath(currentPath)) {
       closeDetailsPanel();
     }
+<<<<<<< HEAD
   };
 
   const handleDownloadSavedFile = async (targetFile?: FileItem | null) => {
@@ -1233,6 +1234,8 @@ export default function ExplorerPage() {
         variant: "destructive",
       });
     }
+=======
+>>>>>>> origin/main
   };
 
   const handleFileOpen = async (file: FileItem) => {
@@ -1603,9 +1606,13 @@ export default function ExplorerPage() {
       ? 140
       : isRecycleBinMenu
         ? 112
+<<<<<<< HEAD
       : (targetFile && !targetFile.isDirectory
         ? (hasDownloadAction ? 376 : 332)
         : 296);
+=======
+      : (targetFile && !targetFile.isDirectory ? 332 : 296);
+>>>>>>> origin/main
     const clampedX = Math.max(8, Math.min(event.clientX, window.innerWidth - menuWidth - 8));
     const clampedY = Math.max(8, Math.min(event.clientY, window.innerHeight - menuHeight - 8));
 

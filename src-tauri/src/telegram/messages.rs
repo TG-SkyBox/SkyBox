@@ -407,6 +407,7 @@ fn split_saved_parent_and_name(path: &str) -> Option<(String, String)> {
     Some((parent, name))
 }
 
+<<<<<<< HEAD
 fn get_download_staging_dir() -> Result<PathBuf, TelegramError> {
     let base_dirs = BaseDirs::new().ok_or_else(|| TelegramError {
         message: "Failed to resolve app data directory".to_string(),
@@ -506,6 +507,8 @@ fn move_staged_download(staged_path: &Path, destination_path: &Path) -> Result<(
     }
 }
 
+=======
+>>>>>>> origin/main
 fn is_recycle_bin_saved_path(path: &str) -> bool {
     path == RECYCLE_BIN_SAVED_PATH || path.starts_with(&format!("{}/", RECYCLE_BIN_SAVED_PATH))
 }
