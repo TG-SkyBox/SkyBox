@@ -1309,13 +1309,18 @@ export default function ExplorerPage() {
   const uploadProcessedFiles = uploadProgress
     ? uploadProgress.uploadedFiles + uploadProgress.failedFiles
     : 0;
+  const isUploadInProgress =
+    isUploadingFiles &&
+    !!uploadProgress &&
+    uploadProcessedFiles < uploadProgress.totalFiles;
   const uploadProgressPercent = uploadProgress && uploadProgress.totalFiles > 0
     ? Math.min(100, Math.max(0, Math.round((uploadProcessedFiles / uploadProgress.totalFiles) * 100)))
     : 0;
   const uploadProgressLabel = uploadProgress
     ? `${uploadProcessedFiles}/${uploadProgress.totalFiles} files`
     : "";
-  const uploadSkeletonCount = Math.max(3, Math.min(6, uploadProgress?.totalFiles ?? 4));
+  const uploadSkeletonCount = isUploadInProgress ? 1 : 0;
+  const hasVisibleItems = sortedFiles.length > 0 || uploadSkeletonCount > 0;
   const contextMenuItemClassName = "w-full flex items-center gap-2 rounded-lg px-3 py-2 text-left text-body text-foreground transition-colors hover:bg-primary/15 outline-none focus-visible:outline-none";
   const contextMenuDisabledItemClassName = "w-full flex items-center gap-2 rounded-lg px-3 py-2 text-left text-body text-muted-foreground/60 pointer-events-none outline-none focus-visible:outline-none";
   const contextMenuDangerItemClassName = "w-full flex items-center gap-2 rounded-lg px-3 py-2 text-left text-body text-destructive transition-colors hover:bg-destructive/10 outline-none focus-visible:outline-none";
@@ -2580,12 +2585,16 @@ export default function ExplorerPage() {
   };
 
   const handleExplorerDrop = async (event: React.DragEvent) => {
-    if (!isExternalFileDrag(event) || isRecycleBinPath(currentPath)) {
+    if (!isExternalFileDrag(event)) {
       return;
     }
 
     event.preventDefault();
     setIsExternalDragging(false);
+
+    if (isRecycleBinPath(currentPath)) {
+      return;
+    }
 
     await handleUploadFiles(Array.from(event.dataTransfer.files));
   };
@@ -2761,41 +2770,13 @@ export default function ExplorerPage() {
             onScroll={handleDirectoryScroll}
             onContextMenu={handleEmptyAreaContextMenu}
           >
-            {(isExternalDragging || isUploadingFiles) && (
+            {isExternalDragging && (
               <div className="pointer-events-none absolute inset-4 z-20 rounded-xl border-2 border-dashed border-primary/60 bg-primary/10 px-6 py-5">
-                {isUploadingFiles ? (
-                  <div className="mx-auto flex h-full max-w-xl flex-col justify-center">
-                    <div className="mb-3 flex items-center justify-between gap-3">
-                      <p className="text-body font-medium text-foreground">
-                        Uploading files to Saved Messages...
-                      </p>
-                      {uploadProgress && (
-                        <span className="text-small text-muted-foreground tabular-nums">
-                          {uploadProgressLabel}
-                        </span>
-                      )}
-                    </div>
-
-                    <div className="space-y-2">
-                      {Array.from({ length: uploadSkeletonCount }).map((_, index) => (
-                        <div
-                          key={`upload-skeleton-${index}`}
-                          className="flex items-center gap-3 rounded-lg border border-primary/20 bg-background/40 px-3 py-2"
-                        >
-                          <Skeleton className="skeleton-shimmer h-8 w-8 rounded-md bg-secondary/60" />
-                          <Skeleton className="skeleton-shimmer h-4 flex-1 max-w-[60%] bg-secondary/50" />
-                          <Skeleton className="skeleton-shimmer h-3 w-16 bg-secondary/45" />
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                ) : (
-                  <div className="flex h-full items-center justify-center">
-                    <p className="text-body font-medium text-foreground">
-                      Drop files here to upload to Saved Messages
-                    </p>
-                  </div>
-                )}
+                <div className="flex h-full items-center justify-center">
+                  <p className="text-body font-medium text-foreground">
+                    Drop files here to upload to Saved Messages
+                  </p>
+                </div>
               </div>
             )}
 
@@ -2839,7 +2820,7 @@ export default function ExplorerPage() {
                   </div>
                 )}
               </div>
-            ) : sortedFiles.length === 0 ? (
+            ) : !hasVisibleItems ? (
               <div className="flex flex-col items-center justify-center h-full text-center">
                 <p className="text-body text-muted-foreground mb-2">
                   {search
@@ -2863,38 +2844,71 @@ export default function ExplorerPage() {
             ) : (
               <div className={viewMode === "list" ? "space-y-0.5" : "p-1"}>
                 {viewMode === "list" ? (
-                  sortedFiles.map((file) => (
-                    <FileRow
-                      key={file.path}
-                      file={file}
-                      isSelected={selectedFile?.path === file.path}
-                      onSelect={() => handleFileSelect(file)}
-                      onOpen={() => handleFileOpen(file)}
-                      onContextMenu={(event) => handleFileContextMenu(event, file)}
-                      draggable={isDraggableItem(file)}
-                      isDropTarget={dropTargetPath === file.path}
-                      onDragStart={(event) => handleItemDragStart(event, file)}
-                      onDragEnd={handleItemDragEnd}
-                      onDragOver={(event) => handleItemDragOver(event, file)}
-                      onDragLeave={() => handleItemDragLeave(file)}
-                      onDrop={(event) => handleItemDrop(event, file)}
-                    />
-                  ))
+                  <>
+                    {Array.from({ length: uploadSkeletonCount }).map((_, index) => (
+                      <div
+                        key={`upload-list-skeleton-${index}`}
+                        className="flex items-center gap-3 px-3 py-1.5 rounded-lg border border-primary/12 bg-secondary/20"
+                      >
+                        <Skeleton className="skeleton-shimmer h-8 w-8 rounded-md bg-secondary/55" />
+                        <Skeleton className="skeleton-shimmer h-4 flex-1 max-w-[45%] bg-secondary/45" />
+                        <Skeleton className="skeleton-shimmer h-3 w-14 bg-secondary/40" />
+                        <Skeleton className="skeleton-shimmer h-3 w-16 bg-secondary/40" />
+                      </div>
+                    ))}
+
+                    {sortedFiles.map((file) => (
+                      <FileRow
+                        key={file.path}
+                        file={file}
+                        isSelected={selectedFile?.path === file.path}
+                        onSelect={() => handleFileSelect(file)}
+                        onOpen={() => handleFileOpen(file)}
+                        onContextMenu={(event) => handleFileContextMenu(event, file)}
+                        draggable={isDraggableItem(file)}
+                        isDropTarget={dropTargetPath === file.path}
+                        onDragStart={(event) => handleItemDragStart(event, file)}
+                        onDragEnd={handleItemDragEnd}
+                        onDragOver={(event) => handleItemDragOver(event, file)}
+                        onDragLeave={() => handleItemDragLeave(file)}
+                        onDrop={(event) => handleItemDrop(event, file)}
+                      />
+                    ))}
+                  </>
                 ) : (
-                  <FileGrid
-                    files={sortedFiles}
-                    selectedFile={selectedFile}
-                    onSelect={handleFileSelect}
-                    onOpen={handleFileOpen}
-                    onContextMenu={(event, file) => handleFileContextMenu(event, file)}
-                    isDraggable={isDraggableItem}
-                    isDropTarget={(file) => dropTargetPath === file.path}
-                    onDragStart={(event, file) => handleItemDragStart(event, file)}
-                    onDragEnd={handleItemDragEnd}
-                    onDragOver={(event, file) => handleItemDragOver(event, file)}
-                    onDragLeave={(_, file) => handleItemDragLeave(file)}
-                    onDrop={(event, file) => handleItemDrop(event, file)}
-                  />
+                  <>
+                    {uploadSkeletonCount > 0 && (
+                      <div className="grid [grid-template-columns:repeat(auto-fill,minmax(8.75rem,8.75rem))] justify-start gap-3 mb-3">
+                        {Array.from({ length: uploadSkeletonCount }).map((_, index) => (
+                          <div
+                            key={`upload-grid-skeleton-${index}`}
+                            className="flex flex-col items-center p-2 rounded-xl border border-primary/12 bg-secondary/20"
+                          >
+                            <Skeleton className="skeleton-shimmer h-24 w-24 rounded-lg bg-secondary/50" />
+                            <Skeleton className="skeleton-shimmer h-4 w-20 mt-3 bg-secondary/45" />
+                            <Skeleton className="skeleton-shimmer h-3 w-12 mt-1.5 bg-secondary/40" />
+                          </div>
+                        ))}
+                      </div>
+                    )}
+
+                    {sortedFiles.length > 0 && (
+                      <FileGrid
+                        files={sortedFiles}
+                        selectedFile={selectedFile}
+                        onSelect={handleFileSelect}
+                        onOpen={handleFileOpen}
+                        onContextMenu={(event, file) => handleFileContextMenu(event, file)}
+                        isDraggable={isDraggableItem}
+                        isDropTarget={(file) => dropTargetPath === file.path}
+                        onDragStart={(event, file) => handleItemDragStart(event, file)}
+                        onDragEnd={handleItemDragEnd}
+                        onDragOver={(event, file) => handleItemDragOver(event, file)}
+                        onDragLeave={(_, file) => handleItemDragLeave(file)}
+                        onDrop={(event, file) => handleItemDrop(event, file)}
+                      />
+                    )}
+                  </>
                 )}
 
                 {isLoadingMoreSavedItems && (
