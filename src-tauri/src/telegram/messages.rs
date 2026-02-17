@@ -429,11 +429,13 @@ fn get_device_downloads_dir() -> Result<PathBuf, TelegramError> {
         message: "Failed to resolve device download directory".to_string(),
     })?;
 
-    let downloads_dir = user_dirs.download_dir().ok_or_else(|| TelegramError {
+    let downloads_root_dir = user_dirs.download_dir().ok_or_else(|| TelegramError {
         message: "Device Downloads folder is not available".to_string(),
     })?;
 
-    fs::create_dir_all(downloads_dir).map_err(|e| TelegramError {
+    let downloads_dir = downloads_root_dir.join("SkyBox");
+
+    fs::create_dir_all(&downloads_dir).map_err(|e| TelegramError {
         message: format!(
             "Failed to ensure device download directory {}: {}",
             downloads_dir.display(),
@@ -441,7 +443,7 @@ fn get_device_downloads_dir() -> Result<PathBuf, TelegramError> {
         ),
     })?;
 
-    Ok(downloads_dir.to_path_buf())
+    Ok(downloads_dir)
 }
 
 fn build_unique_file_path(directory: &Path, file_name: &str) -> PathBuf {
