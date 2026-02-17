@@ -1,6 +1,6 @@
 use crate::db::{Database, TelegramMessage, TelegramSavedItem};
 use crate::telegram::{AUTH_STATE, TelegramError};
-use directories::BaseDirs;
+use directories::{BaseDirs, UserDirs};
 use grammers_client::InputMessage;
 use grammers_client::types::{Attribute, Media, Message};
 use grammers_client::grammers_tl_types as tl;
@@ -425,11 +425,11 @@ fn get_download_staging_dir() -> Result<PathBuf, TelegramError> {
 }
 
 fn get_device_downloads_dir() -> Result<PathBuf, TelegramError> {
-    let base_dirs = BaseDirs::new().ok_or_else(|| TelegramError {
+    let user_dirs = UserDirs::new().ok_or_else(|| TelegramError {
         message: "Failed to resolve device download directory".to_string(),
     })?;
 
-    let downloads_dir = base_dirs.download_dir().ok_or_else(|| TelegramError {
+    let downloads_dir = user_dirs.download_dir().ok_or_else(|| TelegramError {
         message: "Device Downloads folder is not available".to_string(),
     })?;
 
