@@ -1,0 +1,272 @@
+import { useEffect, useRef, useState } from "react";
+import type { MutableRefObject } from "react";
+import { ChevronLeft, ChevronRight, Loader2, X } from "lucide-react";
+import * as PlyrModule from "plyr";
+import "plyr/dist/plyr.css";
+import "./saved-media-viewer.css";
+import { TelegramButton } from "./TelegramButton";
+
+type PlyrInstance = {
+  destroy: () => void;
+  on?: (event: string, callback: () => void) => void;
+};
+
+type PlyrConstructor = new (
+  target: HTMLElement,
+  options?: {
+    controls?: string[];
+    resetOnEnd?: boolean;
+    hideControls?: boolean;
+    keyboard?: { focused?: boolean; global?: boolean };
+  },
+) => PlyrInstance;
+
+const Plyr = (
+  (PlyrModule as unknown as { default?: PlyrConstructor }).default
+  || (PlyrModule as unknown as PlyrConstructor)
+);
+
+export type SavedMediaKind = "image" | "video" | "audio";
+
+interface SavedMediaViewerProps {
+  isOpen: boolean;
+  fileName: string;
+  mediaKind: SavedMediaKind | null;
+  thumbnailSrc?: string | null;
+  mediaSrc?: string | null;
+  isLoading: boolean;
+  error?: string | null;
+  canGoPrevious: boolean;
+  canGoNext: boolean;
+  onPrevious: () => void;
+  onNext: () => void;
+  onClose: () => void;
+}
+
+interface PlyrMediaProps {
+  kind: "video" | "audio";
+  src: string;
+  onReady?: () => void;
+}
+
+function PlyrMedia({ kind, src, onReady }: PlyrMediaProps) {
+  const mediaRef = useRef<HTMLVideoElement | HTMLAudioElement | null>(null);
+  const playerRef = useRef<PlyrInstance | null>(null);
+
+  useEffect(() => {
+    const target = mediaRef.current;
+    if (!target) {
+      return;
+    }
+
+    target.controls = true;
+
+    const player = new Plyr(target, {
+      resetOnEnd: false,
+      hideControls: false,
+      keyboard: { focused: true, global: true },
+    });
+
+    player.on?.("ready", () => {
+      onReady?.();
+    });
+    player.on?.("loadedmetadata", () => {
+      onReady?.();
+    });
+
+    playerRef.current = player;
+
+    return () => {
+      playerRef.current?.destroy();
+      playerRef.current = null;
+    };
+  }, [kind, onReady, src]);
+
+  if (kind === "video") {
+    return (
+      <video
+        key={src}
+        ref={mediaRef as MutableRefObject<HTMLVideoElement | null>}
+        className="h-full w-full"
+        playsInline
+        onLoadedData={onReady}
+        controls
+      >
+        <source src={src} />
+      </video>
+    );
+  }
+
+  return (
+    <audio
+      key={src}
+      ref={mediaRef as MutableRefObject<HTMLAudioElement | null>}
+      className="w-full"
+      onLoadedData={onReady}
+      controls
+    >
+      <source src={src} />
+    </audio>
+  );
+}
+
+export function SavedMediaViewer({
+  isOpen,
+  fileName,
+  mediaKind,
+  thumbnailSrc,
+  mediaSrc,
+  isLoading,
+  error,
+  canGoPrevious,
+  canGoNext,
+  onPrevious,
+  onNext,
+  onClose,
+}: SavedMediaViewerProps) {
+  const [isPrimaryMediaReady, setIsPrimaryMediaReady] = useState(false);
+
+  useEffect(() => {
+    setIsPrimaryMediaReady(false);
+  }, [fileName, mediaKind, mediaSrc]);
+
+  useEffect(() => {
+    if (!isOpen) {
+      setIsPrimaryMediaReady(false);
+    }
+  }, [isOpen]);
+
+  useEffect(() => {
+    if (mediaKind === "audio" && mediaSrc && !isLoading) {
+      setIsPrimaryMediaReady(true);
+    }
+  }, [isLoading, mediaKind, mediaSrc]);
+
+  useEffect(() => {
+    if (!isOpen) {
+      return;
+    }
+
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        onClose();
+      }
+
+      if (event.key === "ArrowLeft" && canGoPrevious) {
+        event.preventDefault();
+        onPrevious();
+      }
+
+      if (event.key === "ArrowRight" && canGoNext) {
+        event.preventDefault();
+        onNext();
+      }
+    };
+
+    window.addEventListener("keydown", handleKeyDown);
+    return () => {
+      window.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [canGoNext, canGoPrevious, isOpen, onClose, onNext, onPrevious]);
+
+  if (!isOpen) {
+    return null;
+  }
+
+  const showBlurPlaceholder =
+    !!thumbnailSrc &&
+    (isLoading || !mediaSrc || (!isPrimaryMediaReady && (mediaKind === "image" || mediaKind === "video")));
+
+  const showLoadingIndicator =
+    isLoading ||
+    (!isPrimaryMediaReady && !!mediaSrc && (mediaKind === "image" || mediaKind === "video"));
+
+  return (
+    <div className="saved-media-viewer fixed inset-0 z-[94] bg-black/80 backdrop-blur-sm">
+      <div className="absolute inset-0" onClick={onClose} />
+
+      <div className="relative z-[95] h-full w-full p-4 sm:p-6">
+        <div className="mx-auto flex h-full max-w-6xl flex-col rounded-2xl bg-glass shadow-2xl shadow-black/60">
+          <div className="flex items-center justify-between border-b border-primary/20 px-4 py-3">
+            <p className="truncate text-body font-medium text-foreground">{fileName}</p>
+            <button
+              className="rounded-lg p-2 text-muted-foreground transition-colors hover:bg-sidebar-accent/60 hover:text-foreground"
+              onClick={onClose}
+              aria-label="Close media viewer"
+            >
+              <X className="h-4 w-4" />
+            </button>
+          </div>
+
+          <div className="relative flex flex-1 items-center justify-center overflow-hidden p-4 sm:p-6">
+            {showBlurPlaceholder && (
+              <>
+                <img
+                  src={thumbnailSrc || undefined}
+                  alt=""
+                  className="pointer-events-none absolute inset-0 h-full w-full scale-110 object-cover blur-2xl opacity-55"
+                  aria-hidden="true"
+                />
+                <div className="pointer-events-none absolute inset-0 bg-black/30" />
+              </>
+            )}
+
+            {showLoadingIndicator && (
+              <div className="relative z-10 flex flex-col items-center justify-center gap-3 text-muted-foreground">
+                <Loader2 className="h-6 w-6 animate-spin" />
+                <p className="text-body">Loading media...</p>
+              </div>
+            )}
+
+            {!isLoading && error && (
+              <div className="text-center">
+                <p className="text-body text-destructive">{error}</p>
+              </div>
+            )}
+
+            {!isLoading && !error && mediaSrc && mediaKind === "image" && (
+              <img
+                src={mediaSrc}
+                alt={fileName}
+                onLoad={() => setIsPrimaryMediaReady(true)}
+                className={`max-h-full max-w-full object-contain rounded-lg transition-opacity duration-300 ${isPrimaryMediaReady ? "opacity-100" : "opacity-0"}`}
+              />
+            )}
+
+            {!isLoading && !error && mediaSrc && (mediaKind === "video" || mediaKind === "audio") && (
+              <div className={`saved-media-player w-full transition-opacity duration-300 ${mediaKind === "video" ? "h-full" : "max-w-2xl"} ${isPrimaryMediaReady ? "opacity-100" : "opacity-0"}`}>
+                <PlyrMedia
+                  kind={mediaKind}
+                  src={mediaSrc}
+                  onReady={() => setIsPrimaryMediaReady(true)}
+                />
+              </div>
+            )}
+          </div>
+
+          {mediaKind === "image" && (
+            <div className="flex items-center justify-center gap-3 border-t border-primary/20 px-4 py-3">
+              <TelegramButton
+                variant="secondary"
+                onClick={onPrevious}
+                disabled={!canGoPrevious}
+              >
+                <ChevronLeft className="h-4 w-4" />
+                Previous
+              </TelegramButton>
+              <TelegramButton
+                variant="secondary"
+                onClick={onNext}
+                disabled={!canGoNext}
+              >
+                Next
+                <ChevronRight className="h-4 w-4" />
+              </TelegramButton>
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}

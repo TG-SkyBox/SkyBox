@@ -2,18 +2,22 @@ import { useState, useEffect, useMemo, useCallback, useRef } from "react";
 import { ExplorerSidebar } from "@/components/skybox/ExplorerSidebar";
 import { SearchBar } from "@/components/skybox/SearchBar";
 import { Breadcrumbs } from "@/components/skybox/Breadcrumbs";
-import { FileRow, FileItem } from "@/components/skybox/FileRow";
+import { FileRow, FileItem, formatFileSize } from "@/components/skybox/FileRow";
 import { FileGrid } from "@/components/skybox/FileGrid";
 import { DetailsPanel } from "@/components/skybox/DetailsPanel";
+import { SavedMediaViewer, type SavedMediaKind } from "@/components/skybox/SavedMediaViewer";
 import { ConfirmDialog } from "@/components/skybox/ConfirmDialog";
 import { TextInputDialog } from "@/components/skybox/TextInputDialog";
 import { TelegramButton } from "@/components/skybox/TelegramButton";
+import { Progress } from "@/components/ui/progress";
+import { Skeleton } from "@/components/ui/skeleton";
 import {
   FolderPlus,
   Grid,
   List,
   SortAsc,
   RefreshCw,
+  Download,
   Copy,
   Trash2,
   RotateCcw,
@@ -29,6 +33,7 @@ import {
 import { useNavigate, useLocation } from "react-router-dom";
 import { toast } from "@/hooks/use-toast";
 import { invoke } from "@tauri-apps/api/core";
+import { listen } from "@tauri-apps/api/event";
 import { resolveThumbnailSrc } from "@/lib/thumbnail-src";
 
 interface FsError {
@@ -133,6 +138,19 @@ interface TelegramIndexSavedMessagesResult {
   started_from_empty_db?: boolean;
 }
 
+type DownloadStage = "selecting" | "downloading" | "moving" | "completed" | "failed" | "cancelled";
+
+interface DownloadProgressPayload {
+  sourcePath: string;
+  fileName: string;
+  stage: DownloadStage;
+  progress: number;
+  downloadedBytes: number;
+  totalBytes?: number | null;
+  destinationPath?: string | null;
+  message?: string | null;
+}
+
 interface SavedPathCacheEntry {
   items: FileItem[];
   nextOffset: number;
@@ -180,6 +198,29 @@ const EXPLORER_VIEW_MODE_KEY = "explorer_view_mode";
 const RECYCLE_BIN_VIRTUAL_PATH = "tg://saved/Recycle Bin";
 const DETAILS_PANEL_ANIMATION_MS = 220;
 
+const IMAGE_EXTENSIONS = new Set(["jpg", "jpeg", "png", "gif", "webp", "bmp", "svg"]);
+const VIDEO_EXTENSIONS = new Set(["mp4", "mkv", "mov", "avi", "webm", "wmv", "m4v"]);
+const AUDIO_EXTENSIONS = new Set(["mp3", "wav", "flac", "aac", "ogg", "m4a", "opus", "wma"]);
+
+const getDownloadStageLabel = (stage: DownloadStage): string => {
+  switch (stage) {
+    case "selecting":
+      return "Waiting for save location";
+    case "downloading":
+      return "Downloading";
+    case "moving":
+      return "Saving file";
+    case "completed":
+      return "Completed";
+    case "failed":
+      return "Failed";
+    case "cancelled":
+      return "Cancelled";
+    default:
+      return "Downloading";
+  }
+};
+
 const isVirtualPath = (path: string): boolean => path.startsWith("tg://");
 const isSavedVirtualFolderPath = (path: string): boolean => path === "tg://saved" || path.startsWith("tg://saved/");
 const isSavedVirtualFilePath = (path: string): boolean => path.startsWith("tg://msg/");
@@ -189,6 +230,33 @@ const isRecycleBinPath = (path: string): boolean => (
 );
 
 const normalizePath = (path: string): string => path.replace(/\\/g, "/");
+
+const getSavedMediaKind = (file: FileItem): SavedMediaKind | null => {
+  if (file.isDirectory || !isSavedVirtualFilePath(file.path)) {
+    return null;
+  }
+
+  const extension = (file.extension || extensionFromFileName(file.name) || "").toLowerCase();
+  if (!extension) {
+    return null;
+  }
+
+  if (IMAGE_EXTENSIONS.has(extension)) {
+    return "image";
+  }
+
+  if (VIDEO_EXTENSIONS.has(extension)) {
+    return "video";
+  }
+
+  if (AUDIO_EXTENSIONS.has(extension)) {
+    return "audio";
+  }
+
+  return null;
+};
+
+const isSavedPreviewableFile = (file: FileItem): boolean => getSavedMediaKind(file) !== null;
 
 const getPathName = (path: string): string => {
   const normalized = normalizePath(path).replace(/\/+$/, "");
@@ -318,6 +386,14 @@ export default function ExplorerPage() {
   const [dropTargetPath, setDropTargetPath] = useState<string | null>(null);
   const [isExternalDragging, setIsExternalDragging] = useState(false);
   const [isUploadingFiles, setIsUploadingFiles] = useState(false);
+  const [activeDownload, setActiveDownload] = useState<DownloadProgressPayload | null>(null);
+  const [isMediaViewerOpen, setIsMediaViewerOpen] = useState(false);
+  const [mediaViewerItems, setMediaViewerItems] = useState<FileItem[]>([]);
+  const [mediaViewerIndex, setMediaViewerIndex] = useState(0);
+  const [mediaViewerThumbnailSrc, setMediaViewerThumbnailSrc] = useState<string | null>(null);
+  const [mediaViewerSrc, setMediaViewerSrc] = useState<string | null>(null);
+  const [mediaViewerError, setMediaViewerError] = useState<string | null>(null);
+  const [isMediaViewerLoading, setIsMediaViewerLoading] = useState(false);
   const [savedItemsOffset, setSavedItemsOffset] = useState(0);
   const [hasMoreSavedItems, setHasMoreSavedItems] = useState(false);
   const [isLoadingMoreSavedItems, setIsLoadingMoreSavedItems] = useState(false);
@@ -332,10 +408,12 @@ export default function ExplorerPage() {
   const startupSyncRanRef = useRef(false);
   const lastNavigationAtRef = useRef(Date.now());
   const prefetchedThumbnailIdsRef = useRef<Set<number>>(new Set());
+  const thumbnailFetchInFlightRef = useRef<Set<number>>(new Set());
   const savedPathCacheRef = useRef<Record<string, SavedPathCacheEntry>>({});
   const contextMenuRef = useRef<HTMLDivElement | null>(null);
   const detailsPanelRef = useRef<HTMLDivElement | null>(null);
   const detailsPanelCloseTimerRef = useRef<number | null>(null);
+  const mediaViewerOpenedPathRef = useRef<string | null>(null);
   const navigationStateRef = useRef({
     backHistory: [] as string[],
     forwardHistory: [] as string[],
@@ -451,6 +529,30 @@ export default function ExplorerPage() {
       console.error("Error saving explorer view mode setting:", error);
     });
   }, [isViewModeLoaded, viewMode]);
+
+  useEffect(() => {
+    if (!activeDownload) {
+      return;
+    }
+
+    if (!["completed", "failed", "cancelled"].includes(activeDownload.stage)) {
+      return;
+    }
+
+    const timeout = window.setTimeout(() => {
+      setActiveDownload((prev) => {
+        if (!prev || prev.sourcePath !== activeDownload.sourcePath) {
+          return prev;
+        }
+
+        return null;
+      });
+    }, 2500);
+
+    return () => {
+      window.clearTimeout(timeout);
+    };
+  }, [activeDownload]);
 
   useEffect(() => {
     if (!contextMenuState) {
@@ -733,6 +835,19 @@ export default function ExplorerPage() {
   // Handle keyboard shortcuts
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
+      if (isMediaViewerOpen) {
+        if (e.key === "Escape") {
+          e.preventDefault();
+          setIsMediaViewerOpen(false);
+          setMediaViewerItems([]);
+          setMediaViewerIndex(0);
+          setMediaViewerSrc(null);
+          setMediaViewerError(null);
+          setIsMediaViewerLoading(false);
+        }
+        return;
+      }
+
       const canNavigateByKeyboard = !isTextInputElement(e.target);
       const isBackShortcut = e.key === "BrowserBack" || (e.altKey && e.key === "ArrowLeft");
       const isForwardShortcut = e.key === "BrowserForward" || (e.altKey && e.key === "ArrowRight");
@@ -782,7 +897,7 @@ export default function ExplorerPage() {
     return () => {
       window.removeEventListener('keydown', handleKeyDown);
     };
-  }, [selectedFile, showDetails, backHistory, forwardHistory, currentPath, isLoading, markNavigationActivity, closeDetailsPanel]);
+  }, [selectedFile, showDetails, backHistory, forwardHistory, currentPath, isLoading, markNavigationActivity, closeDetailsPanel, isMediaViewerOpen]);
 
   useEffect(() => {
     const suppressDefaultMouseNavigation = (event: MouseEvent) => {
@@ -1181,6 +1296,7 @@ export default function ExplorerPage() {
     isSavedBackfillSyncing &&
     !search.trim() &&
     sortedFiles.length === 0;
+  const isDirectoryLoading = isLoading || isLoadingSavedFiles;
 
   const syncProgressLabel = `${Math.min(100, Math.max(0, Math.round(savedSyncProgress)))}%`;
   const contextMenuItemClassName = "w-full flex items-center gap-2 rounded-lg px-3 py-2 text-left text-body text-foreground transition-colors hover:bg-primary/15 outline-none focus-visible:outline-none";
@@ -1189,6 +1305,12 @@ export default function ExplorerPage() {
   const contextTargetFile = contextMenuState?.targetFile ?? null;
   const canPaste = !!clipboardItem;
   const isRecycleBinView = isRecycleBinPath(currentPath);
+  const currentMediaViewerFile = isMediaViewerOpen
+    ? mediaViewerItems[mediaViewerIndex] ?? null
+    : null;
+  const currentMediaKind = currentMediaViewerFile ? getSavedMediaKind(currentMediaViewerFile) : null;
+  const canGoToPreviousMedia = mediaViewerIndex > 0;
+  const canGoToNextMedia = mediaViewerIndex < mediaViewerItems.length - 1;
   const isPermanentDeleteTarget =
     isRecycleBinView &&
     !!deleteTarget &&
@@ -1197,8 +1319,316 @@ export default function ExplorerPage() {
 
   const handleFileSelect = (file: FileItem) => {
     setSelectedFile(file);
+
     if (isRecycleBinPath(currentPath)) {
       closeDetailsPanel();
+    }
+  };
+
+  const closeSavedMediaViewer = useCallback(() => {
+    mediaViewerOpenedPathRef.current = null;
+    setIsMediaViewerOpen(false);
+    setMediaViewerItems([]);
+    setMediaViewerIndex(0);
+    setMediaViewerThumbnailSrc(null);
+    setMediaViewerSrc(null);
+    setMediaViewerError(null);
+    setIsMediaViewerLoading(false);
+  }, []);
+
+  const openSavedMediaViewer = useCallback((targetFile: FileItem) => {
+    const targetKind = getSavedMediaKind(targetFile);
+    if (!targetKind) {
+      return;
+    }
+
+    const mediaItems = targetKind === "image"
+      ? sortedFiles.filter((item) => getSavedMediaKind(item) === "image")
+      : [targetFile];
+
+    const initialIndex = mediaItems.findIndex((item) => item.path === targetFile.path);
+
+    if (initialIndex < 0) {
+      return;
+    }
+
+    setMediaViewerItems(mediaItems);
+    setMediaViewerIndex(initialIndex);
+    setMediaViewerThumbnailSrc(resolveThumbnailSrc(targetFile.thumbnail) || null);
+    setMediaViewerSrc(null);
+    setMediaViewerError(null);
+    mediaViewerOpenedPathRef.current = currentPath;
+    setIsMediaViewerOpen(true);
+  }, [currentPath, sortedFiles]);
+
+  const applyFetchedThumbnail = useCallback((messageId: number, thumbnailSrc: string) => {
+    setFiles((prev) => prev.map((item) => (
+      item.messageId === messageId ? { ...item, thumbnail: thumbnailSrc } : item
+    )));
+
+    setMediaViewerItems((prev) => prev.map((item) => (
+      item.messageId === messageId ? { ...item, thumbnail: thumbnailSrc } : item
+    )));
+
+    setSelectedFile((prev) => (
+      prev && prev.messageId === messageId
+        ? { ...prev, thumbnail: thumbnailSrc }
+        : prev
+    ));
+
+    Object.keys(savedPathCacheRef.current).forEach((cachePath) => {
+      const entry = savedPathCacheRef.current[cachePath];
+      let changed = false;
+      const nextItems = entry.items.map((item) => {
+        if (item.messageId === messageId) {
+          changed = true;
+          return { ...item, thumbnail: thumbnailSrc };
+        }
+
+        return item;
+      });
+
+      if (changed) {
+        savedPathCacheRef.current[cachePath] = {
+          ...entry,
+          items: nextItems,
+        };
+      }
+    });
+  }, []);
+
+  const ensureThumbnailForFile = useCallback(async (file: FileItem) => {
+    const mediaKind = getSavedMediaKind(file);
+    if (mediaKind !== "image" && mediaKind !== "video") {
+      return;
+    }
+
+    const messageId = file.messageId;
+    if (!messageId || messageId <= 0) {
+      return;
+    }
+
+    if (resolveThumbnailSrc(file.thumbnail)) {
+      return;
+    }
+
+    if (thumbnailFetchInFlightRef.current.has(messageId)) {
+      return;
+    }
+
+    thumbnailFetchInFlightRef.current.add(messageId);
+
+    try {
+      const thumbnailPath: string | null = await invoke("tg_get_message_thumbnail", {
+        messageId,
+      });
+
+      const resolvedThumbnail = resolveThumbnailSrc(thumbnailPath);
+      if (resolvedThumbnail) {
+        applyFetchedThumbnail(messageId, resolvedThumbnail);
+        if (isMediaViewerOpen && currentMediaViewerFile?.messageId === messageId) {
+          setMediaViewerThumbnailSrc(resolvedThumbnail);
+        }
+        return;
+      }
+
+      if (isSavedPreviewableFile(file)) {
+        const previewPath: string = await invoke("tg_prepare_saved_media_preview", {
+          sourcePath: file.path,
+        });
+
+        const resolvedPreview = resolveThumbnailSrc(previewPath) || previewPath;
+        if (resolvedPreview) {
+          applyFetchedThumbnail(messageId, resolvedPreview);
+          if (isMediaViewerOpen && currentMediaViewerFile?.messageId === messageId) {
+            setMediaViewerThumbnailSrc(resolvedPreview);
+          }
+        }
+      }
+    } catch (error) {
+      console.error("Failed to ensure thumbnail for file:", file.path, error);
+    } finally {
+      thumbnailFetchInFlightRef.current.delete(messageId);
+    }
+  }, [applyFetchedThumbnail, currentMediaViewerFile, isMediaViewerOpen]);
+
+  useEffect(() => {
+    if (!selectedFile || !isSavedPreviewableFile(selectedFile)) {
+      return;
+    }
+
+    void ensureThumbnailForFile(selectedFile);
+  }, [ensureThumbnailForFile, selectedFile]);
+
+  useEffect(() => {
+    if (!isMediaViewerOpen || !currentMediaViewerFile || !isSavedPreviewableFile(currentMediaViewerFile)) {
+      return;
+    }
+
+    void ensureThumbnailForFile(currentMediaViewerFile);
+  }, [currentMediaViewerFile, ensureThumbnailForFile, isMediaViewerOpen]);
+
+  const goToPreviousMedia = useCallback(() => {
+    setMediaViewerIndex((prev) => Math.max(0, prev - 1));
+  }, []);
+
+  const goToNextMedia = useCallback(() => {
+    setMediaViewerIndex((prev) => Math.min(mediaViewerItems.length - 1, prev + 1));
+  }, [mediaViewerItems.length]);
+
+  useEffect(() => {
+    if (!isMediaViewerOpen || !currentMediaViewerFile) {
+      setMediaViewerThumbnailSrc(null);
+      return;
+    }
+
+    const existingThumbnail = resolveThumbnailSrc(currentMediaViewerFile.thumbnail);
+    setMediaViewerThumbnailSrc(existingThumbnail || null);
+  }, [currentMediaViewerFile, isMediaViewerOpen]);
+
+  useEffect(() => {
+    if (!isMediaViewerOpen || !currentMediaViewerFile) {
+      return;
+    }
+
+    if (!isSavedPreviewableFile(currentMediaViewerFile)) {
+      setMediaViewerError("This file cannot be previewed.");
+      setIsMediaViewerLoading(false);
+      return;
+    }
+
+    let cancelled = false;
+
+    setIsMediaViewerLoading(true);
+    setMediaViewerSrc(null);
+    setMediaViewerError(null);
+
+    invoke<string>("tg_prepare_saved_media_preview", {
+      sourcePath: currentMediaViewerFile.path,
+    })
+      .then((localPath) => {
+        if (cancelled) {
+          return;
+        }
+
+        const resolvedPath = resolveThumbnailSrc(localPath) || localPath;
+        setMediaViewerSrc(resolvedPath);
+      })
+      .catch((error) => {
+        if (cancelled) {
+          return;
+        }
+
+        const typedError = error as TelegramError;
+        setMediaViewerError(typedError.message || "Failed to load media preview.");
+      })
+      .finally(() => {
+        if (!cancelled) {
+          setIsMediaViewerLoading(false);
+        }
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [currentMediaViewerFile, isMediaViewerOpen]);
+
+  useEffect(() => {
+    if (
+      !isMediaViewerOpen ||
+      !currentMediaViewerFile ||
+      !currentMediaViewerFile.messageId ||
+      !!mediaViewerThumbnailSrc ||
+      !mediaViewerSrc ||
+      (currentMediaKind !== "image" && currentMediaKind !== "video")
+    ) {
+      return;
+    }
+
+    setMediaViewerThumbnailSrc(mediaViewerSrc);
+    applyFetchedThumbnail(currentMediaViewerFile.messageId, mediaViewerSrc);
+  }, [
+    applyFetchedThumbnail,
+    currentMediaKind,
+    currentMediaViewerFile,
+    isMediaViewerOpen,
+    mediaViewerSrc,
+    mediaViewerThumbnailSrc,
+  ]);
+
+  useEffect(() => {
+    if (!isMediaViewerOpen) {
+      return;
+    }
+
+    if (mediaViewerOpenedPathRef.current && mediaViewerOpenedPathRef.current !== currentPath) {
+      closeSavedMediaViewer();
+    }
+  }, [currentPath, isMediaViewerOpen, closeSavedMediaViewer]);
+
+  const handleDownloadSavedFile = async (targetFile?: FileItem | null) => {
+    const file = targetFile ?? selectedFile;
+    if (!file || file.isDirectory || !isSavedVirtualFilePath(file.path)) {
+      return;
+    }
+
+    if (activeDownload && !["completed", "failed", "cancelled"].includes(activeDownload.stage)) {
+      toast({
+        title: "Download in progress",
+        description: `Please wait for ${activeDownload.fileName} to finish.`,
+      });
+      return;
+    }
+
+    setActiveDownload({
+      sourcePath: file.path,
+      fileName: file.name,
+      stage: "selecting",
+      progress: 0,
+      downloadedBytes: 0,
+    });
+
+    const unlisten = await listen<DownloadProgressPayload>("tg-download-progress", (event) => {
+      const payload = event.payload;
+      if (!payload || payload.sourcePath !== file.path) {
+        return;
+      }
+
+      setActiveDownload(payload);
+    });
+
+    try {
+      const destinationPath: string | null = await invoke("tg_download_saved_file", {
+        sourcePath: file.path,
+      });
+
+      if (!destinationPath) {
+        return;
+      }
+
+      console.info("Saved Messages download completed:", destinationPath);
+    } catch (error) {
+      const typedError = error as TelegramError;
+
+      setActiveDownload((prev) => {
+        if (!prev || prev.sourcePath !== file.path) {
+          return prev;
+        }
+
+        return {
+          ...prev,
+          stage: "failed",
+          message: typedError.message || "An unknown error occurred",
+        };
+      });
+
+      toast({
+        title: "Download failed",
+        description: typedError.message || "An unknown error occurred",
+        variant: "destructive",
+      });
+    } finally {
+      unlisten();
     }
   };
 
@@ -1206,11 +1636,13 @@ export default function ExplorerPage() {
     if (file.isDirectory) {
       navigateToPath(file.path);
     } else {
-      if (file.path.startsWith("tg://msg/")) {
-        toast({
-          title: "Cloud file selected",
-          description: "Direct open for Saved Messages files is not available yet.",
-        });
+      if (isSavedVirtualFilePath(file.path)) {
+        if (isSavedPreviewableFile(file)) {
+          openSavedMediaViewer(file);
+          return;
+        }
+
+        await handleDownloadSavedFile(file);
         return;
       }
 
@@ -1568,11 +2000,14 @@ export default function ExplorerPage() {
 
     const menuWidth = 236;
     const isRecycleBinMenu = isRecycleBinPath(currentPath) && !!targetFile;
+    const hasDownloadAction = !!targetFile && !targetFile.isDirectory && isSavedVirtualFilePath(targetFile.path);
     const menuHeight = isEmptyArea
       ? 140
       : isRecycleBinMenu
         ? 112
-      : (targetFile && !targetFile.isDirectory ? 332 : 296);
+      : (targetFile && !targetFile.isDirectory
+        ? (hasDownloadAction ? 376 : 332)
+        : 296);
     const clampedX = Math.max(8, Math.min(event.clientX, window.innerWidth - menuWidth - 8));
     const clampedY = Math.max(8, Math.min(event.clientY, window.innerHeight - menuHeight - 8));
 
@@ -2300,17 +2735,36 @@ export default function ExplorerPage() {
                   Retry
                 </TelegramButton>
               </div>
-            ) : isLoading ? (
-              <div className="flex flex-col items-center justify-center h-full text-center">
-                <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary mb-2"></div>
-                <p className="text-body text-muted-foreground">
-                  Loading directory contents...
+            ) : isDirectoryLoading ? (
+              <div className="h-full">
+                <p className="text-small text-muted-foreground mb-3">
+                  {isLoadingSavedFiles
+                    ? `Loading files... ${syncProgressLabel}`
+                    : "Loading directory contents..."}
                 </p>
-              </div>
-            ) : isLoadingSavedFiles ? (
-              <div className="flex flex-col items-center justify-center h-full text-center">
-                <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary mb-2"></div>
-                <p className="text-body text-muted-foreground">Loading files... {syncProgressLabel}</p>
+
+                {viewMode === "list" ? (
+                  <div className="space-y-1">
+                    {Array.from({ length: 10 }).map((_, index) => (
+                      <div key={`list-skeleton-${index}`} className="flex items-center gap-3 px-3 py-1 rounded-lg border border-primary/12 bg-secondary/20">
+                        <Skeleton className="skeleton-shimmer animate-none h-8 w-8 rounded-md bg-secondary/55" />
+                        <Skeleton className="skeleton-shimmer animate-none h-4 flex-1 max-w-[45%] bg-secondary/45" />
+                        <Skeleton className="skeleton-shimmer animate-none h-3 w-14 bg-secondary/40" />
+                        <Skeleton className="skeleton-shimmer animate-none h-3 w-16 bg-secondary/40" />
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <div className="grid [grid-template-columns:repeat(auto-fill,minmax(8.75rem,8.75rem))] justify-start gap-3">
+                    {Array.from({ length: 12 }).map((_, index) => (
+                      <div key={`grid-skeleton-${index}`} className="flex flex-col items-center p-2 rounded-xl border border-primary/12 bg-secondary/20">
+                        <Skeleton className="skeleton-shimmer animate-none h-24 w-24 rounded-lg bg-secondary/50" />
+                        <Skeleton className="skeleton-shimmer animate-none h-4 w-20 mt-3 bg-secondary/45" />
+                        <Skeleton className="skeleton-shimmer animate-none h-3 w-12 mt-1.5 bg-secondary/40" />
+                      </div>
+                    ))}
+                  </div>
+                )}
               </div>
             ) : sortedFiles.length === 0 ? (
               <div className="flex flex-col items-center justify-center h-full text-center">
@@ -2404,6 +2858,55 @@ export default function ExplorerPage() {
         </div>
       )}
 
+      <SavedMediaViewer
+        isOpen={isMediaViewerOpen}
+        fileName={currentMediaViewerFile?.name || "Media"}
+        mediaKind={currentMediaKind}
+        thumbnailSrc={mediaViewerThumbnailSrc}
+        mediaSrc={mediaViewerSrc}
+        isLoading={isMediaViewerLoading}
+        error={mediaViewerError}
+        canGoPrevious={currentMediaKind === "image" && canGoToPreviousMedia}
+        canGoNext={currentMediaKind === "image" && canGoToNextMedia}
+        onPrevious={goToPreviousMedia}
+        onNext={goToNextMedia}
+        onClose={closeSavedMediaViewer}
+      />
+
+      {activeDownload && (
+        <div className="absolute bottom-4 right-4 z-[92] w-80 rounded-xl bg-glass shadow-2xl shadow-black/50 backdrop-saturate-150 p-3">
+          <div className="flex items-start justify-between gap-2">
+            <div className="min-w-0">
+              <p className="text-body font-medium text-foreground truncate">{activeDownload.fileName}</p>
+              <p className="text-small text-muted-foreground">{getDownloadStageLabel(activeDownload.stage)}</p>
+            </div>
+            <span className="text-small text-muted-foreground">
+              {activeDownload.stage === "selecting"
+                ? ""
+                : `${Math.round(Math.max(0, Math.min(100, activeDownload.progress)))}%`}
+            </span>
+          </div>
+
+          <div className="mt-3">
+            <Progress
+              value={Math.max(0, Math.min(100, activeDownload.progress))}
+              className="h-2 bg-secondary/60"
+            />
+          </div>
+
+          <div className="mt-2 flex items-center justify-between text-small text-muted-foreground">
+            <span>
+              {activeDownload.totalBytes && activeDownload.totalBytes > 0
+                ? `${formatFileSize(activeDownload.downloadedBytes)} / ${formatFileSize(activeDownload.totalBytes)}`
+                : formatFileSize(activeDownload.downloadedBytes)}
+            </span>
+            {activeDownload.message && (
+              <span className="max-w-[140px] truncate text-right">{activeDownload.message}</span>
+            )}
+          </div>
+        </div>
+      )}
+
       {contextMenuState && (
         <div
           ref={contextMenuRef}
@@ -2477,6 +2980,19 @@ export default function ExplorerPage() {
                 <FolderOpen className="w-4 h-4 text-muted-foreground" />
                 <span>Open</span>
               </button>
+
+              {contextTargetFile && !contextTargetFile.isDirectory && isSavedVirtualFilePath(contextTargetFile.path) && (
+                <button
+                  className={contextMenuItemClassName}
+                  onClick={() => {
+                    closeContextMenu();
+                    void handleDownloadSavedFile(contextTargetFile);
+                  }}
+                >
+                  <Download className="w-4 h-4 text-muted-foreground" />
+                  <span>Download</span>
+                </button>
+              )}
 
               {contextTargetFile && !contextTargetFile.isDirectory && (
                 <button
