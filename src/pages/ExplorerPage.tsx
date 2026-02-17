@@ -538,7 +538,7 @@ export default function ExplorerPage() {
       setIsSavedBackfillSyncing(true);
       setSavedSyncProgress(5);
       try {
-        await indexSavedMessages();
+        const syncResult = await indexSavedMessages();
         setSavedSyncProgress((prev) => (prev < 85 ? 85 : prev));
 
         if (!cancelled) {
@@ -546,7 +546,15 @@ export default function ExplorerPage() {
           setHasMoreSavedItems(false);
 
           if (currentPathRef.current.startsWith("tg://saved")) {
-            await loadDirectory(currentPathRef.current, { force: true });
+            const activePath = currentPathRef.current;
+            const cacheEntry = savedPathCacheRef.current[activePath];
+            const shouldRefreshVisibleSavedItems =
+              (syncResult?.total_new_messages ?? 0) > 0 ||
+              !cacheEntry?.isCompleteSnapshot;
+
+            if (shouldRefreshVisibleSavedItems) {
+              await loadAllSavedItems(activePath);
+            }
           }
 
           setSavedSyncProgress(100);
