@@ -1739,7 +1739,6 @@ impl Database {
         }
     }
 
-<<<<<<< HEAD
     pub fn get_telegram_saved_file_name_by_message_id(
         &self,
         owner_id: &str,
@@ -1781,8 +1780,6 @@ impl Database {
         }
     }
 
-=======
->>>>>>> origin/main
     pub fn recycle_telegram_saved_file_by_message_id(
         &self,
         owner_id: &str,
