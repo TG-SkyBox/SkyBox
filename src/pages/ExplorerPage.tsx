@@ -22,6 +22,7 @@ import {
   ChevronRight,
   FolderOpen,
   Share2,
+  Info,
   Scissors,
   ClipboardPaste,
 } from "lucide-react";
@@ -1122,7 +1123,7 @@ export default function ExplorerPage() {
 
   const handleFileSelect = (file: FileItem) => {
     setSelectedFile(file);
-    setShowDetails(!isRecycleBinPath(currentPath));
+    setShowDetails((prev) => (isRecycleBinPath(currentPath) ? false : prev));
   };
 
   const handleFileOpen = async (file: FileItem) => {
@@ -1495,7 +1496,7 @@ export default function ExplorerPage() {
       ? 140
       : isRecycleBinMenu
         ? 112
-      : (targetFile && !targetFile.isDirectory ? 288 : 254);
+      : (targetFile && !targetFile.isDirectory ? 332 : 296);
     const clampedX = Math.max(8, Math.min(event.clientX, window.innerWidth - menuWidth - 8));
     const clampedY = Math.max(8, Math.min(event.clientY, window.innerHeight - menuHeight - 8));
 
@@ -1725,6 +1726,16 @@ export default function ExplorerPage() {
 
     setSelectedFile(file);
     setDeleteTarget(file);
+  };
+
+  const handleContextDetails = (targetFile?: FileItem | null) => {
+    const file = targetFile ?? contextMenuState?.targetFile ?? selectedFile;
+    if (!file || isRecycleBinPath(currentPath)) {
+      return;
+    }
+
+    setSelectedFile(file);
+    setShowDetails(true);
   };
 
   const isDraggableItem = (file: FileItem) => {
@@ -2459,6 +2470,19 @@ export default function ExplorerPage() {
               >
                 <Trash2 className="w-4 h-4" />
                 <span>Delete</span>
+              </button>
+
+              <div className="my-1 h-px bg-border/70" />
+
+              <button
+                className={contextMenuItemClassName}
+                onClick={() => {
+                  closeContextMenu();
+                  handleContextDetails(contextTargetFile);
+                }}
+              >
+                <Info className="w-4 h-4 text-muted-foreground" />
+                <span>Details</span>
               </button>
             </>
           )}
