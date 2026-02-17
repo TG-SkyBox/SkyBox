@@ -407,6 +407,105 @@ fn split_saved_parent_and_name(path: &str) -> Option<(String, String)> {
     Some((parent, name))
 }
 
+fn get_download_staging_dir() -> Result<PathBuf, TelegramError> {
+    let base_dirs = BaseDirs::new().ok_or_else(|| TelegramError {
+        message: "Failed to resolve app data directory".to_string(),
+    })?;
+
+    let downloads_dir = base_dirs.data_local_dir().join("Skybox").join("Downloads");
+    fs::create_dir_all(&downloads_dir).map_err(|e| TelegramError {
+        message: format!(
+            "Failed to create staging download directory {}: {}",
+            downloads_dir.display(),
+            e
+        ),
+    })?;
+
+    Ok(downloads_dir)
+}
+
+fn get_device_downloads_dir() -> Result<PathBuf, TelegramError> {
+    let base_dirs = BaseDirs::new().ok_or_else(|| TelegramError {
+        message: "Failed to resolve device download directory".to_string(),
+    })?;
+
+    let downloads_dir = base_dirs.download_dir().ok_or_else(|| TelegramError {
+        message: "Device Downloads folder is not available".to_string(),
+    })?;
+
+    fs::create_dir_all(downloads_dir).map_err(|e| TelegramError {
+        message: format!(
+            "Failed to ensure device download directory {}: {}",
+            downloads_dir.display(),
+            e
+        ),
+    })?;
+
+    Ok(downloads_dir.to_path_buf())
+}
+
+fn build_unique_file_path(directory: &Path, file_name: &str) -> PathBuf {
+    let safe_name = sanitize_file_name(file_name);
+    let safe_path = Path::new(&safe_name);
+
+    let stem = safe_path
+        .file_stem()
+        .and_then(|value| value.to_str())
+        .filter(|value| !value.trim().is_empty())
+        .unwrap_or("download")
+        .to_string();
+
+    let extension = safe_path
+        .extension()
+        .and_then(|value| value.to_str())
+        .filter(|value| !value.trim().is_empty())
+        .map(|value| value.to_string());
+
+    let mut candidate = directory.join(&safe_name);
+    if !candidate.exists() {
+        return candidate;
+    }
+
+    let mut index = 1_i32;
+    loop {
+        let candidate_name = match &extension {
+            Some(ext) => format!("{} ({}).{}", stem, index, ext),
+            None => format!("{} ({})", stem, index),
+        };
+        candidate = directory.join(candidate_name);
+
+        if !candidate.exists() {
+            return candidate;
+        }
+
+        index += 1;
+    }
+}
+
+fn move_staged_download(staged_path: &Path, destination_path: &Path) -> Result<(), TelegramError> {
+    match fs::rename(staged_path, destination_path) {
+        Ok(()) => Ok(()),
+        Err(rename_error) => {
+            fs::copy(staged_path, destination_path).map_err(|copy_error| TelegramError {
+                message: format!(
+                    "Failed to move downloaded file to device Downloads (rename: {}; copy: {})",
+                    rename_error, copy_error
+                ),
+            })?;
+
+            fs::remove_file(staged_path).map_err(|remove_error| TelegramError {
+                message: format!(
+                    "Downloaded file copied but failed to clean staging file {}: {}",
+                    staged_path.display(),
+                    remove_error
+                ),
+            })?;
+
+            Ok(())
+        }
+    }
+}
+
 fn is_recycle_bin_saved_path(path: &str) -> bool {
     path == RECYCLE_BIN_SAVED_PATH || path.starts_with(&format!("{}/", RECYCLE_BIN_SAVED_PATH))
 }
@@ -1938,6 +2037,108 @@ pub async fn tg_prefetch_message_thumbnails_impl(
         "cached_count": cached_count,
         "failed_count": failed_count
     }))
+}
+
+pub async fn tg_download_saved_file_impl(
+    db: Database,
+    source_path: String,
+) -> Result<String, TelegramError> {
+    let message_id = parse_message_id_from_virtual_path(&source_path).ok_or_else(|| TelegramError {
+        message: "Only Saved Message files can be downloaded".to_string(),
+    })?;
+
+    let client = {
+        let state_guard = AUTH_STATE.lock().await;
+        let state = state_guard.as_ref().ok_or_else(|| TelegramError {
+            message: "Not authorized".to_string(),
+        })?;
+        state.client.clone()
+    };
+
+    let me = client.get_me().await.map_err(|e| TelegramError {
+        message: format!("Failed to get user info: {}", e),
+    })?;
+
+    let chat_id = me.raw.id();
+    let owner_id = chat_id.to_string();
+    let input_peer = match &me.raw {
+        tl::enums::User::User(user) => tl::enums::InputPeer::User(tl::types::InputPeerUser {
+            user_id: user.id,
+            access_hash: user.access_hash.unwrap_or(0),
+        }),
+        _ => {
+            return Err(TelegramError {
+                message: "Invalid user type".to_string(),
+            })
+        }
+    };
+
+    let mut messages = client
+        .get_messages_by_id(input_peer.clone(), &[message_id])
+        .await
+        .map_err(|e| TelegramError {
+            message: format!("Failed to fetch message for download: {}", e),
+        })?;
+
+    let message = messages.pop().flatten().ok_or_else(|| TelegramError {
+        message: "Message not found for download".to_string(),
+    })?;
+
+    let categorized = categorize_message(&message, chat_id);
+    let preferred_name = db
+        .get_telegram_saved_file_name_by_message_id(&owner_id, message_id)
+        .map_err(|e| TelegramError {
+            message: format!("Failed to read saved file metadata: {}", e.message),
+        })?;
+
+    let fallback_name = categorized
+        .as_ref()
+        .and_then(|item| item.filename.clone())
+        .filter(|value| !value.trim().is_empty())
+        .unwrap_or_else(|| {
+            let ext = categorized
+                .as_ref()
+                .and_then(|item| item.extension.clone())
+                .filter(|value| !value.trim().is_empty())
+                .unwrap_or_else(|| "bin".to_string());
+            format!("message_{}.{}", message_id, ext)
+        });
+
+    let target_file_name = preferred_name
+        .filter(|value| !value.trim().is_empty())
+        .unwrap_or(fallback_name);
+
+    let staging_dir = get_download_staging_dir()?;
+    let device_downloads_dir = get_device_downloads_dir()?;
+
+    let staged_file_path = build_unique_file_path(&staging_dir, &target_file_name);
+    let destination_file_path = build_unique_file_path(&device_downloads_dir, &target_file_name);
+
+    let has_media = match message.download_media(&staged_file_path).await {
+        Ok(value) => value,
+        Err(error) => {
+            if staged_file_path.exists() {
+                let _ = fs::remove_file(&staged_file_path);
+            }
+            return Err(TelegramError {
+                message: format!("Failed to download message media: {}", error),
+            });
+        }
+    };
+
+    if !has_media {
+        if staged_file_path.exists() {
+            let _ = fs::remove_file(&staged_file_path);
+        }
+
+        return Err(TelegramError {
+            message: "Selected item does not contain downloadable media".to_string(),
+        });
+    }
+
+    move_staged_download(&staged_file_path, &destination_file_path)?;
+
+    Ok(destination_file_path.to_string_lossy().replace('\\', "/"))
 }
 
 pub async fn tg_upload_file_to_saved_messages_impl(

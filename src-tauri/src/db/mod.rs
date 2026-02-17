@@ -1739,6 +1739,47 @@ impl Database {
         }
     }
 
+    pub fn get_telegram_saved_file_name_by_message_id(
+        &self,
+        owner_id: &str,
+        message_id: i32,
+    ) -> Result<Option<String>, DbError> {
+        let conn = self.0.lock().unwrap();
+
+        let mut statement = conn
+            .prepare(
+                "SELECT file_name
+                 FROM telegram_saved_items
+                 WHERE owner_id = ? AND message_id = ? AND file_type != 'folder'
+                 LIMIT 1",
+            )
+            .map_err(|e| DbError {
+                message: format!("Failed to prepare statement: {}", e),
+            })?;
+
+        statement.bind((1, owner_id)).map_err(|e| DbError {
+            message: format!("Failed to bind owner_id: {}", e),
+        })?;
+        statement.bind((2, message_id as i64)).map_err(|e| DbError {
+            message: format!("Failed to bind message_id: {}", e),
+        })?;
+
+        match statement.next() {
+            Ok(SqliteState::Row) => {
+                let file_name = statement.read::<String, usize>(0).unwrap_or_default();
+                if file_name.trim().is_empty() {
+                    Ok(None)
+                } else {
+                    Ok(Some(file_name))
+                }
+            }
+            Ok(SqliteState::Done) => Ok(None),
+            Err(e) => Err(DbError {
+                message: format!("Failed to read file name metadata: {}", e),
+            }),
+        }
+    }
+
     pub fn recycle_telegram_saved_file_by_message_id(
         &self,
         owner_id: &str,
