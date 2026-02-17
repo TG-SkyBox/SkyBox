@@ -655,6 +655,59 @@ fn hydrate_saved_items_from_cached_messages(
     Ok(hydrated)
 }
 
+async fn repair_zero_sized_image_items(
+    db: &Database,
+    client: &grammers_client::Client,
+    owner_id: &str,
+    chat_id: i64,
+    input_peer: &tl::enums::InputPeer,
+) -> Result<usize, TelegramError> {
+    let message_ids = db
+        .get_telegram_saved_zero_sized_image_message_ids(owner_id, PHOTO_SIZE_REPAIR_LIMIT)
+        .map_err(|e| TelegramError {
+            message: format!("Failed to read zero-size image candidates: {}", e.message),
+        })?;
+
+    if message_ids.is_empty() {
+        return Ok(0);
+    }
+
+    let mut repaired = 0usize;
+
+    for chunk in message_ids.chunks(MAX_BATCH_SIZE) {
+        let fetched_messages = client
+            .get_messages_by_id(input_peer.clone(), chunk)
+            .await
+            .map_err(|e| TelegramError {
+                message: format!("Failed to fetch messages for size repair: {}", e),
+            })?;
+
+        for message in fetched_messages.into_iter().flatten() {
+            let Some(parsed) = categorize_message(&message, chat_id) else {
+                continue;
+            };
+
+            let Some(file_size) = parsed.size.filter(|value| *value > 0) else {
+                continue;
+            };
+
+            db.update_telegram_message_size(chat_id, parsed.message_id, file_size)
+                .map_err(|e| TelegramError {
+                    message: format!("Failed to update telegram_messages size: {}", e.message),
+                })?;
+
+            db.update_telegram_saved_item_size(owner_id, parsed.message_id, file_size)
+                .map_err(|e| TelegramError {
+                    message: format!("Failed to update telegram_saved_items size: {}", e.message),
+                })?;
+
+            repaired += 1;
+        }
+    }
+
+    Ok(repaired)
+}
+
 pub async fn tg_index_saved_messages_impl(db: Database) -> Result<serde_json::Value, TelegramError> {
     let state_guard = AUTH_STATE.lock().await;
     let state = state_guard.as_ref().ok_or_else(|| TelegramError {
@@ -695,7 +748,7 @@ pub async fn tg_index_saved_messages_impl(db: Database) -> Result<serde_json::Va
         _ => return Err(TelegramError { message: "Invalid user type".to_string() }),
     };
     let started_from_empty_db = last_id == 0;
-    let mut messages_iter = client.iter_messages(input_peer);
+    let mut messages_iter = client.iter_messages(input_peer.clone());
     
     let mut new_count = 0;
     let mut category_counts = std::collections::HashMap::new();
@@ -735,10 +788,27 @@ pub async fn tg_index_saved_messages_impl(db: Database) -> Result<serde_json::Va
         }
     }
 
+    let repaired_image_sizes = repair_zero_sized_image_items(
+        &db,
+        client,
+        &owner_id,
+        chat_id,
+        &input_peer,
+    )
+    .await?;
+
+    if repaired_image_sizes > 0 {
+        log::info!(
+            "Repaired {} saved image item size(s) that were previously zero",
+            repaired_image_sizes
+        );
+    }
+
     Ok(json!({
         "total_new_messages": new_count,
         "categories": category_counts,
-        "started_from_empty_db": started_from_empty_db
+        "started_from_empty_db": started_from_empty_db,
+        "repaired_image_sizes": repaired_image_sizes
     }))
 }
 
