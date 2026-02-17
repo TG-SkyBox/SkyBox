@@ -332,6 +332,7 @@ export default function ExplorerPage() {
   const prefetchedThumbnailIdsRef = useRef<Set<number>>(new Set());
   const savedPathCacheRef = useRef<Record<string, SavedPathCacheEntry>>({});
   const contextMenuRef = useRef<HTMLDivElement | null>(null);
+  const detailsPanelRef = useRef<HTMLDivElement | null>(null);
   const navigationStateRef = useRef({
     backHistory: [] as string[],
     forwardHistory: [] as string[],
@@ -448,6 +449,27 @@ export default function ExplorerPage() {
       window.removeEventListener("blur", handleViewportChange);
     };
   }, [contextMenuState]);
+
+  useEffect(() => {
+    if (!showDetails) {
+      return;
+    }
+
+    const handlePointerDown = (event: MouseEvent) => {
+      const target = event.target as Node | null;
+      if (detailsPanelRef.current && target && detailsPanelRef.current.contains(target)) {
+        return;
+      }
+
+      setShowDetails(false);
+    };
+
+    window.addEventListener("mousedown", handlePointerDown, true);
+
+    return () => {
+      window.removeEventListener("mousedown", handlePointerDown, true);
+    };
+  }, [showDetails]);
 
   useEffect(() => {
     setContextMenuState(null);
@@ -2305,16 +2327,18 @@ export default function ExplorerPage() {
 
           {/* Details panel */}
           {showDetails && !isRecycleBinView && (
-            <DetailsPanel
-              file={selectedFile}
-              onClose={() => setShowDetails(false)}
-              onToggleFavorite={handleToggleFavorite}
-              onRename={handleRename}
-              onDelete={() => selectedFile && setDeleteTarget(selectedFile)}
-              onCopyPath={handleCopyPath}
-              onOpenLocation={() => toast({ title: "Reveal in folder" })}
-              isFavorite={selectedFile ? favorites.includes(selectedFile.path) : false}
-            />
+            <div ref={detailsPanelRef}>
+              <DetailsPanel
+                file={selectedFile}
+                onClose={() => setShowDetails(false)}
+                onToggleFavorite={handleToggleFavorite}
+                onRename={handleRename}
+                onDelete={() => selectedFile && setDeleteTarget(selectedFile)}
+                onCopyPath={handleCopyPath}
+                onOpenLocation={() => toast({ title: "Reveal in folder" })}
+                isFavorite={selectedFile ? favorites.includes(selectedFile.path) : false}
+              />
+            </div>
           )}
         </div>
       </div>
