@@ -12,6 +12,9 @@ use uuid::Uuid;
 
 const DEFAULT_BATCH_SIZE: usize = 50;
 const MAX_BATCH_SIZE: usize = 200;
+const SAVED_ROOT_PATH: &str = "/Home";
+const RECYCLE_BIN_SAVED_PATH: &str = "/Home/Recycle Bin";
+const TELEGRAM_DELETE_BATCH_SIZE: usize = 100;
 
 fn backfill_cursor_key(chat_id: i64) -> String {
     format!("tg_saved_backfill_cursor_{}", chat_id)
@@ -383,7 +386,7 @@ fn parse_message_id_from_virtual_path(path: &str) -> Option<i32> {
 
 fn split_saved_parent_and_name(path: &str) -> Option<(String, String)> {
     let normalized = normalize_saved_path(path);
-    if normalized == "/Home" {
+    if normalized == SAVED_ROOT_PATH {
         return None;
     }
 
@@ -401,6 +404,69 @@ fn split_saved_parent_and_name(path: &str) -> Option<(String, String)> {
     }
 
     Some((parent, name))
+}
+
+fn is_recycle_bin_saved_path(path: &str) -> bool {
+    path == RECYCLE_BIN_SAVED_PATH || path.starts_with(&format!("{}/", RECYCLE_BIN_SAVED_PATH))
+}
+
+fn ensure_saved_folder_hierarchy(
+    db: &Database,
+    owner_id: &str,
+    destination_path: &str,
+    modified_date: &str,
+) -> Result<(), TelegramError> {
+    let normalized_destination = normalize_saved_path(destination_path);
+    if normalized_destination == SAVED_ROOT_PATH {
+        return Ok(());
+    }
+
+    let relative = normalized_destination
+        .trim_start_matches(&format!("{}/", SAVED_ROOT_PATH))
+        .trim();
+    if relative.is_empty() {
+        return Ok(());
+    }
+
+    let mut parent_path = SAVED_ROOT_PATH.to_string();
+    for segment in relative.split('/') {
+        let folder_name = segment.trim();
+        if folder_name.is_empty() {
+            continue;
+        }
+
+        let folder_exists = db
+            .telegram_saved_folder_exists(owner_id, &parent_path, folder_name)
+            .map_err(|e| TelegramError {
+                message: format!("Failed to check folder hierarchy: {}", e.message),
+            })?;
+
+        if !folder_exists {
+            let folder_item = TelegramSavedItem {
+                chat_id: 0,
+                message_id: 0,
+                thumbnail: None,
+                file_type: "folder".to_string(),
+                file_unique_id: build_folder_unique_id(owner_id, &parent_path, folder_name),
+                file_size: 0,
+                file_name: folder_name.to_string(),
+                file_caption: Some(folder_name.to_string()),
+                file_path: parent_path.clone(),
+                recycle_origin_path: None,
+                modified_date: modified_date.to_string(),
+                owner_id: owner_id.to_string(),
+            };
+
+            db.upsert_telegram_saved_item(&folder_item)
+                .map_err(|e| TelegramError {
+                    message: format!("Failed to create folder hierarchy: {}", e.message),
+                })?;
+        }
+
+        parent_path = format!("{}/{}", parent_path.trim_end_matches('/'), folder_name);
+    }
+
+    Ok(())
 }
 
 fn category_to_saved_path(category: &str) -> String {
@@ -493,6 +559,7 @@ fn upsert_saved_item_from_message(
         file_name,
         file_caption: message.text.clone(),
         file_path: path,
+        recycle_origin_path: None,
         modified_date: message.timestamp.clone(),
         owner_id: owner_id.to_string(),
     };
@@ -986,6 +1053,7 @@ pub async fn tg_create_saved_folder_impl(
         file_name: trimmed_name.to_string(),
         file_caption: Some(trimmed_name.to_string()),
         file_path: normalized_parent,
+        recycle_origin_path: None,
         modified_date: chrono::Utc::now().to_rfc3339(),
         owner_id,
     };
@@ -995,6 +1063,362 @@ pub async fn tg_create_saved_folder_impl(
     })?;
 
     Ok(folder_item)
+}
+
+pub async fn tg_move_saved_item_to_recycle_bin_impl(
+    db: Database,
+    source_path: String,
+) -> Result<(), TelegramError> {
+    let client = {
+        let state_guard = AUTH_STATE.lock().await;
+        let state = state_guard.as_ref().ok_or_else(|| TelegramError {
+            message: "Not authorized".to_string(),
+        })?;
+        state.client.clone()
+    };
+
+    let me = client.get_me().await.map_err(|e| TelegramError {
+        message: format!("Failed to get user info: {}", e),
+    })?;
+
+    let owner_id = me.raw.id().to_string();
+    db.ensure_telegram_saved_folders(&owner_id).map_err(|e| TelegramError {
+        message: format!("Failed to ensure default folders: {}", e.message),
+    })?;
+
+    let modified_date = chrono::Utc::now().to_rfc3339();
+
+    if let Some(message_id) = parse_message_id_from_virtual_path(&source_path) {
+        let file_location = db
+            .get_telegram_saved_file_path_and_recycle_origin_by_message_id(&owner_id, message_id)
+            .map_err(|e| TelegramError {
+                message: format!("Failed to read source file metadata: {}", e.message),
+            })?;
+
+        let Some((current_file_path, _)) = file_location else {
+            return Err(TelegramError {
+                message: "Source file was not found in local index".to_string(),
+            });
+        };
+
+        if is_recycle_bin_saved_path(&current_file_path) {
+            return Err(TelegramError {
+                message: "Item is already in Recycle Bin".to_string(),
+            });
+        }
+
+        db.recycle_telegram_saved_file_by_message_id(
+            &owner_id,
+            message_id,
+            RECYCLE_BIN_SAVED_PATH,
+            &modified_date,
+        )
+        .map_err(|e| TelegramError {
+            message: format!("Failed to move file to Recycle Bin: {}", e.message),
+        })?;
+
+        return Ok(());
+    }
+
+    let source_saved_path = virtual_to_saved_path(&source_path).ok_or_else(|| TelegramError {
+        message: "Invalid source path".to_string(),
+    })?;
+
+    if source_saved_path == SAVED_ROOT_PATH {
+        return Err(TelegramError {
+            message: "Cannot move the root folder".to_string(),
+        });
+    }
+
+    if is_recycle_bin_saved_path(&source_saved_path) {
+        return Err(TelegramError {
+            message: "Item is already in Recycle Bin".to_string(),
+        });
+    }
+
+    let (source_parent_path, folder_name) =
+        split_saved_parent_and_name(&source_saved_path).ok_or_else(|| TelegramError {
+            message: "Invalid source folder path".to_string(),
+        })?;
+
+    if !db
+        .telegram_saved_folder_exists(&owner_id, &source_parent_path, &folder_name)
+        .map_err(|e| TelegramError {
+            message: format!("Failed to check source folder: {}", e.message),
+        })?
+    {
+        return Err(TelegramError {
+            message: "Source folder was not found in local index".to_string(),
+        });
+    }
+
+    let destination_folder_path = format!(
+        "{}/{}",
+        RECYCLE_BIN_SAVED_PATH.trim_end_matches('/'),
+        folder_name
+    );
+
+    db.recycle_telegram_saved_folder_tree(
+        &owner_id,
+        &source_parent_path,
+        &folder_name,
+        &source_saved_path,
+        RECYCLE_BIN_SAVED_PATH,
+        &destination_folder_path,
+        &modified_date,
+    )
+    .map_err(|e| TelegramError {
+        message: format!("Failed to move folder to Recycle Bin: {}", e.message),
+    })?;
+
+    Ok(())
+}
+
+pub async fn tg_restore_saved_item_impl(
+    db: Database,
+    source_path: String,
+) -> Result<(), TelegramError> {
+    let client = {
+        let state_guard = AUTH_STATE.lock().await;
+        let state = state_guard.as_ref().ok_or_else(|| TelegramError {
+            message: "Not authorized".to_string(),
+        })?;
+        state.client.clone()
+    };
+
+    let me = client.get_me().await.map_err(|e| TelegramError {
+        message: format!("Failed to get user info: {}", e),
+    })?;
+
+    let owner_id = me.raw.id().to_string();
+    db.ensure_telegram_saved_folders(&owner_id).map_err(|e| TelegramError {
+        message: format!("Failed to ensure default folders: {}", e.message),
+    })?;
+
+    let modified_date = chrono::Utc::now().to_rfc3339();
+
+    if let Some(message_id) = parse_message_id_from_virtual_path(&source_path) {
+        let file_location = db
+            .get_telegram_saved_file_path_and_recycle_origin_by_message_id(&owner_id, message_id)
+            .map_err(|e| TelegramError {
+                message: format!("Failed to read source file metadata: {}", e.message),
+            })?;
+
+        let Some((current_file_path, recycle_origin_path)) = file_location else {
+            return Err(TelegramError {
+                message: "Source file was not found in local index".to_string(),
+            });
+        };
+
+        if !is_recycle_bin_saved_path(&current_file_path) {
+            return Err(TelegramError {
+                message: "Only items in Recycle Bin can be restored".to_string(),
+            });
+        }
+
+        let destination_path = recycle_origin_path.unwrap_or_else(|| SAVED_ROOT_PATH.to_string());
+        ensure_saved_folder_hierarchy(&db, &owner_id, &destination_path, &modified_date)?;
+
+        db.restore_telegram_saved_file_by_message_id(
+            &owner_id,
+            message_id,
+            &destination_path,
+            &modified_date,
+        )
+        .map_err(|e| TelegramError {
+            message: format!("Failed to restore file metadata: {}", e.message),
+        })?;
+
+        return Ok(());
+    }
+
+    let source_saved_path = virtual_to_saved_path(&source_path).ok_or_else(|| TelegramError {
+        message: "Invalid source path".to_string(),
+    })?;
+
+    if !is_recycle_bin_saved_path(&source_saved_path) {
+        return Err(TelegramError {
+            message: "Only folders in Recycle Bin can be restored".to_string(),
+        });
+    }
+
+    let (source_parent_path, folder_name) =
+        split_saved_parent_and_name(&source_saved_path).ok_or_else(|| TelegramError {
+            message: "Invalid source folder path".to_string(),
+        })?;
+
+    if !db
+        .telegram_saved_folder_exists(&owner_id, &source_parent_path, &folder_name)
+        .map_err(|e| TelegramError {
+            message: format!("Failed to check source folder: {}", e.message),
+        })?
+    {
+        return Err(TelegramError {
+            message: "Source folder was not found in local index".to_string(),
+        });
+    }
+
+    let destination_parent_path = db
+        .get_telegram_saved_folder_recycle_origin(&owner_id, &source_parent_path, &folder_name)
+        .map_err(|e| TelegramError {
+            message: format!("Failed to read folder restore path: {}", e.message),
+        })?
+        .unwrap_or_else(|| SAVED_ROOT_PATH.to_string());
+
+    ensure_saved_folder_hierarchy(&db, &owner_id, &destination_parent_path, &modified_date)?;
+
+    let destination_folder_path = format!(
+        "{}/{}",
+        destination_parent_path.trim_end_matches('/'),
+        folder_name
+    );
+
+    db.restore_telegram_saved_folder_tree(
+        &owner_id,
+        &source_parent_path,
+        &folder_name,
+        &source_saved_path,
+        &destination_parent_path,
+        &destination_folder_path,
+        &modified_date,
+    )
+    .map_err(|e| TelegramError {
+        message: format!("Failed to restore folder metadata: {}", e.message),
+    })?;
+
+    Ok(())
+}
+
+pub async fn tg_delete_saved_item_permanently_impl(
+    db: Database,
+    source_path: String,
+) -> Result<(), TelegramError> {
+    let client = {
+        let state_guard = AUTH_STATE.lock().await;
+        let state = state_guard.as_ref().ok_or_else(|| TelegramError {
+            message: "Not authorized".to_string(),
+        })?;
+        state.client.clone()
+    };
+
+    let me = client.get_me().await.map_err(|e| TelegramError {
+        message: format!("Failed to get user info: {}", e),
+    })?;
+
+    let chat_id = me.raw.id();
+    let owner_id = chat_id.to_string();
+    let input_peer = match &me.raw {
+        tl::enums::User::User(user) => tl::enums::InputPeer::User(tl::types::InputPeerUser {
+            user_id: user.id,
+            access_hash: user.access_hash.unwrap_or(0),
+        }),
+        _ => {
+            return Err(TelegramError {
+                message: "Invalid user type".to_string(),
+            })
+        }
+    };
+
+    if let Some(message_id) = parse_message_id_from_virtual_path(&source_path) {
+        let file_location = db
+            .get_telegram_saved_file_path_and_recycle_origin_by_message_id(&owner_id, message_id)
+            .map_err(|e| TelegramError {
+                message: format!("Failed to read source file metadata: {}", e.message),
+            })?;
+
+        let Some((current_file_path, _)) = file_location else {
+            return Err(TelegramError {
+                message: "Source file was not found in local index".to_string(),
+            });
+        };
+
+        if !is_recycle_bin_saved_path(&current_file_path) {
+            return Err(TelegramError {
+                message: "Only items in Recycle Bin can be deleted permanently".to_string(),
+            });
+        }
+
+        client
+            .delete_messages(input_peer.clone(), &[message_id])
+            .await
+            .map_err(|e| TelegramError {
+                message: format!("Failed to delete Telegram message: {}", e),
+            })?;
+
+        db.delete_telegram_saved_file_by_message_id(&owner_id, message_id)
+            .map_err(|e| TelegramError {
+                message: format!("Failed to delete local file metadata: {}", e.message),
+            })?;
+
+        db.delete_telegram_messages_by_ids(chat_id, &[message_id])
+            .map_err(|e| TelegramError {
+                message: format!("Failed to delete cached telegram message: {}", e.message),
+            })?;
+
+        return Ok(());
+    }
+
+    let source_saved_path = virtual_to_saved_path(&source_path).ok_or_else(|| TelegramError {
+        message: "Invalid source path".to_string(),
+    })?;
+
+    if !is_recycle_bin_saved_path(&source_saved_path) {
+        return Err(TelegramError {
+            message: "Only folders in Recycle Bin can be deleted permanently".to_string(),
+        });
+    }
+
+    let (source_parent_path, folder_name) =
+        split_saved_parent_and_name(&source_saved_path).ok_or_else(|| TelegramError {
+            message: "Invalid source folder path".to_string(),
+        })?;
+
+    if !db
+        .telegram_saved_folder_exists(&owner_id, &source_parent_path, &folder_name)
+        .map_err(|e| TelegramError {
+            message: format!("Failed to check source folder: {}", e.message),
+        })?
+    {
+        return Err(TelegramError {
+            message: "Source folder was not found in local index".to_string(),
+        });
+    }
+
+    let message_ids = db
+        .get_telegram_saved_message_ids_by_folder_tree(&owner_id, &source_saved_path)
+        .map_err(|e| TelegramError {
+            message: format!("Failed to collect folder message ids: {}", e.message),
+        })?;
+
+    for chunk in message_ids.chunks(TELEGRAM_DELETE_BATCH_SIZE) {
+        if chunk.is_empty() {
+            continue;
+        }
+
+        client
+            .delete_messages(input_peer.clone(), chunk)
+            .await
+            .map_err(|e| TelegramError {
+                message: format!("Failed to delete Telegram messages: {}", e),
+            })?;
+    }
+
+    db.delete_telegram_saved_folder_tree(
+        &owner_id,
+        &source_parent_path,
+        &folder_name,
+        &source_saved_path,
+    )
+    .map_err(|e| TelegramError {
+        message: format!("Failed to delete local folder metadata: {}", e.message),
+    })?;
+
+    db.delete_telegram_messages_by_ids(chat_id, &message_ids)
+        .map_err(|e| TelegramError {
+            message: format!("Failed to delete cached telegram messages: {}", e.message),
+        })?;
+
+    Ok(())
 }
 
 pub async fn tg_move_saved_item_impl(

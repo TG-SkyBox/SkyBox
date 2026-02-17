@@ -219,6 +219,9 @@ use messages::{
     tg_backfill_saved_messages_batch_impl,
     tg_rebuild_saved_items_index_impl,
     tg_create_saved_folder_impl,
+    tg_move_saved_item_to_recycle_bin_impl,
+    tg_restore_saved_item_impl,
+    tg_delete_saved_item_permanently_impl,
     tg_move_saved_item_impl,
     tg_rename_saved_item_impl,
     tg_get_message_thumbnail_impl,
@@ -333,6 +336,30 @@ pub async fn tg_move_saved_item(
     destination_path: String,
 ) -> Result<(), TelegramError> {
     tg_move_saved_item_impl(db.inner().clone(), source_path, destination_path).await
+}
+
+#[tauri::command]
+pub async fn tg_move_saved_item_to_recycle_bin(
+    db: State<'_, crate::db::Database>,
+    source_path: String,
+) -> Result<(), TelegramError> {
+    tg_move_saved_item_to_recycle_bin_impl(db.inner().clone(), source_path).await
+}
+
+#[tauri::command]
+pub async fn tg_restore_saved_item(
+    db: State<'_, crate::db::Database>,
+    source_path: String,
+) -> Result<(), TelegramError> {
+    tg_restore_saved_item_impl(db.inner().clone(), source_path).await
+}
+
+#[tauri::command]
+pub async fn tg_delete_saved_item_permanently(
+    db: State<'_, crate::db::Database>,
+    source_path: String,
+) -> Result<(), TelegramError> {
+    tg_delete_saved_item_permanently_impl(db.inner().clone(), source_path).await
 }
 
 #[tauri::command]

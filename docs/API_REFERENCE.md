@@ -199,6 +199,30 @@ Moves a virtual Saved Messages item (file or folder) between local virtual folde
 
 **Returns:** `Result<(), TelegramError>`
 
+### `tg_move_saved_item_to_recycle_bin(source_path: String)`
+Moves a virtual Saved Messages item (file or folder) into Recycle Bin and stores its previous path for restore.
+
+**Parameters:**
+- `source_path`: Source virtual path (`tg://msg/<id>` for files or `tg://saved/...` for folders)
+
+**Returns:** `Result<(), TelegramError>`
+
+### `tg_restore_saved_item(source_path: String)`
+Restores an item from Recycle Bin back to its previous saved-path location.
+
+**Parameters:**
+- `source_path`: Source virtual path inside Recycle Bin (`tg://msg/<id>` or `tg://saved/...`)
+
+**Returns:** `Result<(), TelegramError>`
+
+### `tg_delete_saved_item_permanently(source_path: String)`
+Permanently deletes an item from Recycle Bin, including the underlying Telegram message(s), and removes local metadata.
+
+**Parameters:**
+- `source_path`: Source virtual path inside Recycle Bin (`tg://msg/<id>` or `tg://saved/...`)
+
+**Returns:** `Result<(), TelegramError>`
+
 ### `tg_rename_saved_item(source_path: String, new_name: String)`
 Renames a virtual Saved Messages item in local metadata.
 

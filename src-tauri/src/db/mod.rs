@@ -163,6 +163,7 @@ pub struct TelegramSavedItem {
     pub file_name: String,
     pub file_caption: Option<String>,
     pub file_path: String,
+    pub recycle_origin_path: Option<String>,
     pub modified_date: String,
     pub owner_id: String,
 }
@@ -249,6 +250,7 @@ impl Database {
                 file_name TEXT NOT NULL,
                 file_caption TEXT,
                 file_path TEXT NOT NULL,
+                recycle_origin_path TEXT,
                 modified_date TEXT NOT NULL,
                 owner_id TEXT NOT NULL
             )",
@@ -292,6 +294,27 @@ impl Database {
                     message: format!("Failed to migrate session table (adding {}): {}", col_name, e),
                 })?;
             }
+        }
+
+        let mut saved_items_table_info = conn.prepare("PRAGMA table_info(telegram_saved_items)")
+            .map_err(|e| DbError {
+                message: format!("Failed to inspect telegram_saved_items schema: {}", e),
+            })?;
+
+        let mut recycle_origin_exists = false;
+        while let Ok(SqliteState::Row) = saved_items_table_info.next() {
+            let name: String = saved_items_table_info.read(1).unwrap_or_default();
+            if name == "recycle_origin_path" {
+                recycle_origin_exists = true;
+                break;
+            }
+        }
+
+        if !recycle_origin_exists {
+            conn.execute("ALTER TABLE telegram_saved_items ADD COLUMN recycle_origin_path TEXT")
+                .map_err(|e| DbError {
+                    message: format!("Failed to add recycle_origin_path column: {}", e),
+                })?;
         }
 
         Ok(Database(Mutex::new(conn).into()))
@@ -966,9 +989,10 @@ impl Database {
                 file_name,
                 file_caption,
                 file_path,
+                recycle_origin_path,
                 modified_date,
                 owner_id
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         ).map_err(|e| DbError {
             message: format!("Failed to prepare statement: {}", e),
         })?;
@@ -1000,10 +1024,13 @@ impl Database {
         statement.bind((9, item.file_path.as_str())).map_err(|e| DbError {
             message: format!("Failed to bind file_path: {}", e),
         })?;
-        statement.bind((10, item.modified_date.as_str())).map_err(|e| DbError {
+        statement.bind((10, item.recycle_origin_path.as_deref())).map_err(|e| DbError {
+            message: format!("Failed to bind recycle_origin_path: {}", e),
+        })?;
+        statement.bind((11, item.modified_date.as_str())).map_err(|e| DbError {
             message: format!("Failed to bind modified_date: {}", e),
         })?;
-        statement.bind((11, item.owner_id.as_str())).map_err(|e| DbError {
+        statement.bind((12, item.owner_id.as_str())).map_err(|e| DbError {
             message: format!("Failed to bind owner_id: {}", e),
         })?;
 
@@ -1058,6 +1085,7 @@ impl Database {
                 file_name,
                 file_caption,
                 file_path,
+                recycle_origin_path,
                 modified_date,
                 owner_id
              FROM telegram_saved_items
@@ -1090,8 +1118,9 @@ impl Database {
                 file_name: statement.read::<String, usize>(6).unwrap_or_default(),
                 file_caption: statement.read::<Option<String>, usize>(7).unwrap_or(None),
                 file_path: statement.read::<String, usize>(8).unwrap_or_default(),
-                modified_date: statement.read::<String, usize>(9).unwrap_or_default(),
-                owner_id: statement.read::<String, usize>(10).unwrap_or_default(),
+                recycle_origin_path: statement.read::<Option<String>, usize>(9).unwrap_or(None),
+                modified_date: statement.read::<String, usize>(10).unwrap_or_default(),
+                owner_id: statement.read::<String, usize>(11).unwrap_or_default(),
             });
         }
 
@@ -1577,6 +1606,617 @@ impl Database {
         Ok(())
     }
 
+    pub fn get_telegram_saved_file_path_and_recycle_origin_by_message_id(
+        &self,
+        owner_id: &str,
+        message_id: i32,
+    ) -> Result<Option<(String, Option<String>)>, DbError> {
+        let conn = self.0.lock().unwrap();
+
+        let mut statement = conn
+            .prepare(
+                "SELECT file_path, recycle_origin_path
+                 FROM telegram_saved_items
+                 WHERE owner_id = ? AND message_id = ? AND file_type != 'folder'
+                 LIMIT 1",
+            )
+            .map_err(|e| DbError {
+                message: format!("Failed to prepare statement: {}", e),
+            })?;
+
+        statement.bind((1, owner_id)).map_err(|e| DbError {
+            message: format!("Failed to bind owner_id: {}", e),
+        })?;
+        statement.bind((2, message_id as i64)).map_err(|e| DbError {
+            message: format!("Failed to bind message_id: {}", e),
+        })?;
+
+        match statement.next() {
+            Ok(SqliteState::Row) => {
+                let file_path: String = statement.read::<String, usize>(0).unwrap_or_default();
+                let recycle_origin_path = statement.read::<Option<String>, usize>(1).unwrap_or(None);
+                Ok(Some((file_path, recycle_origin_path)))
+            }
+            Ok(SqliteState::Done) => Ok(None),
+            Err(e) => Err(DbError {
+                message: format!("Failed to read file metadata: {}", e),
+            }),
+        }
+    }
+
+    pub fn recycle_telegram_saved_file_by_message_id(
+        &self,
+        owner_id: &str,
+        message_id: i32,
+        recycle_path: &str,
+        modified_date: &str,
+    ) -> Result<(), DbError> {
+        let conn = self.0.lock().unwrap();
+
+        let mut statement = conn
+            .prepare(
+                "UPDATE telegram_saved_items
+                 SET recycle_origin_path = COALESCE(recycle_origin_path, file_path),
+                     file_path = ?,
+                     modified_date = ?
+                 WHERE owner_id = ? AND message_id = ? AND file_type != 'folder'",
+            )
+            .map_err(|e| DbError {
+                message: format!("Failed to prepare statement: {}", e),
+            })?;
+
+        statement.bind((1, recycle_path)).map_err(|e| DbError {
+            message: format!("Failed to bind recycle_path: {}", e),
+        })?;
+        statement.bind((2, modified_date)).map_err(|e| DbError {
+            message: format!("Failed to bind modified_date: {}", e),
+        })?;
+        statement.bind((3, owner_id)).map_err(|e| DbError {
+            message: format!("Failed to bind owner_id: {}", e),
+        })?;
+        statement.bind((4, message_id as i64)).map_err(|e| DbError {
+            message: format!("Failed to bind message_id: {}", e),
+        })?;
+
+        statement.next().map_err(|e| DbError {
+            message: format!("Failed to execute recycle statement: {}", e),
+        })?;
+
+        Ok(())
+    }
+
+    pub fn restore_telegram_saved_file_by_message_id(
+        &self,
+        owner_id: &str,
+        message_id: i32,
+        destination_path: &str,
+        modified_date: &str,
+    ) -> Result<(), DbError> {
+        let conn = self.0.lock().unwrap();
+
+        let mut statement = conn
+            .prepare(
+                "UPDATE telegram_saved_items
+                 SET file_path = ?,
+                     modified_date = ?,
+                     recycle_origin_path = NULL
+                 WHERE owner_id = ? AND message_id = ? AND file_type != 'folder'",
+            )
+            .map_err(|e| DbError {
+                message: format!("Failed to prepare statement: {}", e),
+            })?;
+
+        statement.bind((1, destination_path)).map_err(|e| DbError {
+            message: format!("Failed to bind destination_path: {}", e),
+        })?;
+        statement.bind((2, modified_date)).map_err(|e| DbError {
+            message: format!("Failed to bind modified_date: {}", e),
+        })?;
+        statement.bind((3, owner_id)).map_err(|e| DbError {
+            message: format!("Failed to bind owner_id: {}", e),
+        })?;
+        statement.bind((4, message_id as i64)).map_err(|e| DbError {
+            message: format!("Failed to bind message_id: {}", e),
+        })?;
+
+        statement.next().map_err(|e| DbError {
+            message: format!("Failed to execute restore statement: {}", e),
+        })?;
+
+        Ok(())
+    }
+
+    pub fn get_telegram_saved_folder_recycle_origin(
+        &self,
+        owner_id: &str,
+        parent_path: &str,
+        folder_name: &str,
+    ) -> Result<Option<String>, DbError> {
+        let conn = self.0.lock().unwrap();
+
+        let mut statement = conn
+            .prepare(
+                "SELECT recycle_origin_path
+                 FROM telegram_saved_items
+                 WHERE owner_id = ?
+                   AND file_type = 'folder'
+                   AND file_path = ?
+                   AND file_name = ?
+                 LIMIT 1",
+            )
+            .map_err(|e| DbError {
+                message: format!("Failed to prepare statement: {}", e),
+            })?;
+
+        statement.bind((1, owner_id)).map_err(|e| DbError {
+            message: format!("Failed to bind owner_id: {}", e),
+        })?;
+        statement.bind((2, parent_path)).map_err(|e| DbError {
+            message: format!("Failed to bind parent_path: {}", e),
+        })?;
+        statement.bind((3, folder_name)).map_err(|e| DbError {
+            message: format!("Failed to bind folder_name: {}", e),
+        })?;
+
+        match statement.next() {
+            Ok(SqliteState::Row) => {
+                let recycle_origin_path = statement.read::<Option<String>, usize>(0).unwrap_or(None);
+                Ok(recycle_origin_path)
+            }
+            Ok(SqliteState::Done) => Ok(None),
+            Err(e) => Err(DbError {
+                message: format!("Failed to read folder recycle origin: {}", e),
+            }),
+        }
+    }
+
+    pub fn recycle_telegram_saved_folder_tree(
+        &self,
+        owner_id: &str,
+        source_parent_path: &str,
+        folder_name: &str,
+        source_folder_path: &str,
+        recycle_parent_path: &str,
+        destination_folder_path: &str,
+        modified_date: &str,
+    ) -> Result<(), DbError> {
+        let conn = self.0.lock().unwrap();
+
+        let mut mark_root_statement = conn
+            .prepare(
+                "UPDATE telegram_saved_items
+                 SET recycle_origin_path = COALESCE(recycle_origin_path, file_path),
+                     modified_date = ?
+                 WHERE owner_id = ?
+                   AND file_type = 'folder'
+                   AND file_path = ?
+                   AND file_name = ?",
+            )
+            .map_err(|e| DbError {
+                message: format!("Failed to prepare recycle root mark statement: {}", e),
+            })?;
+
+        mark_root_statement.bind((1, modified_date)).map_err(|e| DbError {
+            message: format!("Failed to bind modified_date: {}", e),
+        })?;
+        mark_root_statement.bind((2, owner_id)).map_err(|e| DbError {
+            message: format!("Failed to bind owner_id: {}", e),
+        })?;
+        mark_root_statement.bind((3, source_parent_path)).map_err(|e| DbError {
+            message: format!("Failed to bind source_parent_path: {}", e),
+        })?;
+        mark_root_statement.bind((4, folder_name)).map_err(|e| DbError {
+            message: format!("Failed to bind folder_name: {}", e),
+        })?;
+
+        mark_root_statement.next().map_err(|e| DbError {
+            message: format!("Failed to execute recycle root mark statement: {}", e),
+        })?;
+
+        let prefix_like_pattern = format!("{}/%", source_folder_path);
+
+        let mut mark_children_statement = conn
+            .prepare(
+                "UPDATE telegram_saved_items
+                 SET recycle_origin_path = COALESCE(recycle_origin_path, file_path),
+                     modified_date = ?
+                 WHERE owner_id = ?
+                   AND (file_path = ? OR file_path LIKE ?)",
+            )
+            .map_err(|e| DbError {
+                message: format!("Failed to prepare recycle children mark statement: {}", e),
+            })?;
+
+        mark_children_statement.bind((1, modified_date)).map_err(|e| DbError {
+            message: format!("Failed to bind modified_date: {}", e),
+        })?;
+        mark_children_statement.bind((2, owner_id)).map_err(|e| DbError {
+            message: format!("Failed to bind owner_id: {}", e),
+        })?;
+        mark_children_statement.bind((3, source_folder_path)).map_err(|e| DbError {
+            message: format!("Failed to bind source_folder_path: {}", e),
+        })?;
+        mark_children_statement
+            .bind((4, prefix_like_pattern.as_str()))
+            .map_err(|e| DbError {
+                message: format!("Failed to bind prefix_like_pattern: {}", e),
+            })?;
+
+        mark_children_statement.next().map_err(|e| DbError {
+            message: format!("Failed to execute recycle children mark statement: {}", e),
+        })?;
+
+        let mut move_root_statement = conn
+            .prepare(
+                "UPDATE telegram_saved_items
+                 SET file_path = ?, modified_date = ?
+                 WHERE owner_id = ?
+                   AND file_type = 'folder'
+                   AND file_path = ?
+                   AND file_name = ?",
+            )
+            .map_err(|e| DbError {
+                message: format!("Failed to prepare recycle root move statement: {}", e),
+            })?;
+
+        move_root_statement.bind((1, recycle_parent_path)).map_err(|e| DbError {
+            message: format!("Failed to bind recycle_parent_path: {}", e),
+        })?;
+        move_root_statement.bind((2, modified_date)).map_err(|e| DbError {
+            message: format!("Failed to bind modified_date: {}", e),
+        })?;
+        move_root_statement.bind((3, owner_id)).map_err(|e| DbError {
+            message: format!("Failed to bind owner_id: {}", e),
+        })?;
+        move_root_statement.bind((4, source_parent_path)).map_err(|e| DbError {
+            message: format!("Failed to bind source_parent_path: {}", e),
+        })?;
+        move_root_statement.bind((5, folder_name)).map_err(|e| DbError {
+            message: format!("Failed to bind folder_name: {}", e),
+        })?;
+
+        move_root_statement.next().map_err(|e| DbError {
+            message: format!("Failed to execute recycle root move statement: {}", e),
+        })?;
+
+        let source_prefix_length = source_folder_path.len() as i64 + 1;
+        let mut move_children_statement = conn
+            .prepare(
+                "UPDATE telegram_saved_items
+                 SET file_path = CASE
+                     WHEN file_path = ? THEN ?
+                     ELSE ? || substr(file_path, ?)
+                 END,
+                 modified_date = ?
+                 WHERE owner_id = ?
+                   AND (file_path = ? OR file_path LIKE ?)",
+            )
+            .map_err(|e| DbError {
+                message: format!("Failed to prepare recycle children move statement: {}", e),
+            })?;
+
+        move_children_statement.bind((1, source_folder_path)).map_err(|e| DbError {
+            message: format!("Failed to bind source_folder_path (eq): {}", e),
+        })?;
+        move_children_statement
+            .bind((2, destination_folder_path))
+            .map_err(|e| DbError {
+                message: format!("Failed to bind destination_folder_path (eq): {}", e),
+            })?;
+        move_children_statement
+            .bind((3, destination_folder_path))
+            .map_err(|e| DbError {
+                message: format!("Failed to bind destination_folder_path (prefix): {}", e),
+            })?;
+        move_children_statement
+            .bind((4, source_prefix_length))
+            .map_err(|e| DbError {
+                message: format!("Failed to bind source_prefix_length: {}", e),
+            })?;
+        move_children_statement.bind((5, modified_date)).map_err(|e| DbError {
+            message: format!("Failed to bind modified_date: {}", e),
+        })?;
+        move_children_statement.bind((6, owner_id)).map_err(|e| DbError {
+            message: format!("Failed to bind owner_id: {}", e),
+        })?;
+        move_children_statement.bind((7, source_folder_path)).map_err(|e| DbError {
+            message: format!("Failed to bind source_folder_path (where): {}", e),
+        })?;
+        move_children_statement
+            .bind((8, prefix_like_pattern.as_str()))
+            .map_err(|e| DbError {
+                message: format!("Failed to bind prefix_like_pattern: {}", e),
+            })?;
+
+        move_children_statement.next().map_err(|e| DbError {
+            message: format!("Failed to execute recycle children move statement: {}", e),
+        })?;
+
+        Ok(())
+    }
+
+    pub fn restore_telegram_saved_folder_tree(
+        &self,
+        owner_id: &str,
+        source_parent_path: &str,
+        folder_name: &str,
+        source_folder_path: &str,
+        destination_parent_path: &str,
+        destination_folder_path: &str,
+        modified_date: &str,
+    ) -> Result<(), DbError> {
+        let conn = self.0.lock().unwrap();
+
+        let mut restore_root_statement = conn
+            .prepare(
+                "UPDATE telegram_saved_items
+                 SET file_path = ?,
+                     modified_date = ?,
+                     recycle_origin_path = NULL
+                 WHERE owner_id = ?
+                   AND file_type = 'folder'
+                   AND file_path = ?
+                   AND file_name = ?",
+            )
+            .map_err(|e| DbError {
+                message: format!("Failed to prepare restore root statement: {}", e),
+            })?;
+
+        restore_root_statement
+            .bind((1, destination_parent_path))
+            .map_err(|e| DbError {
+                message: format!("Failed to bind destination_parent_path: {}", e),
+            })?;
+        restore_root_statement.bind((2, modified_date)).map_err(|e| DbError {
+            message: format!("Failed to bind modified_date: {}", e),
+        })?;
+        restore_root_statement.bind((3, owner_id)).map_err(|e| DbError {
+            message: format!("Failed to bind owner_id: {}", e),
+        })?;
+        restore_root_statement.bind((4, source_parent_path)).map_err(|e| DbError {
+            message: format!("Failed to bind source_parent_path: {}", e),
+        })?;
+        restore_root_statement.bind((5, folder_name)).map_err(|e| DbError {
+            message: format!("Failed to bind folder_name: {}", e),
+        })?;
+
+        restore_root_statement.next().map_err(|e| DbError {
+            message: format!("Failed to execute restore root statement: {}", e),
+        })?;
+
+        let prefix_like_pattern = format!("{}/%", source_folder_path);
+        let source_prefix_length = source_folder_path.len() as i64 + 1;
+
+        let mut restore_children_statement = conn
+            .prepare(
+                "UPDATE telegram_saved_items
+                 SET file_path = CASE
+                     WHEN file_path = ? THEN ?
+                     ELSE ? || substr(file_path, ?)
+                 END,
+                 modified_date = ?,
+                 recycle_origin_path = NULL
+                 WHERE owner_id = ?
+                   AND (file_path = ? OR file_path LIKE ?)",
+            )
+            .map_err(|e| DbError {
+                message: format!("Failed to prepare restore children statement: {}", e),
+            })?;
+
+        restore_children_statement.bind((1, source_folder_path)).map_err(|e| DbError {
+            message: format!("Failed to bind source_folder_path (eq): {}", e),
+        })?;
+        restore_children_statement
+            .bind((2, destination_folder_path))
+            .map_err(|e| DbError {
+                message: format!("Failed to bind destination_folder_path (eq): {}", e),
+            })?;
+        restore_children_statement
+            .bind((3, destination_folder_path))
+            .map_err(|e| DbError {
+                message: format!("Failed to bind destination_folder_path (prefix): {}", e),
+            })?;
+        restore_children_statement
+            .bind((4, source_prefix_length))
+            .map_err(|e| DbError {
+                message: format!("Failed to bind source_prefix_length: {}", e),
+            })?;
+        restore_children_statement.bind((5, modified_date)).map_err(|e| DbError {
+            message: format!("Failed to bind modified_date: {}", e),
+        })?;
+        restore_children_statement.bind((6, owner_id)).map_err(|e| DbError {
+            message: format!("Failed to bind owner_id: {}", e),
+        })?;
+        restore_children_statement.bind((7, source_folder_path)).map_err(|e| DbError {
+            message: format!("Failed to bind source_folder_path (where): {}", e),
+        })?;
+        restore_children_statement
+            .bind((8, prefix_like_pattern.as_str()))
+            .map_err(|e| DbError {
+                message: format!("Failed to bind prefix_like_pattern: {}", e),
+            })?;
+
+        restore_children_statement.next().map_err(|e| DbError {
+            message: format!("Failed to execute restore children statement: {}", e),
+        })?;
+
+        Ok(())
+    }
+
+    pub fn get_telegram_saved_message_ids_by_folder_tree(
+        &self,
+        owner_id: &str,
+        source_folder_path: &str,
+    ) -> Result<Vec<i32>, DbError> {
+        let conn = self.0.lock().unwrap();
+
+        let prefix_like_pattern = format!("{}/%", source_folder_path);
+        let mut statement = conn
+            .prepare(
+                "SELECT message_id
+                 FROM telegram_saved_items
+                 WHERE owner_id = ?
+                   AND file_type != 'folder'
+                   AND (file_path = ? OR file_path LIKE ?)",
+            )
+            .map_err(|e| DbError {
+                message: format!("Failed to prepare statement: {}", e),
+            })?;
+
+        statement.bind((1, owner_id)).map_err(|e| DbError {
+            message: format!("Failed to bind owner_id: {}", e),
+        })?;
+        statement.bind((2, source_folder_path)).map_err(|e| DbError {
+            message: format!("Failed to bind source_folder_path: {}", e),
+        })?;
+        statement
+            .bind((3, prefix_like_pattern.as_str()))
+            .map_err(|e| DbError {
+                message: format!("Failed to bind prefix_like_pattern: {}", e),
+            })?;
+
+        let mut message_ids = Vec::new();
+        while let Ok(SqliteState::Row) = statement.next() {
+            let message_id = statement.read::<i64, usize>(0).unwrap_or(0) as i32;
+            if message_id > 0 {
+                message_ids.push(message_id);
+            }
+        }
+
+        message_ids.sort_unstable();
+        message_ids.dedup();
+        Ok(message_ids)
+    }
+
+    pub fn delete_telegram_saved_file_by_message_id(
+        &self,
+        owner_id: &str,
+        message_id: i32,
+    ) -> Result<(), DbError> {
+        let conn = self.0.lock().unwrap();
+
+        let mut statement = conn
+            .prepare(
+                "DELETE FROM telegram_saved_items
+                 WHERE owner_id = ? AND message_id = ? AND file_type != 'folder'",
+            )
+            .map_err(|e| DbError {
+                message: format!("Failed to prepare statement: {}", e),
+            })?;
+
+        statement.bind((1, owner_id)).map_err(|e| DbError {
+            message: format!("Failed to bind owner_id: {}", e),
+        })?;
+        statement.bind((2, message_id as i64)).map_err(|e| DbError {
+            message: format!("Failed to bind message_id: {}", e),
+        })?;
+
+        statement.next().map_err(|e| DbError {
+            message: format!("Failed to execute delete statement: {}", e),
+        })?;
+
+        Ok(())
+    }
+
+    pub fn delete_telegram_saved_folder_tree(
+        &self,
+        owner_id: &str,
+        source_parent_path: &str,
+        folder_name: &str,
+        source_folder_path: &str,
+    ) -> Result<(), DbError> {
+        let conn = self.0.lock().unwrap();
+
+        let mut delete_root_statement = conn
+            .prepare(
+                "DELETE FROM telegram_saved_items
+                 WHERE owner_id = ?
+                   AND file_type = 'folder'
+                   AND file_path = ?
+                   AND file_name = ?",
+            )
+            .map_err(|e| DbError {
+                message: format!("Failed to prepare root delete statement: {}", e),
+            })?;
+
+        delete_root_statement.bind((1, owner_id)).map_err(|e| DbError {
+            message: format!("Failed to bind owner_id: {}", e),
+        })?;
+        delete_root_statement.bind((2, source_parent_path)).map_err(|e| DbError {
+            message: format!("Failed to bind source_parent_path: {}", e),
+        })?;
+        delete_root_statement.bind((3, folder_name)).map_err(|e| DbError {
+            message: format!("Failed to bind folder_name: {}", e),
+        })?;
+
+        delete_root_statement.next().map_err(|e| DbError {
+            message: format!("Failed to execute root delete statement: {}", e),
+        })?;
+
+        let prefix_like_pattern = format!("{}/%", source_folder_path);
+        let mut delete_children_statement = conn
+            .prepare(
+                "DELETE FROM telegram_saved_items
+                 WHERE owner_id = ?
+                   AND (file_path = ? OR file_path LIKE ?)",
+            )
+            .map_err(|e| DbError {
+                message: format!("Failed to prepare tree delete statement: {}", e),
+            })?;
+
+        delete_children_statement.bind((1, owner_id)).map_err(|e| DbError {
+            message: format!("Failed to bind owner_id: {}", e),
+        })?;
+        delete_children_statement
+            .bind((2, source_folder_path))
+            .map_err(|e| DbError {
+                message: format!("Failed to bind source_folder_path: {}", e),
+            })?;
+        delete_children_statement
+            .bind((3, prefix_like_pattern.as_str()))
+            .map_err(|e| DbError {
+                message: format!("Failed to bind prefix_like_pattern: {}", e),
+            })?;
+
+        delete_children_statement.next().map_err(|e| DbError {
+            message: format!("Failed to execute tree delete statement: {}", e),
+        })?;
+
+        Ok(())
+    }
+
+    pub fn delete_telegram_messages_by_ids(
+        &self,
+        chat_id: i64,
+        message_ids: &[i32],
+    ) -> Result<(), DbError> {
+        if message_ids.is_empty() {
+            return Ok(());
+        }
+
+        let conn = self.0.lock().unwrap();
+        for message_id in message_ids.iter().copied().filter(|value| *value > 0) {
+            let mut statement = conn
+                .prepare("DELETE FROM telegram_messages WHERE chat_id = ? AND message_id = ?")
+                .map_err(|e| DbError {
+                    message: format!("Failed to prepare telegram_messages delete statement: {}", e),
+                })?;
+
+            statement.bind((1, chat_id)).map_err(|e| DbError {
+                message: format!("Failed to bind chat_id: {}", e),
+            })?;
+            statement.bind((2, message_id as i64)).map_err(|e| DbError {
+                message: format!("Failed to bind message_id: {}", e),
+            })?;
+
+            statement.next().map_err(|e| DbError {
+                message: format!("Failed to execute telegram_messages delete statement: {}", e),
+            })?;
+        }
+
+        Ok(())
+    }
+
     pub fn get_telegram_saved_items_by_path_paginated(
         &self,
         owner_id: &str,
@@ -1597,6 +2237,7 @@ impl Database {
                 file_name,
                 file_caption,
                 file_path,
+                recycle_origin_path,
                 modified_date,
                 owner_id
              FROM telegram_saved_items
@@ -1636,8 +2277,9 @@ impl Database {
                 file_name: statement.read::<String, usize>(6).unwrap_or_default(),
                 file_caption: statement.read::<Option<String>, usize>(7).unwrap_or(None),
                 file_path: statement.read::<String, usize>(8).unwrap_or_default(),
-                modified_date: statement.read::<String, usize>(9).unwrap_or_default(),
-                owner_id: statement.read::<String, usize>(10).unwrap_or_default(),
+                recycle_origin_path: statement.read::<Option<String>, usize>(9).unwrap_or(None),
+                modified_date: statement.read::<String, usize>(10).unwrap_or_default(),
+                owner_id: statement.read::<String, usize>(11).unwrap_or_default(),
             });
         }
 
@@ -1660,6 +2302,7 @@ impl Database {
                 file_name: folder_name.to_string(),
                 file_caption: Some(folder_name.to_string()),
                 file_path: root.to_string(),
+                recycle_origin_path: None,
                 modified_date: now.clone(),
                 owner_id: owner_id.to_string(),
             };

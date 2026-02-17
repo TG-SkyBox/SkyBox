@@ -176,10 +176,7 @@ const mockRoots = [
 const INTERNAL_DRAG_MIME = "application/x-skybox-item-path";
 const SAVED_ITEMS_PAGE_SIZE = 50;
 const EXPLORER_VIEW_MODE_KEY = "explorer_view_mode";
-const RECYCLE_BIN_NAME = "Recycle Bin";
-const RECYCLE_BIN_PARENT_PATH = "/Home";
 const RECYCLE_BIN_VIRTUAL_PATH = "tg://saved/Recycle Bin";
-const RECYCLE_BIN_DELETED_VIRTUAL_PATH = "tg://saved/.skybox-deleted";
 
 const isVirtualPath = (path: string): boolean => path.startsWith("tg://");
 const isSavedVirtualFolderPath = (path: string): boolean => path === "tg://saved" || path.startsWith("tg://saved/");
@@ -1121,6 +1118,7 @@ export default function ExplorerPage() {
     isRecycleBinView &&
     !!deleteTarget &&
     isSavedVirtualItemPath(deleteTarget.path);
+  const isSavedDeleteTarget = !!deleteTarget && isSavedVirtualItemPath(deleteTarget.path);
 
   const handleFileSelect = (file: FileItem) => {
     setSelectedFile(file);
@@ -1206,21 +1204,6 @@ export default function ExplorerPage() {
     }
   };
 
-  const ensureRecycleBinFolder = async () => {
-    try {
-      await invoke("tg_create_saved_folder", {
-        parentPath: RECYCLE_BIN_PARENT_PATH,
-        folderName: RECYCLE_BIN_NAME,
-      });
-    } catch (error) {
-      const typedError = error as TelegramError;
-      const message = typedError.message?.toLowerCase() || "";
-      if (!message.includes("already exists")) {
-        throw error;
-      }
-    }
-  };
-
   const handleDelete = async () => {
     if (!deleteTarget) return;
 
@@ -1230,19 +1213,16 @@ export default function ExplorerPage() {
 
       if (isSavedItem) {
         if (isRecycleBinPath(currentPath)) {
-          await invoke("tg_move_saved_item", {
+          await invoke("tg_delete_saved_item_permanently", {
             sourcePath: target.path,
-            destinationPath: RECYCLE_BIN_DELETED_VIRTUAL_PATH,
           });
           toast({
             title: "Deleted",
-            description: `${target.name} removed from Recycle Bin`,
+            description: `${target.name} deleted permanently`,
           });
         } else {
-          await ensureRecycleBinFolder();
-          await invoke("tg_move_saved_item", {
+          await invoke("tg_move_saved_item_to_recycle_bin", {
             sourcePath: target.path,
-            destinationPath: RECYCLE_BIN_VIRTUAL_PATH,
           });
           toast({
             title: "Moved to Recycle Bin",
@@ -1287,15 +1267,14 @@ export default function ExplorerPage() {
     }
 
     try {
-      await invoke("tg_move_saved_item", {
+      await invoke("tg_restore_saved_item", {
         sourcePath: file.path,
-        destinationPath: "tg://saved",
       });
 
       savedPathCacheRef.current = {};
       toast({
         title: "Restored",
-        description: `${file.name} restored to Saved Messages`,
+        description: `${file.name} restored to its previous folder`,
       });
 
       if (selectedFile?.path === file.path) {
@@ -2527,7 +2506,7 @@ export default function ExplorerPage() {
       {/* Delete confirmation dialog */}
       <ConfirmDialog
         isOpen={!!deleteTarget}
-        title={isPermanentDeleteTarget ? "Delete Permanently" : "Delete Item"}
+        title={isPermanentDeleteTarget ? "Delete Permanently" : (isSavedDeleteTarget ? "Move to Recycle Bin" : "Delete Item")}
         message={
           <p>
             {isPermanentDeleteTarget
@@ -2537,6 +2516,13 @@ export default function ExplorerPage() {
                   This action cannot be undone.
                 </>
               )
+              : isSavedDeleteTarget
+                ? (
+                  <>
+                    Move <strong>{deleteTarget?.name}</strong> to Recycle Bin?
+                    You can restore it later.
+                  </>
+                )
               : (
                 <>
                   Are you sure you want to delete <strong>{deleteTarget?.name}</strong>?
@@ -2545,7 +2531,7 @@ export default function ExplorerPage() {
               )}
           </p>
         }
-        confirmLabel={isPermanentDeleteTarget ? "Delete Permanently" : "Delete"}
+        confirmLabel={isPermanentDeleteTarget ? "Delete Permanently" : (isSavedDeleteTarget ? "Move to Recycle Bin" : "Delete")}
         cancelLabel="Cancel"
         variant="danger"
         onConfirm={handleDelete}
