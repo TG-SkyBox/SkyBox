@@ -15,6 +15,7 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       version: ${{ steps.get_version.outputs.version }}
+      release_tag: ${{ steps.get_version.outputs.release_tag }}
       release_notes: ${{ steps.get_release_notes.outputs.release_notes }}
       bump_sha: ${{ steps.commit_version.outputs.bump_sha }}
     
@@ -23,6 +24,8 @@ jobs:
         uses: actions/checkout@v4
         with:
           ref: ${{ github.event.pull_request.base.ref }}
+          fetch-depth: 0
+          fetch-tags: true
           token: ${{ secrets.PERSONAL_ACCESS_TOKEN }}
 
       - name: Bump version
@@ -81,6 +84,7 @@ jobs:
           if out_path:
               with open(out_path, 'a') as f:
                   f.write(f"version={new_version}\n")
+                  f.write(f"release_tag=v{new_version}\n")
           PY
         shell: bash
 
@@ -114,8 +118,8 @@ jobs:
       - name: Commit and Push Version Bump
         id: commit_version
         run: |
-          git config user.name "pamod-madubashana"
-          git config user.email "pamod.main@gmail.com"
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
           git add VERSION package.json src-tauri/tauri.conf.json src-tauri/Cargo.toml
 
           if git diff --cached --quiet; then
@@ -253,6 +257,14 @@ jobs:
     runs-on: ubuntu-latest
     
     steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.bump-version.outputs.bump_sha }}
+          fetch-depth: 0
+          fetch-tags: true
+          token: ${{ secrets.PERSONAL_ACCESS_TOKEN }}
+
       - name: Download all artifacts
         uses: actions/download-artifact@v4
         with:
@@ -272,13 +284,36 @@ jobs:
           ls -lh release-files/
         shell: bash
 
+      - name: Create and push release tag
+        shell: bash
+        env:
+          RELEASE_TAG: ${{ needs.bump-version.outputs.release_tag }}
+          TARGET_SHA: ${{ needs.bump-version.outputs.bump_sha }}
+        run: |
+          set -euo pipefail
+          TAG="$(printf '%s' "$RELEASE_TAG" | tr -d '\r\n')"
+
+          if [ -z "$TAG" ]; then
+            echo "Release tag is empty."
+            exit 1
+          fi
+
+          git config user.name "pamod-madubashana"
+          git config user.email "pamod.main@gmail.com"
+
+          if [ -z "$(git ls-remote --tags origin "refs/tags/$TAG")" ]; then
+            git tag -a "$TAG" "$TARGET_SHA" -m "$TAG"
+            git push origin "refs/tags/$TAG"
+          else
+            echo "Tag $TAG already exists on origin."
+          fi
+
       - name: Create GitHub Release
-        uses: softprops/action-gh-release@v1
+        uses: softprops/action-gh-release@v2
         with:
-          tag_name: ${{ needs.bump-version.outputs.version }}
-          name: Release ${{ needs.bump-version.outputs.version }}
+          tag_name: ${{ needs.bump-version.outputs.release_tag }}
+          name: ${{ needs.bump-version.outputs.release_tag }}
           body: ${{ needs.bump-version.outputs.release_notes }}
-          target_commitish: ${{ needs.bump-version.outputs.bump_sha }}
           draft: false
           prerelease: false
           repository: pamod-madubashana/SkyBox
@@ -305,8 +340,8 @@ jobs:
           # Try to fetch existing download branch to preserve previous releases
           git init upload
           cd upload
-          git config user.name "${{ github.actor }}"
-          git config user.email "${{ github.actor }}@users.noreply.github.com"
+          git config user.name "pamod-madubashana"
+          git config user.email "pamod.main@gmail.com"
           git remote add origin "https://x-access-token:${TOKEN}@github.com/${OWNER_REPO}.git"
           
           # Try to fetch existing download branch, but don't fail if it doesn't exist

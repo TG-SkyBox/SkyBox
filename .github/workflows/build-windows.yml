@@ -8,10 +8,15 @@ on:
 jobs:
   build-tauri-windows:
     runs-on: windows-latest
-    # Skip if commit is "new release" trigger OR version bump from github-actions bot
+    # Skip PR-merge pushes and release-bot pushes
     if: |
-      !contains(github.event.head_commit.message, 'new release') &&
-      !startsWith(github.event.head_commit.message, 'chore: bump version to')
+      github.event_name == 'workflow_dispatch' ||
+      (
+        github.event_name == 'push' &&
+        github.event.pusher.name != 'web-flow' &&
+        github.event.head_commit.author.name != 'github-actions[bot]' &&
+        github.event.head_commit.committer.name != 'github-actions[bot]'
+      )
     env:
         TAURI_PRIVATE_KEY: ${{ secrets.TAURI_PRIVATE_KEY }}
         TAURI_KEY_PASSWORD: ${{ secrets.TAURI_KEY_PASSWORD }}
