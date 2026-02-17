@@ -20,6 +20,63 @@ const SAVED_ROOT_PATH: &str = "/Home";
 const RECYCLE_BIN_SAVED_PATH: &str = "/Home/Recycle Bin";
 const TELEGRAM_DELETE_BATCH_SIZE: usize = 100;
 const PHOTO_SIZE_REPAIR_LIMIT: i64 = 200;
+const THUMBNAIL_PREFETCH_DELAY_MS: u64 = 90;
+
+static THUMBNAIL_FLOOD_WAIT_UNTIL: LazyLock<StdMutex<Option<Instant>>> =
+    LazyLock::new(|| StdMutex::new(None));
+
+fn parse_flood_wait_seconds(message: &str) -> Option<u64> {
+    let upper = message.to_uppercase();
+    if !upper.contains("FLOOD_WAIT") {
+        return None;
+    }
+
+    if let Some(value_pos) = upper.find("VALUE:") {
+        let suffix = &upper[value_pos + "VALUE:".len()..];
+        let digits: String = suffix
+            .chars()
+            .skip_while(|ch| !ch.is_ascii_digit())
+            .take_while(|ch| ch.is_ascii_digit())
+            .collect();
+        if let Ok(seconds) = digits.parse::<u64>() {
+            return Some(seconds.max(1));
+        }
+    }
+
+    if let Some(wait_pos) = upper.find("FLOOD_WAIT_") {
+        let suffix = &upper[wait_pos + "FLOOD_WAIT_".len()..];
+        let digits: String = suffix
+            .chars()
+            .take_while(|ch| ch.is_ascii_digit())
+            .collect();
+        if let Ok(seconds) = digits.parse::<u64>() {
+            return Some(seconds.max(1));
+        }
+    }
+
+    Some(1)
+}
+
+fn set_thumbnail_flood_wait(seconds: u64) {
+    if let Ok(mut guard) = THUMBNAIL_FLOOD_WAIT_UNTIL.lock() {
+        *guard = Some(Instant::now() + Duration::from_secs(seconds.max(1)));
+    }
+}
+
+fn is_thumbnail_flood_wait_active() -> bool {
+    if let Ok(mut guard) = THUMBNAIL_FLOOD_WAIT_UNTIL.lock() {
+        match *guard {
+            Some(until) if Instant::now() < until => true,
+            Some(_) => {
+                *guard = None;
+                false
+            }
+            None => false,
+        }
+    } else {
+        false
+    }
+}
 
 #[derive(serde::Serialize, Clone)]
 #[serde(rename_all = "camelCase")]
