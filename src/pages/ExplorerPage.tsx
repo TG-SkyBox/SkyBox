@@ -10,6 +10,7 @@ import { ConfirmDialog } from "@/components/skybox/ConfirmDialog";
 import { TextInputDialog } from "@/components/skybox/TextInputDialog";
 import { TelegramButton } from "@/components/skybox/TelegramButton";
 import { Progress } from "@/components/ui/progress";
+import { Skeleton } from "@/components/ui/skeleton";
 import {
   FolderPlus,
   Grid,
@@ -1295,6 +1296,7 @@ export default function ExplorerPage() {
     isSavedBackfillSyncing &&
     !search.trim() &&
     sortedFiles.length === 0;
+  const isDirectoryLoading = isLoading || isLoadingSavedFiles;
 
   const syncProgressLabel = `${Math.min(100, Math.max(0, Math.round(savedSyncProgress)))}%`;
   const contextMenuItemClassName = "w-full flex items-center gap-2 rounded-lg px-3 py-2 text-left text-body text-foreground transition-colors hover:bg-primary/15 outline-none focus-visible:outline-none";
@@ -2733,17 +2735,36 @@ export default function ExplorerPage() {
                   Retry
                 </TelegramButton>
               </div>
-            ) : isLoading ? (
-              <div className="flex flex-col items-center justify-center h-full text-center">
-                <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary mb-2"></div>
-                <p className="text-body text-muted-foreground">
-                  Loading directory contents...
+            ) : isDirectoryLoading ? (
+              <div className="h-full">
+                <p className="text-small text-muted-foreground mb-3">
+                  {isLoadingSavedFiles
+                    ? `Loading files... ${syncProgressLabel}`
+                    : "Loading directory contents..."}
                 </p>
-              </div>
-            ) : isLoadingSavedFiles ? (
-              <div className="flex flex-col items-center justify-center h-full text-center">
-                <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary mb-2"></div>
-                <p className="text-body text-muted-foreground">Loading files... {syncProgressLabel}</p>
+
+                {viewMode === "list" ? (
+                  <div className="space-y-1">
+                    {Array.from({ length: 10 }).map((_, index) => (
+                      <div key={`list-skeleton-${index}`} className="flex items-center gap-3 px-3 py-1 rounded-lg">
+                        <Skeleton className="skeleton-shimmer animate-none h-8 w-8 rounded-md bg-secondary/55" />
+                        <Skeleton className="skeleton-shimmer animate-none h-4 flex-1 max-w-[45%] bg-secondary/45" />
+                        <Skeleton className="skeleton-shimmer animate-none h-3 w-14 bg-secondary/40" />
+                        <Skeleton className="skeleton-shimmer animate-none h-3 w-16 bg-secondary/40" />
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <div className="grid [grid-template-columns:repeat(auto-fill,minmax(8.75rem,8.75rem))] justify-start gap-3">
+                    {Array.from({ length: 12 }).map((_, index) => (
+                      <div key={`grid-skeleton-${index}`} className="flex flex-col items-center p-2 rounded-xl border border-border/20">
+                        <Skeleton className="skeleton-shimmer animate-none h-24 w-24 rounded-lg bg-secondary/50" />
+                        <Skeleton className="skeleton-shimmer animate-none h-4 w-20 mt-3 bg-secondary/45" />
+                        <Skeleton className="skeleton-shimmer animate-none h-3 w-12 mt-1.5 bg-secondary/40" />
+                      </div>
+                    ))}
+                  </div>
+                )}
               </div>
             ) : sortedFiles.length === 0 ? (
               <div className="flex flex-col items-center justify-center h-full text-center">

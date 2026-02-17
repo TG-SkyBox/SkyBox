@@ -2315,7 +2315,13 @@ pub async fn tg_prepare_saved_media_preview_impl(
     let cache_file_path_string = cache_file_path.to_string_lossy().replace('\\', "/");
     let is_image_preview = categorized
         .as_ref()
-        .map(|item| item.file_type == "image")
+        .map(|item| {
+            item.category.eq_ignore_ascii_case("Images")
+                || item
+                    .mime_type
+                    .as_deref()
+                    .is_some_and(|mime| mime.starts_with("image/"))
+        })
         .unwrap_or(false);
 
     if let Ok(metadata) = fs::metadata(&cache_file_path) {

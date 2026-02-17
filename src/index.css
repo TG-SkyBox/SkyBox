@@ -213,4 +213,29 @@
     backdrop-filter: blur(24px);
     -webkit-backdrop-filter: blur(24px);
   }
+
+  .skeleton-shimmer {
+    position: relative;
+    overflow: hidden;
+  }
+
+  .skeleton-shimmer::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+    background: linear-gradient(
+      100deg,
+      transparent 0%,
+      hsl(var(--foreground) / 0.1) 45%,
+      transparent 100%
+    );
+    transform: translateX(-120%);
+    animation: skybox-shimmer 1.35s ease-in-out infinite;
+  }
+}
+
+@keyframes skybox-shimmer {
+  100% {
+    transform: translateX(120%);
+  }
 }
