@@ -14,6 +14,7 @@ import {
   List,
   SortAsc,
   RefreshCw,
+  Download,
   Copy,
   Trash2,
   RotateCcw,
@@ -1202,15 +1203,44 @@ export default function ExplorerPage() {
     }
   };
 
+  const handleDownloadSavedFile = async (targetFile?: FileItem | null) => {
+    const file = targetFile ?? selectedFile;
+    if (!file || file.isDirectory || !isSavedVirtualFilePath(file.path)) {
+      return;
+    }
+
+    try {
+      toast({
+        title: "Downloading",
+        description: file.name,
+      });
+
+      const destinationPath: string = await invoke("tg_download_saved_file", {
+        sourcePath: file.path,
+      });
+
+      toast({
+        title: "Downloaded",
+        description: `${file.name} saved to Downloads`,
+      });
+
+      console.info("Saved Messages download completed:", destinationPath);
+    } catch (error) {
+      const typedError = error as TelegramError;
+      toast({
+        title: "Download failed",
+        description: typedError.message || "An unknown error occurred",
+        variant: "destructive",
+      });
+    }
+  };
+
   const handleFileOpen = async (file: FileItem) => {
     if (file.isDirectory) {
       navigateToPath(file.path);
     } else {
-      if (file.path.startsWith("tg://msg/")) {
-        toast({
-          title: "Cloud file selected",
-          description: "Direct open for Saved Messages files is not available yet.",
-        });
+      if (isSavedVirtualFilePath(file.path)) {
+        await handleDownloadSavedFile(file);
         return;
       }
 
@@ -1568,11 +1598,14 @@ export default function ExplorerPage() {
 
     const menuWidth = 236;
     const isRecycleBinMenu = isRecycleBinPath(currentPath) && !!targetFile;
+    const hasDownloadAction = !!targetFile && !targetFile.isDirectory && isSavedVirtualFilePath(targetFile.path);
     const menuHeight = isEmptyArea
       ? 140
       : isRecycleBinMenu
         ? 112
-      : (targetFile && !targetFile.isDirectory ? 332 : 296);
+      : (targetFile && !targetFile.isDirectory
+        ? (hasDownloadAction ? 376 : 332)
+        : 296);
     const clampedX = Math.max(8, Math.min(event.clientX, window.innerWidth - menuWidth - 8));
     const clampedY = Math.max(8, Math.min(event.clientY, window.innerHeight - menuHeight - 8));
 
@@ -2477,6 +2510,19 @@ export default function ExplorerPage() {
                 <FolderOpen className="w-4 h-4 text-muted-foreground" />
                 <span>Open</span>
               </button>
+
+              {contextTargetFile && !contextTargetFile.isDirectory && isSavedVirtualFilePath(contextTargetFile.path) && (
+                <button
+                  className={contextMenuItemClassName}
+                  onClick={() => {
+                    closeContextMenu();
+                    void handleDownloadSavedFile(contextTargetFile);
+                  }}
+                >
+                  <Download className="w-4 h-4 text-muted-foreground" />
+                  <span>Download</span>
+                </button>
+              )}
 
               {contextTargetFile && !contextTargetFile.isDirectory && (
                 <button

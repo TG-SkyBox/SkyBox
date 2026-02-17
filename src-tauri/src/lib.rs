@@ -82,6 +82,7 @@ pub fn run() {
             telegram::tg_rename_saved_item,
             telegram::tg_get_message_thumbnail,
             telegram::tg_prefetch_message_thumbnails,
+            telegram::tg_download_saved_file,
             telegram::tg_upload_file_to_saved_messages,
 
             // Logger Commands
