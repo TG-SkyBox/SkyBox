@@ -389,6 +389,7 @@ export default function ExplorerPage() {
   const [isMediaViewerOpen, setIsMediaViewerOpen] = useState(false);
   const [mediaViewerItems, setMediaViewerItems] = useState<FileItem[]>([]);
   const [mediaViewerIndex, setMediaViewerIndex] = useState(0);
+  const [mediaViewerThumbnailSrc, setMediaViewerThumbnailSrc] = useState<string | null>(null);
   const [mediaViewerSrc, setMediaViewerSrc] = useState<string | null>(null);
   const [mediaViewerError, setMediaViewerError] = useState<string | null>(null);
   const [isMediaViewerLoading, setIsMediaViewerLoading] = useState(false);
@@ -406,6 +407,7 @@ export default function ExplorerPage() {
   const startupSyncRanRef = useRef(false);
   const lastNavigationAtRef = useRef(Date.now());
   const prefetchedThumbnailIdsRef = useRef<Set<number>>(new Set());
+  const thumbnailFetchInFlightRef = useRef<Set<number>>(new Set());
   const savedPathCacheRef = useRef<Record<string, SavedPathCacheEntry>>({});
   const contextMenuRef = useRef<HTMLDivElement | null>(null);
   const detailsPanelRef = useRef<HTMLDivElement | null>(null);
@@ -1315,6 +1317,7 @@ export default function ExplorerPage() {
 
   const handleFileSelect = (file: FileItem) => {
     setSelectedFile(file);
+
     if (isRecycleBinPath(currentPath)) {
       closeDetailsPanel();
     }
@@ -1325,6 +1328,7 @@ export default function ExplorerPage() {
     setIsMediaViewerOpen(false);
     setMediaViewerItems([]);
     setMediaViewerIndex(0);
+    setMediaViewerThumbnailSrc(null);
     setMediaViewerSrc(null);
     setMediaViewerError(null);
     setIsMediaViewerLoading(false);
@@ -1348,11 +1352,119 @@ export default function ExplorerPage() {
 
     setMediaViewerItems(mediaItems);
     setMediaViewerIndex(initialIndex);
+    setMediaViewerThumbnailSrc(resolveThumbnailSrc(targetFile.thumbnail) || null);
     setMediaViewerSrc(null);
     setMediaViewerError(null);
     mediaViewerOpenedPathRef.current = currentPath;
     setIsMediaViewerOpen(true);
   }, [currentPath, sortedFiles]);
+
+  const applyFetchedThumbnail = useCallback((messageId: number, thumbnailSrc: string) => {
+    setFiles((prev) => prev.map((item) => (
+      item.messageId === messageId ? { ...item, thumbnail: thumbnailSrc } : item
+    )));
+
+    setMediaViewerItems((prev) => prev.map((item) => (
+      item.messageId === messageId ? { ...item, thumbnail: thumbnailSrc } : item
+    )));
+
+    setSelectedFile((prev) => (
+      prev && prev.messageId === messageId
+        ? { ...prev, thumbnail: thumbnailSrc }
+        : prev
+    ));
+
+    Object.keys(savedPathCacheRef.current).forEach((cachePath) => {
+      const entry = savedPathCacheRef.current[cachePath];
+      let changed = false;
+      const nextItems = entry.items.map((item) => {
+        if (item.messageId === messageId) {
+          changed = true;
+          return { ...item, thumbnail: thumbnailSrc };
+        }
+
+        return item;
+      });
+
+      if (changed) {
+        savedPathCacheRef.current[cachePath] = {
+          ...entry,
+          items: nextItems,
+        };
+      }
+    });
+  }, []);
+
+  const ensureThumbnailForFile = useCallback(async (file: FileItem) => {
+    const mediaKind = getSavedMediaKind(file);
+    if (mediaKind !== "image" && mediaKind !== "video") {
+      return;
+    }
+
+    const messageId = file.messageId;
+    if (!messageId || messageId <= 0) {
+      return;
+    }
+
+    if (resolveThumbnailSrc(file.thumbnail)) {
+      return;
+    }
+
+    if (thumbnailFetchInFlightRef.current.has(messageId)) {
+      return;
+    }
+
+    thumbnailFetchInFlightRef.current.add(messageId);
+
+    try {
+      const thumbnailPath: string | null = await invoke("tg_get_message_thumbnail", {
+        messageId,
+      });
+
+      const resolvedThumbnail = resolveThumbnailSrc(thumbnailPath);
+      if (resolvedThumbnail) {
+        applyFetchedThumbnail(messageId, resolvedThumbnail);
+        if (isMediaViewerOpen && currentMediaViewerFile?.messageId === messageId) {
+          setMediaViewerThumbnailSrc(resolvedThumbnail);
+        }
+        return;
+      }
+
+      if (isSavedPreviewableFile(file)) {
+        const previewPath: string = await invoke("tg_prepare_saved_media_preview", {
+          sourcePath: file.path,
+        });
+
+        const resolvedPreview = resolveThumbnailSrc(previewPath) || previewPath;
+        if (resolvedPreview) {
+          applyFetchedThumbnail(messageId, resolvedPreview);
+          if (isMediaViewerOpen && currentMediaViewerFile?.messageId === messageId) {
+            setMediaViewerThumbnailSrc(resolvedPreview);
+          }
+        }
+      }
+    } catch (error) {
+      console.error("Failed to ensure thumbnail for file:", file.path, error);
+    } finally {
+      thumbnailFetchInFlightRef.current.delete(messageId);
+    }
+  }, [applyFetchedThumbnail, currentMediaViewerFile, isMediaViewerOpen]);
+
+  useEffect(() => {
+    if (!selectedFile || !isSavedPreviewableFile(selectedFile)) {
+      return;
+    }
+
+    void ensureThumbnailForFile(selectedFile);
+  }, [ensureThumbnailForFile, selectedFile]);
+
+  useEffect(() => {
+    if (!isMediaViewerOpen || !currentMediaViewerFile || !isSavedPreviewableFile(currentMediaViewerFile)) {
+      return;
+    }
+
+    void ensureThumbnailForFile(currentMediaViewerFile);
+  }, [currentMediaViewerFile, ensureThumbnailForFile, isMediaViewerOpen]);
 
   const goToPreviousMedia = useCallback(() => {
     setMediaViewerIndex((prev) => Math.max(0, prev - 1));
@@ -1361,6 +1473,16 @@ export default function ExplorerPage() {
   const goToNextMedia = useCallback(() => {
     setMediaViewerIndex((prev) => Math.min(mediaViewerItems.length - 1, prev + 1));
   }, [mediaViewerItems.length]);
+
+  useEffect(() => {
+    if (!isMediaViewerOpen || !currentMediaViewerFile) {
+      setMediaViewerThumbnailSrc(null);
+      return;
+    }
+
+    const existingThumbnail = resolveThumbnailSrc(currentMediaViewerFile.thumbnail);
+    setMediaViewerThumbnailSrc(existingThumbnail || null);
+  }, [currentMediaViewerFile, isMediaViewerOpen]);
 
   useEffect(() => {
     if (!isMediaViewerOpen || !currentMediaViewerFile) {
@@ -1408,6 +1530,29 @@ export default function ExplorerPage() {
       cancelled = true;
     };
   }, [currentMediaViewerFile, isMediaViewerOpen]);
+
+  useEffect(() => {
+    if (
+      !isMediaViewerOpen ||
+      !currentMediaViewerFile ||
+      !currentMediaViewerFile.messageId ||
+      !!mediaViewerThumbnailSrc ||
+      !mediaViewerSrc ||
+      (currentMediaKind !== "image" && currentMediaKind !== "video")
+    ) {
+      return;
+    }
+
+    setMediaViewerThumbnailSrc(mediaViewerSrc);
+    applyFetchedThumbnail(currentMediaViewerFile.messageId, mediaViewerSrc);
+  }, [
+    applyFetchedThumbnail,
+    currentMediaKind,
+    currentMediaViewerFile,
+    isMediaViewerOpen,
+    mediaViewerSrc,
+    mediaViewerThumbnailSrc,
+  ]);
 
   useEffect(() => {
     if (!isMediaViewerOpen) {
@@ -2696,7 +2841,7 @@ export default function ExplorerPage() {
         isOpen={isMediaViewerOpen}
         fileName={currentMediaViewerFile?.name || "Media"}
         mediaKind={currentMediaKind}
-        thumbnailSrc={currentMediaViewerFile?.thumbnail || null}
+        thumbnailSrc={mediaViewerThumbnailSrc}
         mediaSrc={mediaViewerSrc}
         isLoading={isMediaViewerLoading}
         error={mediaViewerError}

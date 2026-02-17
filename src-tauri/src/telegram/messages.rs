@@ -2312,10 +2312,33 @@ pub async fn tg_prepare_saved_media_preview_impl(
         })?;
 
     let cache_file_path = build_preview_cache_path(&cache_dir, message_id, &target_file_name);
+    let cache_file_path_string = cache_file_path.to_string_lossy().replace('\\', "/");
+    let is_image_preview = categorized
+        .as_ref()
+        .map(|item| item.file_type == "image")
+        .unwrap_or(false);
 
     if let Ok(metadata) = fs::metadata(&cache_file_path) {
         if metadata.is_file() && metadata.len() > 0 {
-            return Ok(cache_file_path.to_string_lossy().replace('\\', "/"));
+            if is_image_preview {
+                db.update_telegram_message_thumbnail(chat_id, message_id, &cache_file_path_string)
+                    .map_err(|e| TelegramError {
+                        message: format!(
+                            "Failed to persist cached image preview in telegram_messages: {}",
+                            e.message
+                        ),
+                    })?;
+
+                db.update_telegram_saved_item_thumbnail(&owner_id, message_id, &cache_file_path_string)
+                    .map_err(|e| TelegramError {
+                        message: format!(
+                            "Failed to persist cached image preview in telegram_saved_items: {}",
+                            e.message
+                        ),
+                    })?;
+            }
+
+            return Ok(cache_file_path_string);
         }
     }
 
@@ -2341,7 +2364,25 @@ pub async fn tg_prepare_saved_media_preview_impl(
         });
     }
 
-    Ok(cache_file_path.to_string_lossy().replace('\\', "/"))
+    if is_image_preview {
+        db.update_telegram_message_thumbnail(chat_id, message_id, &cache_file_path_string)
+            .map_err(|e| TelegramError {
+                message: format!(
+                    "Failed to persist image preview in telegram_messages: {}",
+                    e.message
+                ),
+            })?;
+
+        db.update_telegram_saved_item_thumbnail(&owner_id, message_id, &cache_file_path_string)
+            .map_err(|e| TelegramError {
+                message: format!(
+                    "Failed to persist image preview in telegram_saved_items: {}",
+                    e.message
+                ),
+            })?;
+    }
+
+    Ok(cache_file_path_string)
 }
 
 pub async fn tg_download_saved_file_impl(
