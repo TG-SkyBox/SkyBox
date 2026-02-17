@@ -158,6 +158,8 @@ Lists locally indexed Saved Messages items for a virtual path.
 
 **Returns:** `Result<Vec<TelegramSavedItem>, TelegramError>`
 
+`TelegramSavedItem` includes an optional `recycle_origin_path` field used to restore items from Recycle Bin.
+
 ### `tg_list_saved_items_page(file_path: String, offset: i64, limit: i64)`
 Lists locally indexed Saved Messages items for a virtual path using pagination.
 
@@ -167,6 +169,8 @@ Lists locally indexed Saved Messages items for a virtual path using pagination.
 - `limit`: Maximum items per page (recommended `50`)
 
 **Returns:** `Result<{ items: TelegramSavedItem[], has_more: bool, next_offset: i64 }, TelegramError>`
+
+Each `TelegramSavedItem` in `items` includes an optional `recycle_origin_path` field.
 
 ### `tg_backfill_saved_messages_batch(batch_size?: i32)`
 Indexes older Saved Messages into local storage in small batches.
