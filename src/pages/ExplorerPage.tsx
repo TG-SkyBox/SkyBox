@@ -151,6 +151,12 @@ interface DownloadProgressPayload {
   message?: string | null;
 }
 
+interface UploadProgressState {
+  totalFiles: number;
+  uploadedFiles: number;
+  failedFiles: number;
+}
+
 interface SavedPathCacheEntry {
   items: FileItem[];
   nextOffset: number;
@@ -386,6 +392,7 @@ export default function ExplorerPage() {
   const [dropTargetPath, setDropTargetPath] = useState<string | null>(null);
   const [isExternalDragging, setIsExternalDragging] = useState(false);
   const [isUploadingFiles, setIsUploadingFiles] = useState(false);
+  const [uploadProgress, setUploadProgress] = useState<UploadProgressState | null>(null);
   const [activeDownload, setActiveDownload] = useState<DownloadProgressPayload | null>(null);
   const [isMediaViewerOpen, setIsMediaViewerOpen] = useState(false);
   const [mediaViewerItems, setMediaViewerItems] = useState<FileItem[]>([]);
@@ -1299,6 +1306,16 @@ export default function ExplorerPage() {
   const isDirectoryLoading = isLoading || isLoadingSavedFiles;
 
   const syncProgressLabel = `${Math.min(100, Math.max(0, Math.round(savedSyncProgress)))}%`;
+  const uploadProcessedFiles = uploadProgress
+    ? uploadProgress.uploadedFiles + uploadProgress.failedFiles
+    : 0;
+  const uploadProgressPercent = uploadProgress && uploadProgress.totalFiles > 0
+    ? Math.min(100, Math.max(0, Math.round((uploadProcessedFiles / uploadProgress.totalFiles) * 100)))
+    : 0;
+  const uploadProgressLabel = uploadProgress
+    ? `${uploadProcessedFiles}/${uploadProgress.totalFiles} files`
+    : "";
+  const uploadSkeletonCount = Math.max(3, Math.min(6, uploadProgress?.totalFiles ?? 4));
   const contextMenuItemClassName = "w-full flex items-center gap-2 rounded-lg px-3 py-2 text-left text-body text-foreground transition-colors hover:bg-primary/15 outline-none focus-visible:outline-none";
   const contextMenuDisabledItemClassName = "w-full flex items-center gap-2 rounded-lg px-3 py-2 text-left text-body text-muted-foreground/60 pointer-events-none outline-none focus-visible:outline-none";
   const contextMenuDangerItemClassName = "w-full flex items-center gap-2 rounded-lg px-3 py-2 text-left text-body text-destructive transition-colors hover:bg-destructive/10 outline-none focus-visible:outline-none";
@@ -2482,6 +2499,12 @@ export default function ExplorerPage() {
     }
 
     setIsUploadingFiles(true);
+    setUploadProgress({
+      totalFiles: droppedFiles.length,
+      uploadedFiles: 0,
+      failedFiles: 0,
+    });
+
     try {
       let uploadedCount = 0;
       let failedCount = 0;
@@ -2502,6 +2525,12 @@ export default function ExplorerPage() {
           failedCount += 1;
           console.error("Failed to upload file:", droppedFile.name, error);
         }
+
+        setUploadProgress({
+          totalFiles: droppedFiles.length,
+          uploadedFiles: uploadedCount,
+          failedFiles: failedCount,
+        });
       }
 
       if (uploadedCount > 0) {
@@ -2527,6 +2556,7 @@ export default function ExplorerPage() {
       }
     } finally {
       setIsUploadingFiles(false);
+      setUploadProgress(null);
     }
   };
 
@@ -2684,7 +2714,7 @@ export default function ExplorerPage() {
             )}
           </div>
 
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2 min-w-0">
             <button className="flex items-center gap-1 px-2 py-1 rounded text-small text-muted-foreground hover:text-foreground hover:bg-secondary transition-colors">
               <SortAsc className="w-3 h-3" />
               Name
@@ -2692,6 +2722,21 @@ export default function ExplorerPage() {
             <span className="text-small text-muted-foreground">
               {sortedFiles.length} {sortedFiles.length === 1 ? 'item' : 'items'}
             </span>
+            {isUploadingFiles && uploadProgress && (
+              <div className="ml-1 flex items-center gap-2 min-w-[220px]">
+                <span className="text-small text-muted-foreground whitespace-nowrap tabular-nums">
+                  {uploadProgressLabel}
+                </span>
+                <Progress
+                  value={uploadProgressPercent}
+                  className="h-1.5 w-24 bg-secondary/60"
+                  aria-label="Upload progress"
+                />
+                <span className="w-9 text-right text-small text-muted-foreground tabular-nums">
+                  {uploadProgressPercent}%
+                </span>
+              </div>
+            )}
             {isLoadingSavedFiles ? (
               <span className="text-small text-muted-foreground inline-flex items-center gap-1">
                 <div className="animate-spin rounded-full h-3 w-3 border-b border-primary" />
@@ -2717,12 +2762,40 @@ export default function ExplorerPage() {
             onContextMenu={handleEmptyAreaContextMenu}
           >
             {(isExternalDragging || isUploadingFiles) && (
-              <div className="pointer-events-none absolute inset-4 z-20 rounded-xl border-2 border-dashed border-primary/60 bg-primary/10 flex items-center justify-center">
-                <p className="text-body font-medium text-foreground">
-                  {isUploadingFiles
-                    ? "Uploading files to Saved Messages..."
-                    : "Drop files here to upload to Saved Messages"}
-                </p>
+              <div className="pointer-events-none absolute inset-4 z-20 rounded-xl border-2 border-dashed border-primary/60 bg-primary/10 px-6 py-5">
+                {isUploadingFiles ? (
+                  <div className="mx-auto flex h-full max-w-xl flex-col justify-center">
+                    <div className="mb-3 flex items-center justify-between gap-3">
+                      <p className="text-body font-medium text-foreground">
+                        Uploading files to Saved Messages...
+                      </p>
+                      {uploadProgress && (
+                        <span className="text-small text-muted-foreground tabular-nums">
+                          {uploadProgressLabel}
+                        </span>
+                      )}
+                    </div>
+
+                    <div className="space-y-2">
+                      {Array.from({ length: uploadSkeletonCount }).map((_, index) => (
+                        <div
+                          key={`upload-skeleton-${index}`}
+                          className="flex items-center gap-3 rounded-lg border border-primary/20 bg-background/40 px-3 py-2"
+                        >
+                          <Skeleton className="skeleton-shimmer h-8 w-8 rounded-md bg-secondary/60" />
+                          <Skeleton className="skeleton-shimmer h-4 flex-1 max-w-[60%] bg-secondary/50" />
+                          <Skeleton className="skeleton-shimmer h-3 w-16 bg-secondary/45" />
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                ) : (
+                  <div className="flex h-full items-center justify-center">
+                    <p className="text-body font-medium text-foreground">
+                      Drop files here to upload to Saved Messages
+                    </p>
+                  </div>
+                )}
               </div>
             )}
 
