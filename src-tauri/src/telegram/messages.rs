@@ -15,6 +15,7 @@ const MAX_BATCH_SIZE: usize = 200;
 const SAVED_ROOT_PATH: &str = "/Home";
 const RECYCLE_BIN_SAVED_PATH: &str = "/Home/Recycle Bin";
 const TELEGRAM_DELETE_BATCH_SIZE: usize = 100;
+const PHOTO_SIZE_REPAIR_LIMIT: i64 = 200;
 
 fn backfill_cursor_key(chat_id: i64) -> String {
     format!("tg_saved_backfill_cursor_{}", chat_id)

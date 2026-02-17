@@ -843,6 +843,32 @@ impl Database {
         Ok(())
     }
 
+    pub fn update_telegram_message_size(&self, chat_id: i64, message_id: i32, size: i64) -> Result<(), DbError> {
+        let conn = self.0.lock().unwrap();
+
+        let mut statement = conn.prepare(
+            "UPDATE telegram_messages SET size = ? WHERE chat_id = ? AND message_id = ?"
+        ).map_err(|e| DbError {
+            message: format!("Failed to prepare statement: {}", e),
+        })?;
+
+        statement.bind((1, size.max(0))).map_err(|e| DbError {
+            message: format!("Failed to bind size: {}", e),
+        })?;
+        statement.bind((2, chat_id)).map_err(|e| DbError {
+            message: format!("Failed to bind chat_id: {}", e),
+        })?;
+        statement.bind((3, message_id as i64)).map_err(|e| DbError {
+            message: format!("Failed to bind message_id: {}", e),
+        })?;
+
+        statement.next().map_err(|e| DbError {
+            message: format!("Failed to execute statement: {}", e),
+        })?;
+
+        Ok(())
+    }
+
     pub fn get_indexed_messages_by_category(&self, chat_id: i64, category: &str) -> Result<Vec<TelegramMessage>, DbError> {
         let conn = self.0.lock().unwrap();
         
@@ -1071,6 +1097,73 @@ impl Database {
         })?;
 
         Ok(())
+    }
+
+    pub fn update_telegram_saved_item_size(&self, owner_id: &str, message_id: i32, file_size: i64) -> Result<(), DbError> {
+        let conn = self.0.lock().unwrap();
+
+        let mut statement = conn
+            .prepare(
+                "UPDATE telegram_saved_items
+                 SET file_size = ?
+                 WHERE owner_id = ? AND message_id = ? AND file_type = 'image'",
+            )
+            .map_err(|e| DbError {
+                message: format!("Failed to prepare statement: {}", e),
+            })?;
+
+        statement.bind((1, file_size.max(0))).map_err(|e| DbError {
+            message: format!("Failed to bind file_size: {}", e),
+        })?;
+        statement.bind((2, owner_id)).map_err(|e| DbError {
+            message: format!("Failed to bind owner_id: {}", e),
+        })?;
+        statement.bind((3, message_id as i64)).map_err(|e| DbError {
+            message: format!("Failed to bind message_id: {}", e),
+        })?;
+
+        statement.next().map_err(|e| DbError {
+            message: format!("Failed to execute statement: {}", e),
+        })?;
+
+        Ok(())
+    }
+
+    pub fn get_telegram_saved_zero_sized_image_message_ids(&self, owner_id: &str, limit: i64) -> Result<Vec<i32>, DbError> {
+        let conn = self.0.lock().unwrap();
+
+        let safe_limit = limit.max(1);
+        let mut statement = conn
+            .prepare(
+                "SELECT DISTINCT message_id
+                 FROM telegram_saved_items
+                 WHERE owner_id = ?
+                   AND file_type = 'image'
+                   AND file_size <= 0
+                   AND message_id > 0
+                 ORDER BY message_id DESC
+                 LIMIT ?",
+            )
+            .map_err(|e| DbError {
+                message: format!("Failed to prepare statement: {}", e),
+            })?;
+
+        statement.bind((1, owner_id)).map_err(|e| DbError {
+            message: format!("Failed to bind owner_id: {}", e),
+        })?;
+        statement.bind((2, safe_limit)).map_err(|e| DbError {
+            message: format!("Failed to bind limit: {}", e),
+        })?;
+
+        let mut message_ids = Vec::new();
+        while let Ok(SqliteState::Row) = statement.next() {
+            let message_id = statement.read::<i64, usize>(0).unwrap_or(0) as i32;
+            if message_id > 0 {
+                message_ids.push(message_id);
+            }
+        }
+
+        Ok(message_ids)
     }
 
     pub fn get_telegram_saved_items_by_path(&self, owner_id: &str, file_path: &str) -> Result<Vec<TelegramSavedItem>, DbError> {
