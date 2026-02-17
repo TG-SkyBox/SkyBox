@@ -2512,6 +2512,8 @@ export default function ExplorerPage() {
         placeholder="New name"
         confirmLabel="Rename"
         cancelLabel="Cancel"
+        icon={<Edit3 className="w-4 h-4 text-primary" />}
+        framed
         onValueChange={setRenameValue}
         onConfirm={() => {
           void handleConfirmRename();
