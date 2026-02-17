@@ -98,7 +98,7 @@ export function DetailsPanel({
 
   if (!file) {
     return (
-      <div className="w-72 h-full glass-sidebar flex flex-col items-center justify-center p-6">
+      <div className="w-full h-full glass-sidebar flex flex-col items-center justify-center p-6">
         <File className="w-12 h-12 text-muted-foreground/50 mb-3" />
         <p className="text-body text-muted-foreground text-center">
           Select a file or folder to view details
@@ -110,7 +110,7 @@ export function DetailsPanel({
   const Icon = file.isDirectory ? Folder : file.extension?.match(/^(jpg|jpeg|png|gif|webp|svg)$/i) ? FileImage : FileText;
 
   return (
-    <div className="w-72 h-full glass-sidebar flex flex-col animate-slide-in-left">
+    <div className="w-full h-full glass-sidebar flex flex-col">
       {/* Header */}
       <div className="p-4 border-b border-border flex items-center justify-between">
         <h2 className="text-body font-medium text-foreground">Details</h2>

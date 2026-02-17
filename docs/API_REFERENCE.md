@@ -158,6 +158,8 @@ Lists locally indexed Saved Messages items for a virtual path.
 
 **Returns:** `Result<Vec<TelegramSavedItem>, TelegramError>`
 
+`TelegramSavedItem` includes an optional `recycle_origin_path` field used to restore items from Recycle Bin.
+
 ### `tg_list_saved_items_page(file_path: String, offset: i64, limit: i64)`
 Lists locally indexed Saved Messages items for a virtual path using pagination.
 
@@ -167,6 +169,8 @@ Lists locally indexed Saved Messages items for a virtual path using pagination.
 - `limit`: Maximum items per page (recommended `50`)
 
 **Returns:** `Result<{ items: TelegramSavedItem[], has_more: bool, next_offset: i64 }, TelegramError>`
+
+Each `TelegramSavedItem` in `items` includes an optional `recycle_origin_path` field.
 
 ### `tg_backfill_saved_messages_batch(batch_size?: i32)`
 Indexes older Saved Messages into local storage in small batches.
@@ -196,6 +200,30 @@ Moves a virtual Saved Messages item (file or folder) between local virtual folde
 **Parameters:**
 - `source_path`: Source virtual path (`tg://msg/<id>` for files or `tg://saved/...` for folders)
 - `destination_path`: Destination virtual folder path (`tg://saved/...`)
+
+**Returns:** `Result<(), TelegramError>`
+
+### `tg_move_saved_item_to_recycle_bin(source_path: String)`
+Moves a virtual Saved Messages item (file or folder) into Recycle Bin and stores its previous path for restore.
+
+**Parameters:**
+- `source_path`: Source virtual path (`tg://msg/<id>` for files or `tg://saved/...` for folders)
+
+**Returns:** `Result<(), TelegramError>`
+
+### `tg_restore_saved_item(source_path: String)`
+Restores an item from Recycle Bin back to its previous saved-path location.
+
+**Parameters:**
+- `source_path`: Source virtual path inside Recycle Bin (`tg://msg/<id>` or `tg://saved/...`)
+
+**Returns:** `Result<(), TelegramError>`
+
+### `tg_delete_saved_item_permanently(source_path: String)`
+Permanently deletes an item from Recycle Bin, including the underlying Telegram message(s), and removes local metadata.
+
+**Parameters:**
+- `source_path`: Source virtual path inside Recycle Bin (`tg://msg/<id>` or `tg://saved/...`)
 
 **Returns:** `Result<(), TelegramError>`
 
