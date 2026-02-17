@@ -1,4 +1,4 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { MutableRefObject } from "react";
 import { ChevronLeft, ChevronRight, Loader2, X } from "lucide-react";
 import Plyr from "plyr";
@@ -12,6 +12,7 @@ interface SavedMediaViewerProps {
   isOpen: boolean;
   fileName: string;
   mediaKind: SavedMediaKind | null;
+  thumbnailSrc?: string | null;
   mediaSrc?: string | null;
   isLoading: boolean;
   error?: string | null;
@@ -25,9 +26,10 @@ interface SavedMediaViewerProps {
 interface PlyrMediaProps {
   kind: "video" | "audio";
   src: string;
+  onReady?: () => void;
 }
 
-function PlyrMedia({ kind, src }: PlyrMediaProps) {
+function PlyrMedia({ kind, src, onReady }: PlyrMediaProps) {
   const mediaRef = useRef<HTMLVideoElement | HTMLAudioElement | null>(null);
   const playerRef = useRef<Plyr | null>(null);
 
@@ -62,6 +64,7 @@ function PlyrMedia({ kind, src }: PlyrMediaProps) {
         ref={mediaRef as MutableRefObject<HTMLVideoElement | null>}
         className="h-full w-full"
         playsInline
+        onLoadedData={onReady}
         controls
       >
         <source src={src} />
@@ -74,6 +77,7 @@ function PlyrMedia({ kind, src }: PlyrMediaProps) {
       key={src}
       ref={mediaRef as MutableRefObject<HTMLAudioElement | null>}
       className="w-full"
+      onLoadedData={onReady}
       controls
     >
       <source src={src} />
@@ -85,6 +89,7 @@ export function SavedMediaViewer({
   isOpen,
   fileName,
   mediaKind,
+  thumbnailSrc,
   mediaSrc,
   isLoading,
   error,
@@ -94,6 +99,24 @@ export function SavedMediaViewer({
   onNext,
   onClose,
 }: SavedMediaViewerProps) {
+  const [isPrimaryMediaReady, setIsPrimaryMediaReady] = useState(false);
+
+  useEffect(() => {
+    setIsPrimaryMediaReady(false);
+  }, [fileName, mediaKind, mediaSrc]);
+
+  useEffect(() => {
+    if (!isOpen) {
+      setIsPrimaryMediaReady(false);
+    }
+  }, [isOpen]);
+
+  useEffect(() => {
+    if (mediaKind === "audio" && mediaSrc && !isLoading) {
+      setIsPrimaryMediaReady(true);
+    }
+  }, [isLoading, mediaKind, mediaSrc]);
+
   useEffect(() => {
     if (!isOpen) {
       return;
@@ -126,6 +149,14 @@ export function SavedMediaViewer({
     return null;
   }
 
+  const showBlurPlaceholder =
+    !!thumbnailSrc &&
+    (isLoading || !mediaSrc || (!isPrimaryMediaReady && (mediaKind === "image" || mediaKind === "video")));
+
+  const showLoadingIndicator =
+    isLoading ||
+    (!isPrimaryMediaReady && !!mediaSrc && (mediaKind === "image" || mediaKind === "video"));
+
   return (
     <div className="saved-media-viewer fixed inset-0 z-[94] bg-black/80 backdrop-blur-sm">
       <div className="absolute inset-0" onClick={onClose} />
@@ -144,8 +175,20 @@ export function SavedMediaViewer({
           </div>
 
           <div className="relative flex flex-1 items-center justify-center overflow-hidden p-4 sm:p-6">
-            {isLoading && (
-              <div className="flex flex-col items-center justify-center gap-3 text-muted-foreground">
+            {showBlurPlaceholder && (
+              <>
+                <img
+                  src={thumbnailSrc || undefined}
+                  alt=""
+                  className="pointer-events-none absolute inset-0 h-full w-full scale-110 object-cover blur-2xl opacity-55"
+                  aria-hidden="true"
+                />
+                <div className="pointer-events-none absolute inset-0 bg-black/30" />
+              </>
+            )}
+
+            {showLoadingIndicator && (
+              <div className="relative z-10 flex flex-col items-center justify-center gap-3 text-muted-foreground">
                 <Loader2 className="h-6 w-6 animate-spin" />
                 <p className="text-body">Loading media...</p>
               </div>
@@ -161,13 +204,18 @@ export function SavedMediaViewer({
               <img
                 src={mediaSrc}
                 alt={fileName}
-                className="max-h-full max-w-full object-contain rounded-lg"
+                onLoad={() => setIsPrimaryMediaReady(true)}
+                className={`max-h-full max-w-full object-contain rounded-lg transition-opacity duration-300 ${isPrimaryMediaReady ? "opacity-100" : "opacity-0"}`}
               />
             )}
 
             {!isLoading && !error && mediaSrc && (mediaKind === "video" || mediaKind === "audio") && (
-            <div className={`saved-media-player w-full ${mediaKind === "video" ? "h-full" : "max-w-2xl"}`}>
-                <PlyrMedia kind={mediaKind} src={mediaSrc} />
+              <div className={`saved-media-player w-full transition-opacity duration-300 ${mediaKind === "video" ? "h-full" : "max-w-2xl"} ${isPrimaryMediaReady ? "opacity-100" : "opacity-0"}`}>
+                <PlyrMedia
+                  kind={mediaKind}
+                  src={mediaSrc}
+                  onReady={() => setIsPrimaryMediaReady(true)}
+                />
               </div>
             )}
           </div>

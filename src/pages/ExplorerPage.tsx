@@ -2696,6 +2696,7 @@ export default function ExplorerPage() {
         isOpen={isMediaViewerOpen}
         fileName={currentMediaViewerFile?.name || "Media"}
         mediaKind={currentMediaKind}
+        thumbnailSrc={currentMediaViewerFile?.thumbnail || null}
         mediaSrc={mediaViewerSrc}
         isLoading={isMediaViewerLoading}
         error={mediaViewerError}
