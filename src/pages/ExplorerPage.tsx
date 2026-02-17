@@ -178,6 +178,7 @@ const INTERNAL_DRAG_MIME = "application/x-skybox-item-path";
 const SAVED_ITEMS_PAGE_SIZE = 50;
 const EXPLORER_VIEW_MODE_KEY = "explorer_view_mode";
 const RECYCLE_BIN_VIRTUAL_PATH = "tg://saved/Recycle Bin";
+const DETAILS_PANEL_ANIMATION_MS = 220;
 
 const isVirtualPath = (path: string): boolean => path.startsWith("tg://");
 const isSavedVirtualFolderPath = (path: string): boolean => path === "tg://saved" || path.startsWith("tg://saved/");
@@ -295,6 +296,7 @@ export default function ExplorerPage() {
   const [search, setSearch] = useState("");
   const [selectedFile, setSelectedFile] = useState<FileItem | null>(null);
   const [showDetails, setShowDetails] = useState(false);
+  const [isDetailsPanelOpen, setIsDetailsPanelOpen] = useState(false);
   const [viewMode, setViewMode] = useState<ExplorerViewMode>("list");
   const [isViewModeLoaded, setIsViewModeLoaded] = useState(false);
   const [contextMenuState, setContextMenuState] = useState<ExplorerContextMenuState | null>(null);
@@ -333,12 +335,48 @@ export default function ExplorerPage() {
   const savedPathCacheRef = useRef<Record<string, SavedPathCacheEntry>>({});
   const contextMenuRef = useRef<HTMLDivElement | null>(null);
   const detailsPanelRef = useRef<HTMLDivElement | null>(null);
+  const detailsPanelCloseTimerRef = useRef<number | null>(null);
   const navigationStateRef = useRef({
     backHistory: [] as string[],
     forwardHistory: [] as string[],
     currentPath: "tg://saved",
     isLoading: false,
   });
+
+  const clearDetailsPanelCloseTimer = useCallback(() => {
+    if (detailsPanelCloseTimerRef.current !== null) {
+      window.clearTimeout(detailsPanelCloseTimerRef.current);
+      detailsPanelCloseTimerRef.current = null;
+    }
+  }, []);
+
+  const openDetailsPanel = useCallback(() => {
+    clearDetailsPanelCloseTimer();
+    setShowDetails(true);
+
+    window.requestAnimationFrame(() => {
+      setIsDetailsPanelOpen(true);
+    });
+  }, [clearDetailsPanelCloseTimer]);
+
+  const closeDetailsPanel = useCallback(() => {
+    if (!showDetails && !isDetailsPanelOpen) {
+      return;
+    }
+
+    clearDetailsPanelCloseTimer();
+    setIsDetailsPanelOpen(false);
+    detailsPanelCloseTimerRef.current = window.setTimeout(() => {
+      setShowDetails(false);
+      detailsPanelCloseTimerRef.current = null;
+    }, DETAILS_PANEL_ANIMATION_MS);
+  }, [clearDetailsPanelCloseTimer, isDetailsPanelOpen, showDetails]);
+
+  useEffect(() => {
+    return () => {
+      clearDetailsPanelCloseTimer();
+    };
+  }, [clearDetailsPanelCloseTimer]);
 
   // Initialize with home directory and user info
   useEffect(() => {
@@ -461,7 +499,7 @@ export default function ExplorerPage() {
         return;
       }
 
-      setShowDetails(false);
+      closeDetailsPanel();
     };
 
     window.addEventListener("mousedown", handlePointerDown, true);
@@ -469,7 +507,13 @@ export default function ExplorerPage() {
     return () => {
       window.removeEventListener("mousedown", handlePointerDown, true);
     };
-  }, [showDetails]);
+  }, [closeDetailsPanel, showDetails]);
+
+  useEffect(() => {
+    if (isRecycleBinPath(currentPath) && showDetails) {
+      closeDetailsPanel();
+    }
+  }, [closeDetailsPanel, currentPath, showDetails]);
 
   useEffect(() => {
     setContextMenuState(null);
@@ -725,7 +769,7 @@ export default function ExplorerPage() {
 
       // Escape to close details panel
       if (e.key === 'Escape' && showDetails) {
-        setShowDetails(false);
+        closeDetailsPanel();
       }
 
       // Delete key to delete selected file
@@ -738,7 +782,7 @@ export default function ExplorerPage() {
     return () => {
       window.removeEventListener('keydown', handleKeyDown);
     };
-  }, [selectedFile, showDetails, backHistory, forwardHistory, currentPath, isLoading, markNavigationActivity]);
+  }, [selectedFile, showDetails, backHistory, forwardHistory, currentPath, isLoading, markNavigationActivity, closeDetailsPanel]);
 
   useEffect(() => {
     const suppressDefaultMouseNavigation = (event: MouseEvent) => {
@@ -1153,7 +1197,9 @@ export default function ExplorerPage() {
 
   const handleFileSelect = (file: FileItem) => {
     setSelectedFile(file);
-    setShowDetails((prev) => (isRecycleBinPath(currentPath) ? false : prev));
+    if (isRecycleBinPath(currentPath)) {
+      closeDetailsPanel();
+    }
   };
 
   const handleFileOpen = async (file: FileItem) => {
@@ -1275,7 +1321,7 @@ export default function ExplorerPage() {
       setDeleteTarget(null);
       if (selectedFile?.path === target.path) {
         setSelectedFile(null);
-        setShowDetails(false);
+        closeDetailsPanel();
       }
     } catch (error) {
       const typedError = error as FsError | TelegramError;
@@ -1310,7 +1356,7 @@ export default function ExplorerPage() {
 
       if (selectedFile?.path === file.path) {
         setSelectedFile(null);
-        setShowDetails(false);
+        closeDetailsPanel();
       }
 
       await loadDirectory(currentPath, { force: true });
@@ -1545,7 +1591,7 @@ export default function ExplorerPage() {
 
   const handleEmptyAreaContextMenu = (event: React.MouseEvent<HTMLDivElement>) => {
     setSelectedFile(null);
-    setShowDetails(false);
+    closeDetailsPanel();
 
     if (isRecycleBinPath(currentPath)) {
       setContextMenuState(null);
@@ -1719,7 +1765,7 @@ export default function ExplorerPage() {
         setClipboardItem(null);
         if (selectedFile?.path === sourcePath) {
           setSelectedFile(null);
-          setShowDetails(false);
+          closeDetailsPanel();
         }
 
         toast({
@@ -1765,7 +1811,7 @@ export default function ExplorerPage() {
     }
 
     setSelectedFile(file);
-    setShowDetails(true);
+    openDetailsPanel();
   };
 
   const isDraggableItem = (file: FileItem) => {
@@ -1923,7 +1969,7 @@ export default function ExplorerPage() {
 
         if (selectedFile?.path === sourcePath) {
           setSelectedFile(null);
-          setShowDetails(false);
+          closeDetailsPanel();
         }
 
         savedPathCacheRef.current = {};
@@ -1953,7 +1999,7 @@ export default function ExplorerPage() {
 
       if (selectedFile?.path === sourcePath) {
         setSelectedFile(null);
-        setShowDetails(false);
+        closeDetailsPanel();
       }
 
       await loadDirectory(currentPath, { force: true });
@@ -2081,7 +2127,7 @@ export default function ExplorerPage() {
 
   return (
     <div
-      className="h-screen flex overflow-hidden"
+      className="relative h-screen flex overflow-hidden"
       onClick={() => {
         if (contextMenuState) {
           closeContextMenu();
@@ -2333,23 +2379,30 @@ export default function ExplorerPage() {
             )}
           </div>
 
-          {/* Details panel */}
-          {showDetails && !isRecycleBinView && (
-            <div ref={detailsPanelRef}>
-              <DetailsPanel
-                file={selectedFile}
-                onClose={() => setShowDetails(false)}
-                onToggleFavorite={handleToggleFavorite}
-                onRename={handleRename}
-                onDelete={() => selectedFile && setDeleteTarget(selectedFile)}
-                onCopyPath={handleCopyPath}
-                onOpenLocation={() => toast({ title: "Reveal in folder" })}
-                isFavorite={selectedFile ? favorites.includes(selectedFile.path) : false}
-              />
-            </div>
-          )}
         </div>
       </div>
+
+      {/* Details panel overlay */}
+      {showDetails && !isRecycleBinView && (
+        <div
+          ref={detailsPanelRef}
+          className={`absolute inset-y-0 left-0 z-[70] w-64 transition-all duration-200 ease-out ${isDetailsPanelOpen
+            ? "translate-x-0 opacity-100"
+            : "-translate-x-4 opacity-0 pointer-events-none"
+            }`}
+        >
+          <DetailsPanel
+            file={selectedFile}
+            onClose={closeDetailsPanel}
+            onToggleFavorite={handleToggleFavorite}
+            onRename={handleRename}
+            onDelete={() => selectedFile && setDeleteTarget(selectedFile)}
+            onCopyPath={handleCopyPath}
+            onOpenLocation={() => toast({ title: "Reveal in folder" })}
+            isFavorite={selectedFile ? favorites.includes(selectedFile.path) : false}
+          />
+        </div>
+      )}
 
       {contextMenuState && (
         <div
