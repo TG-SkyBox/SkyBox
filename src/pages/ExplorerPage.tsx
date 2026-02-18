@@ -410,7 +410,10 @@ const savedToVirtualPath = (savedPath: string): string => {
 };
 
 const savedItemToFileItem = (item: TelegramSavedItem): FileItem => {
-  const isTextMessage = item.file_type === "text";
+  const parentVirtualPath = savedToVirtualPath(item.file_path);
+  const isInsideNotesFolder = parentVirtualPath === NOTES_VIRTUAL_PATH
+    || parentVirtualPath.startsWith(`${NOTES_VIRTUAL_PATH}/`);
+  const isTextMessage = item.file_type === "text" || isInsideNotesFolder;
   const noteText = isTextMessage ? buildNoteDisplayText(item.file_caption) : undefined;
   const resolvedName = item.file_name?.trim()
     ? item.file_name
@@ -1719,6 +1722,7 @@ export default function ExplorerPage() {
   const cutPathSet = useMemo(() => (cutClipboardPath ? new Set([cutClipboardPath]) : undefined), [cutClipboardPath]);
   const isRecycleBinView = isRecycleBinPath(currentPath);
   const isNotesFolderView = isNotesVirtualPath(currentPath);
+  const effectiveViewMode: ExplorerViewMode = isNotesFolderView ? "list" : viewMode;
   const currentMediaViewerFile = isMediaViewerOpen
     ? mediaViewerItems[mediaViewerIndex] ?? null
     : null;
@@ -3629,24 +3633,26 @@ export default function ExplorerPage() {
               placeholder="Search files..."
             />
 
-            <div className="flex items-center gap-1 ml-2">
-              <button
-                onClick={() => handleViewModeChange("list")}
-                className={`p-2 rounded transition-colors ${viewMode === "list" ? "bg-secondary text-foreground" : "text-muted-foreground hover:text-foreground"
-                  }`}
-                title="List view"
-              >
-                <List className="w-4 h-4" />
-              </button>
-              <button
-                onClick={() => handleViewModeChange("grid")}
-                className={`p-2 rounded transition-colors ${viewMode === "grid" ? "bg-secondary text-foreground" : "text-muted-foreground hover:text-foreground"
-                  }`}
-                title="Grid view"
-              >
-                <Grid className="w-4 h-4" />
-              </button>
-            </div>
+            {!isNotesFolderView && (
+              <div className="flex items-center gap-1 ml-2">
+                <button
+                  onClick={() => handleViewModeChange("list")}
+                  className={`p-2 rounded transition-colors ${viewMode === "list" ? "bg-secondary text-foreground" : "text-muted-foreground hover:text-foreground"
+                    }`}
+                  title="List view"
+                >
+                  <List className="w-4 h-4" />
+                </button>
+                <button
+                  onClick={() => handleViewModeChange("grid")}
+                  className={`p-2 rounded transition-colors ${viewMode === "grid" ? "bg-secondary text-foreground" : "text-muted-foreground hover:text-foreground"
+                    }`}
+                  title="Grid view"
+                >
+                  <Grid className="w-4 h-4" />
+                </button>
+              </div>
+            )}
           </div>
         </div>
 
@@ -3873,7 +3879,7 @@ export default function ExplorerPage() {
               </div>
             ) : isDirectoryLoading ? (
               <div className="h-full">
-                {viewMode === "list" ? (
+                {effectiveViewMode === "list" ? (
                   <div className="space-y-1">
                     {Array.from({ length: 10 }).map((_, index) => (
                       <div key={`list-skeleton-${index}`} className="flex items-center gap-3 px-3 py-1 rounded-lg bg-secondary/20">
@@ -3918,8 +3924,8 @@ export default function ExplorerPage() {
                 )}
               </div>
             ) : (
-              <div className={viewMode === "list" ? "space-y-0.5" : "p-1"}>
-                {viewMode === "list" ? (
+              <div className={effectiveViewMode === "list" ? "space-y-0.5" : "p-1"}>
+                {effectiveViewMode === "list" ? (
                   <>
                     {sortedFiles.map((file) => (
                       <FileRow
