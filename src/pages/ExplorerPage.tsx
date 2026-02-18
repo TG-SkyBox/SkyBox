@@ -2605,6 +2605,7 @@ export default function ExplorerPage() {
         }
 
         setClipboardItem(null);
+        savedPathCacheRef.current = {};
         return;
       }
 
@@ -3778,6 +3779,18 @@ export default function ExplorerPage() {
                         <Skeleton className="skeleton-shimmer h-3 w-16 bg-secondary/40" />
                       </div>
                     ))}
+
+                    {pasteSkeletonCount > 0 && (
+                      <div
+                        key="paste-list-skeleton"
+                        className="flex items-center gap-3 px-3 py-1.5 rounded-lg bg-secondary/20"
+                      >
+                        <Skeleton className="skeleton-shimmer h-8 w-8 rounded-md bg-secondary/55" />
+                        <Skeleton className="skeleton-shimmer h-4 flex-1 max-w-[45%] bg-secondary/45" />
+                        <Skeleton className="skeleton-shimmer h-3 w-14 bg-secondary/40" />
+                        <Skeleton className="skeleton-shimmer h-3 w-16 bg-secondary/40" />
+                      </div>
+                    )}
                   </>
                 ) : (
                   <>
@@ -3796,18 +3809,30 @@ export default function ExplorerPage() {
                       onDragOver={(event, file) => handleItemDragOver(event, file)}
                       onDragLeave={(_, file) => handleItemDragLeave(file)}
                       onDrop={(event, file) => handleItemDrop(event, file)}
-                      appendItems={uploadSkeletonCount > 0
-                        ? Array.from({ length: uploadSkeletonCount }).map((_, index) => (
-                          <div
-                            key={`upload-grid-skeleton-${index}`}
-                            className="flex flex-col items-center p-2 rounded-xl bg-secondary/20"
-                          >
-                            <Skeleton className="skeleton-shimmer h-24 w-24 rounded-lg bg-secondary/50" />
-                            <Skeleton className="skeleton-shimmer h-4 w-20 mt-3 bg-secondary/45" />
-                            <Skeleton className="skeleton-shimmer h-3 w-12 mt-1.5 bg-secondary/40" />
-                          </div>
-                        ))
-                        : null}
+                      appendItems={
+                        <>
+                          {Array.from({ length: uploadSkeletonCount }).map((_, index) => (
+                            <div
+                              key={`upload-grid-skeleton-${index}`}
+                              className="flex flex-col items-center p-2 rounded-xl bg-secondary/20"
+                            >
+                              <Skeleton className="skeleton-shimmer h-24 w-24 rounded-lg bg-secondary/50" />
+                              <Skeleton className="skeleton-shimmer h-4 w-20 mt-3 bg-secondary/45" />
+                              <Skeleton className="skeleton-shimmer h-3 w-12 mt-1.5 bg-secondary/40" />
+                            </div>
+                          ))}
+                          {pasteSkeletonCount > 0 && (
+                            <div
+                              key="paste-grid-skeleton"
+                              className="flex flex-col items-center p-2 rounded-xl bg-secondary/20"
+                            >
+                              <Skeleton className="skeleton-shimmer h-24 w-24 rounded-lg bg-secondary/50" />
+                              <Skeleton className="skeleton-shimmer h-4 w-20 mt-3 bg-secondary/45" />
+                              <Skeleton className="skeleton-shimmer h-3 w-12 mt-1.5 bg-secondary/40" />
+                            </div>
+                          )}
+                        </>
+                      }
                     />
                   </>
                 )}
