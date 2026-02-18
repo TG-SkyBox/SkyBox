@@ -1862,10 +1862,6 @@ export default function ExplorerPage() {
 
   const handleRefresh = async () => {
     await loadDirectory(currentPath, { force: true });
-    toast({
-      title: "Refreshed",
-      description: "Directory contents refreshed"
-    });
   };
 
   const handleLogout = async () => {
@@ -2587,7 +2583,6 @@ export default function ExplorerPage() {
 
       let uploadedCount = 0;
       let failedCount = 0;
-      const uploadedCategories = new Set<string>();
 
       for (const droppedFile of droppedFiles) {
         currentUploadingFileName = droppedFile.name;
@@ -2602,14 +2597,13 @@ export default function ExplorerPage() {
 
         try {
           const fileBytes = Array.from(new Uint8Array(await droppedFile.arrayBuffer()));
-          const uploadedMessage: TelegramMessage = await invoke("tg_upload_file_to_saved_messages", {
+          await invoke<TelegramMessage>("tg_upload_file_to_saved_messages", {
             fileName: droppedFile.name,
             fileBytes,
             filePath: virtualToSavedPath(currentPath),
           });
 
           uploadedCount += 1;
-          uploadedCategories.add(uploadedMessage.category);
         } catch (error) {
           failedCount += 1;
           console.error("Failed to upload file:", droppedFile.name, error);
@@ -2629,15 +2623,6 @@ export default function ExplorerPage() {
       if (uploadedCount > 0) {
         savedPathCacheRef.current = {};
         await loadDirectory(currentPath, { force: true });
-
-        const categorySummary = uploadedCategories.size
-          ? ` to ${Array.from(uploadedCategories).join(", ")}`
-          : "";
-
-        toast({
-          title: "Upload complete",
-          description: `Uploaded ${uploadedCount} file${uploadedCount === 1 ? "" : "s"}${categorySummary}`,
-        });
       }
 
       if (failedCount > 0) {
