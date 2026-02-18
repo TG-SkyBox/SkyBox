@@ -4008,27 +4008,47 @@ export default function ExplorerPage() {
                     ))}
 
                     {Array.from({ length: uploadSkeletonCount }).map((_, index) => (
-                      <div
-                        key={`upload-list-skeleton-${index}`}
-                        className="flex items-center gap-3 px-3 py-1.5 rounded-lg bg-secondary/20"
-                      >
-                        <Skeleton className="skeleton-shimmer h-8 w-8 rounded-md bg-secondary/55" />
-                        <Skeleton className="skeleton-shimmer h-4 flex-1 max-w-[45%] bg-secondary/45" />
-                        <Skeleton className="skeleton-shimmer h-3 w-14 bg-secondary/40" />
-                        <Skeleton className="skeleton-shimmer h-3 w-16 bg-secondary/40" />
-                      </div>
+                      isNotesFolderView ? (
+                        <div key={`upload-list-skeleton-${index}`} className="px-2 py-1">
+                          <div className="ml-auto max-w-[86%] rounded-2xl rounded-br-md border border-border/60 bg-secondary/25 px-3 py-2">
+                            <Skeleton className="skeleton-shimmer h-4 w-[66%] bg-secondary/50" />
+                            <Skeleton className="skeleton-shimmer h-4 w-[42%] mt-1.5 bg-secondary/45" />
+                            <Skeleton className="skeleton-shimmer h-3 w-12 mt-2 ml-auto bg-secondary/40" />
+                          </div>
+                        </div>
+                      ) : (
+                        <div
+                          key={`upload-list-skeleton-${index}`}
+                          className="flex items-center gap-3 px-3 py-1.5 rounded-lg bg-secondary/20"
+                        >
+                          <Skeleton className="skeleton-shimmer h-8 w-8 rounded-md bg-secondary/55" />
+                          <Skeleton className="skeleton-shimmer h-4 flex-1 max-w-[45%] bg-secondary/45" />
+                          <Skeleton className="skeleton-shimmer h-3 w-14 bg-secondary/40" />
+                          <Skeleton className="skeleton-shimmer h-3 w-16 bg-secondary/40" />
+                        </div>
+                      )
                     ))}
 
                     {pasteSkeletonCount > 0 && (
-                      <div
-                        key="paste-list-skeleton"
-                        className="flex items-center gap-3 px-3 py-1.5 rounded-lg bg-secondary/20"
-                      >
-                        <Skeleton className="skeleton-shimmer h-8 w-8 rounded-md bg-secondary/55" />
-                        <Skeleton className="skeleton-shimmer h-4 flex-1 max-w-[45%] bg-secondary/45" />
-                        <Skeleton className="skeleton-shimmer h-3 w-14 bg-secondary/40" />
-                        <Skeleton className="skeleton-shimmer h-3 w-16 bg-secondary/40" />
-                      </div>
+                      isNotesFolderView ? (
+                        <div key="paste-list-skeleton" className="px-2 py-1">
+                          <div className="ml-auto max-w-[86%] rounded-2xl rounded-br-md border border-border/60 bg-secondary/25 px-3 py-2">
+                            <Skeleton className="skeleton-shimmer h-4 w-[64%] bg-secondary/50" />
+                            <Skeleton className="skeleton-shimmer h-4 w-[50%] mt-1.5 bg-secondary/45" />
+                            <Skeleton className="skeleton-shimmer h-3 w-12 mt-2 ml-auto bg-secondary/40" />
+                          </div>
+                        </div>
+                      ) : (
+                        <div
+                          key="paste-list-skeleton"
+                          className="flex items-center gap-3 px-3 py-1.5 rounded-lg bg-secondary/20"
+                        >
+                          <Skeleton className="skeleton-shimmer h-8 w-8 rounded-md bg-secondary/55" />
+                          <Skeleton className="skeleton-shimmer h-4 flex-1 max-w-[45%] bg-secondary/45" />
+                          <Skeleton className="skeleton-shimmer h-3 w-14 bg-secondary/40" />
+                          <Skeleton className="skeleton-shimmer h-3 w-16 bg-secondary/40" />
+                        </div>
+                      )
                     )}
                   </>
                 ) : (
