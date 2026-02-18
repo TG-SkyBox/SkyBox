@@ -377,6 +377,56 @@ const savedItemToFileItem = (item: TelegramSavedItem): FileItem => {
   };
 };
 
+const telegramMessageToFileItem = (message: TelegramMessage): FileItem => {
+  const fallbackName = message.extension
+    ? `message_${message.message_id}.${message.extension}`
+    : `message_${message.message_id}`;
+  const resolvedName = message.filename?.trim() ? message.filename : fallbackName;
+
+  return {
+    name: resolvedName,
+    path: `tg://msg/${message.message_id}`,
+    isDirectory: false,
+    size: typeof message.size === "number" ? message.size : undefined,
+    modifiedAt: message.timestamp,
+    extension: message.extension || extensionFromFileName(resolvedName),
+    messageId: message.message_id > 0 ? message.message_id : undefined,
+    thumbnail: resolveThumbnailSrc(message.thumbnail),
+  };
+};
+
+const mergeFileItemsByIdentity = (existingItems: FileItem[], newItems: FileItem[]): FileItem[] => {
+  if (!newItems.length) {
+    return existingItems;
+  }
+
+  const existingPaths = new Set(existingItems.map((item) => item.path));
+  const existingMessageIds = new Set(
+    existingItems
+      .map((item) => item.messageId)
+      .filter((id): id is number => !!id && id > 0),
+  );
+
+  const merged = [...existingItems];
+  for (const item of newItems) {
+    if (existingPaths.has(item.path)) {
+      continue;
+    }
+
+    if (item.messageId && existingMessageIds.has(item.messageId)) {
+      continue;
+    }
+
+    merged.push(item);
+    existingPaths.add(item.path);
+    if (item.messageId) {
+      existingMessageIds.add(item.messageId);
+    }
+  }
+
+  return merged;
+};
+
 export default function ExplorerPage() {
   const navigate = useNavigate();
   const location = useLocation();
@@ -1060,6 +1110,46 @@ export default function ExplorerPage() {
     setCurrentPath(path);
     cacheSavedPath(path, allItems, allItems.length, false, true);
     prefetchThumbnailsForItems(allItems);
+  };
+
+  const appendUploadedItemsToSavedFolder = (targetPath: string, uploadedMessages: TelegramMessage[]) => {
+    if (!uploadedMessages.length) {
+      return;
+    }
+
+    const uploadedItems = uploadedMessages.map(telegramMessageToFileItem);
+    const cacheEntry = savedPathCacheRef.current[targetPath];
+
+    if (cacheEntry) {
+      const mergedCacheItems = mergeFileItemsByIdentity(cacheEntry.items, uploadedItems);
+      const addedCacheCount = mergedCacheItems.length - cacheEntry.items.length;
+      savedPathCacheRef.current[targetPath] = {
+        ...cacheEntry,
+        items: mergedCacheItems,
+        nextOffset: cacheEntry.nextOffset + Math.max(0, addedCacheCount),
+      };
+    }
+
+    if (currentPathRef.current === targetPath) {
+      const mergedVisibleItems = mergeFileItemsByIdentity(filesRef.current, uploadedItems);
+      const addedVisibleCount = mergedVisibleItems.length - filesRef.current.length;
+
+      setFiles(mergedVisibleItems);
+      if (addedVisibleCount > 0) {
+        setSavedItemsOffset((prev) => prev + addedVisibleCount);
+      }
+
+      if (!cacheEntry) {
+        savedPathCacheRef.current[targetPath] = {
+          items: mergedVisibleItems,
+          nextOffset: savedItemsOffset + Math.max(0, addedVisibleCount),
+          hasMore: hasMoreSavedItems,
+          isCompleteSnapshot: !hasMoreSavedItems && isSavedSyncComplete,
+        };
+      }
+    }
+
+    prefetchThumbnailsForItems(uploadedItems);
   };
 
   const loadMoreSavedItems = async () => {
@@ -2541,6 +2631,8 @@ export default function ExplorerPage() {
       return;
     }
 
+    const uploadTargetPath = currentPath;
+
     setIsUploadingFiles(true);
     clearUploadProgressTimers();
     setIsUploadProgressMounted(true);
@@ -2589,6 +2681,7 @@ export default function ExplorerPage() {
 
       let uploadedCount = 0;
       let failedCount = 0;
+      const uploadedMessages: TelegramMessage[] = [];
 
       for (const droppedFile of droppedFiles) {
         currentUploadingFileName = droppedFile.name;
@@ -2603,13 +2696,14 @@ export default function ExplorerPage() {
 
         try {
           const fileBytes = Array.from(new Uint8Array(await droppedFile.arrayBuffer()));
-          await invoke<TelegramMessage>("tg_upload_file_to_saved_messages", {
+          const uploadedMessage = await invoke<TelegramMessage>("tg_upload_file_to_saved_messages", {
             fileName: droppedFile.name,
             fileBytes,
-            filePath: virtualToSavedPath(currentPath),
+            filePath: virtualToSavedPath(uploadTargetPath),
           });
 
           uploadedCount += 1;
+          uploadedMessages.push(uploadedMessage);
         } catch (error) {
           failedCount += 1;
           console.error("Failed to upload file:", droppedFile.name, error);
@@ -2627,8 +2721,7 @@ export default function ExplorerPage() {
       }
 
       if (uploadedCount > 0) {
-        savedPathCacheRef.current = {};
-        await loadDirectory(currentPath, { force: true });
+        appendUploadedItemsToSavedFolder(uploadTargetPath, uploadedMessages);
       }
 
       if (failedCount > 0) {
