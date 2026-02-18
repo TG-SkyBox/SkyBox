@@ -155,6 +155,7 @@ interface UploadProgressState {
   totalFiles: number;
   uploadedFiles: number;
   failedFiles: number;
+  activeFileProgress: number;
 }
 
 interface SavedPathCacheEntry {
@@ -1309,12 +1310,15 @@ export default function ExplorerPage() {
   const uploadProcessedFiles = uploadProgress
     ? uploadProgress.uploadedFiles + uploadProgress.failedFiles
     : 0;
+  const uploadEffectiveProcessedFiles = uploadProgress
+    ? uploadProcessedFiles + Math.max(0, Math.min(0.95, uploadProgress.activeFileProgress))
+    : 0;
   const isUploadInProgress =
     isUploadingFiles &&
     !!uploadProgress &&
     uploadProcessedFiles < uploadProgress.totalFiles;
   const uploadProgressPercent = uploadProgress && uploadProgress.totalFiles > 0
-    ? Math.min(100, Math.max(0, Math.round((uploadProcessedFiles / uploadProgress.totalFiles) * 100)))
+    ? Math.min(100, Math.max(0, Math.round((uploadEffectiveProcessedFiles / uploadProgress.totalFiles) * 100)))
     : 0;
   const uploadProgressLabel = uploadProgress
     ? `${uploadProcessedFiles}/${uploadProgress.totalFiles} files`
@@ -2508,6 +2512,7 @@ export default function ExplorerPage() {
       totalFiles: droppedFiles.length,
       uploadedFiles: 0,
       failedFiles: 0,
+      activeFileProgress: 0,
     });
 
     try {
@@ -2516,6 +2521,24 @@ export default function ExplorerPage() {
       const uploadedCategories = new Set<string>();
 
       for (const droppedFile of droppedFiles) {
+        let activeFileProgress = 0;
+        const progressTimer = window.setInterval(() => {
+          activeFileProgress = Math.min(0.92, activeFileProgress + 0.03);
+          setUploadProgress({
+            totalFiles: droppedFiles.length,
+            uploadedFiles: uploadedCount,
+            failedFiles: failedCount,
+            activeFileProgress,
+          });
+        }, 140);
+
+        setUploadProgress({
+          totalFiles: droppedFiles.length,
+          uploadedFiles: uploadedCount,
+          failedFiles: failedCount,
+          activeFileProgress: 0.08,
+        });
+
         try {
           const fileBytes = Array.from(new Uint8Array(await droppedFile.arrayBuffer()));
           const uploadedMessage: TelegramMessage = await invoke("tg_upload_file_to_saved_messages", {
@@ -2529,12 +2552,15 @@ export default function ExplorerPage() {
         } catch (error) {
           failedCount += 1;
           console.error("Failed to upload file:", droppedFile.name, error);
+        } finally {
+          window.clearInterval(progressTimer);
         }
 
         setUploadProgress({
           totalFiles: droppedFiles.length,
           uploadedFiles: uploadedCount,
           failedFiles: failedCount,
+          activeFileProgress: 0,
         });
       }
 
@@ -2845,18 +2871,6 @@ export default function ExplorerPage() {
               <div className={viewMode === "list" ? "space-y-0.5" : "p-1"}>
                 {viewMode === "list" ? (
                   <>
-                    {Array.from({ length: uploadSkeletonCount }).map((_, index) => (
-                      <div
-                        key={`upload-list-skeleton-${index}`}
-                        className="flex items-center gap-3 px-3 py-1.5 rounded-lg border border-primary/12 bg-secondary/20"
-                      >
-                        <Skeleton className="skeleton-shimmer h-8 w-8 rounded-md bg-secondary/55" />
-                        <Skeleton className="skeleton-shimmer h-4 flex-1 max-w-[45%] bg-secondary/45" />
-                        <Skeleton className="skeleton-shimmer h-3 w-14 bg-secondary/40" />
-                        <Skeleton className="skeleton-shimmer h-3 w-16 bg-secondary/40" />
-                      </div>
-                    ))}
-
                     {sortedFiles.map((file) => (
                       <FileRow
                         key={file.path}
@@ -2874,24 +2888,21 @@ export default function ExplorerPage() {
                         onDrop={(event) => handleItemDrop(event, file)}
                       />
                     ))}
+
+                    {Array.from({ length: uploadSkeletonCount }).map((_, index) => (
+                      <div
+                        key={`upload-list-skeleton-${index}`}
+                        className="flex items-center gap-3 px-3 py-1.5 rounded-lg border border-primary/12 bg-secondary/20"
+                      >
+                        <Skeleton className="skeleton-shimmer h-8 w-8 rounded-md bg-secondary/55" />
+                        <Skeleton className="skeleton-shimmer h-4 flex-1 max-w-[45%] bg-secondary/45" />
+                        <Skeleton className="skeleton-shimmer h-3 w-14 bg-secondary/40" />
+                        <Skeleton className="skeleton-shimmer h-3 w-16 bg-secondary/40" />
+                      </div>
+                    ))}
                   </>
                 ) : (
                   <>
-                    {uploadSkeletonCount > 0 && (
-                      <div className="grid [grid-template-columns:repeat(auto-fill,minmax(8.75rem,8.75rem))] justify-start gap-3 mb-3">
-                        {Array.from({ length: uploadSkeletonCount }).map((_, index) => (
-                          <div
-                            key={`upload-grid-skeleton-${index}`}
-                            className="flex flex-col items-center p-2 rounded-xl border border-primary/12 bg-secondary/20"
-                          >
-                            <Skeleton className="skeleton-shimmer h-24 w-24 rounded-lg bg-secondary/50" />
-                            <Skeleton className="skeleton-shimmer h-4 w-20 mt-3 bg-secondary/45" />
-                            <Skeleton className="skeleton-shimmer h-3 w-12 mt-1.5 bg-secondary/40" />
-                          </div>
-                        ))}
-                      </div>
-                    )}
-
                     {sortedFiles.length > 0 && (
                       <FileGrid
                         files={sortedFiles}
@@ -2907,6 +2918,21 @@ export default function ExplorerPage() {
                         onDragLeave={(_, file) => handleItemDragLeave(file)}
                         onDrop={(event, file) => handleItemDrop(event, file)}
                       />
+                    )}
+
+                    {uploadSkeletonCount > 0 && (
+                      <div className={`grid [grid-template-columns:repeat(auto-fill,minmax(8.75rem,8.75rem))] justify-start gap-3 ${sortedFiles.length > 0 ? "mt-3" : ""}`}>
+                        {Array.from({ length: uploadSkeletonCount }).map((_, index) => (
+                          <div
+                            key={`upload-grid-skeleton-${index}`}
+                            className="flex flex-col items-center p-2 rounded-xl border border-primary/12 bg-secondary/20"
+                          >
+                            <Skeleton className="skeleton-shimmer h-24 w-24 rounded-lg bg-secondary/50" />
+                            <Skeleton className="skeleton-shimmer h-4 w-20 mt-3 bg-secondary/45" />
+                            <Skeleton className="skeleton-shimmer h-3 w-12 mt-1.5 bg-secondary/40" />
+                          </div>
+                        ))}
+                      </div>
                     )}
                   </>
                 )}
