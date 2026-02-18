@@ -2098,6 +2098,183 @@ pub async fn tg_rename_saved_item_impl(
     Ok(())
 }
 
+pub async fn tg_send_saved_note_message_impl(
+    db: Database,
+    text: String,
+) -> Result<TelegramMessage, TelegramError> {
+    let trimmed_text = text.trim();
+    if trimmed_text.is_empty() {
+        return Err(TelegramError {
+            message: "Message cannot be empty".to_string(),
+        });
+    }
+
+    let client = {
+        let state_guard = AUTH_STATE.lock().await;
+        let state = state_guard.as_ref().ok_or_else(|| TelegramError {
+            message: "Not authorized".to_string(),
+        })?;
+
+        state.client.clone()
+    };
+
+    let me = run_telegram_request("tg_send_saved_note_message_impl.get_me", || async {
+        client.get_me().await
+    })
+    .await
+    .map_err(|e| TelegramError {
+        message: format!("Failed to get user info: {}", e),
+    })?;
+
+    let owner_id = me.raw.id().to_string();
+    let chat_id = me.raw.id();
+
+    let input_peer = match &me.raw {
+        tl::enums::User::User(user) => tl::types::InputPeerUser {
+            user_id: user.id,
+            access_hash: user.access_hash.unwrap_or(0),
+        }
+        .into(),
+        _ => {
+            return Err(TelegramError {
+                message: "Unable to resolve Saved Messages peer".to_string(),
+            });
+        }
+    };
+
+    let text_to_send = trimmed_text.to_string();
+    let sent_message = run_telegram_request("tg_send_saved_note_message_impl.send_message", || {
+        let text_to_send = text_to_send.clone();
+        async {
+            client
+                .send_message(input_peer.clone(), InputMessage::new().text(text_to_send))
+                .await
+        }
+    })
+    .await
+    .map_err(|e| TelegramError {
+        message: format!("Failed to send note message: {}", e),
+    })?;
+
+    let mut telegram_message = categorize_message(&sent_message, chat_id).ok_or_else(|| TelegramError {
+        message: "Failed to map sent message".to_string(),
+    })?;
+
+    telegram_message.category = "Notes".to_string();
+
+    db.save_telegram_message(&telegram_message)
+        .map_err(|e| TelegramError {
+            message: format!("Failed to save sent note metadata: {}", e.message),
+        })?;
+
+    db.ensure_telegram_saved_folders(&owner_id)
+        .map_err(|e| TelegramError {
+            message: format!("Failed to ensure default folders: {}", e.message),
+        })?;
+
+    upsert_saved_item_from_message(&db, &owner_id, &telegram_message, Some("/Home/Notes"), None)?;
+
+    Ok(telegram_message)
+}
+
+pub async fn tg_edit_saved_note_message_impl(
+    db: Database,
+    source_path: String,
+    text: String,
+) -> Result<(), TelegramError> {
+    let message_id = parse_message_id_from_virtual_path(&source_path).ok_or_else(|| TelegramError {
+        message: "Only note messages can be edited".to_string(),
+    })?;
+
+    let trimmed_text = text.trim();
+    if trimmed_text.is_empty() {
+        return Err(TelegramError {
+            message: "Message cannot be empty".to_string(),
+        });
+    }
+
+    let client = {
+        let state_guard = AUTH_STATE.lock().await;
+        let state = state_guard.as_ref().ok_or_else(|| TelegramError {
+            message: "Not authorized".to_string(),
+        })?;
+
+        state.client.clone()
+    };
+
+    let me = run_telegram_request("tg_edit_saved_note_message_impl.get_me", || async {
+        client.get_me().await
+    })
+    .await
+    .map_err(|e| TelegramError {
+        message: format!("Failed to get user info: {}", e),
+    })?;
+
+    let owner_id = me.raw.id().to_string();
+    let chat_id = me.raw.id();
+
+    let cached_message = db
+        .get_telegram_message(chat_id, message_id)
+        .map_err(|e| TelegramError {
+            message: format!("Failed to read cached message: {}", e.message),
+        })?
+        .ok_or_else(|| TelegramError {
+            message: "Message not found in local index".to_string(),
+        })?;
+
+    if !cached_message.category.eq_ignore_ascii_case("Notes") {
+        return Err(TelegramError {
+            message: "Only Notes messages can be edited".to_string(),
+        });
+    }
+
+    let input_peer = match &me.raw {
+        tl::enums::User::User(user) => tl::types::InputPeerUser {
+            user_id: user.id,
+            access_hash: user.access_hash.unwrap_or(0),
+        }
+        .into(),
+        _ => {
+            return Err(TelegramError {
+                message: "Unable to resolve Saved Messages peer".to_string(),
+            });
+        }
+    };
+
+    let text_to_send = trimmed_text.to_string();
+    run_telegram_request("tg_edit_saved_note_message_impl.edit_message", || {
+        let text_to_send = text_to_send.clone();
+        async {
+            client
+                .edit_message(input_peer.clone(), message_id, InputMessage::new().text(text_to_send))
+                .await
+        }
+    })
+    .await
+    .map_err(|e| TelegramError {
+        message: format!("Failed to edit note message: {}", e),
+    })?;
+
+    let modified_date = chrono::Utc::now().to_rfc3339();
+
+    db.update_telegram_message_text(chat_id, message_id, trimmed_text, &modified_date)
+        .map_err(|e| TelegramError {
+            message: format!("Failed to update cached message text: {}", e.message),
+        })?;
+
+    db.update_telegram_saved_item_caption_by_message_id(
+        &owner_id,
+        message_id,
+        trimmed_text,
+        &modified_date,
+    )
+    .map_err(|e| TelegramError {
+        message: format!("Failed to update saved item caption: {}", e.message),
+    })?;
+
+    Ok(())
+}
+
 async fn get_or_fetch_message_thumbnail_impl(
     db: &Database,
     client: &grammers_client::Client,
