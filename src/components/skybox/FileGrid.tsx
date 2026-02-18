@@ -1,5 +1,6 @@
 import { FileItem, getFileIcon, formatFileSize } from "./FileRow";
 import { useState, useEffect } from "react";
+import type { ReactNode } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { resolveThumbnailSrc } from "@/lib/thumbnail-src";
 
@@ -16,6 +17,7 @@ interface FileGridProps {
     onDragOver?: (e: React.DragEvent, file: FileItem) => void;
     onDragLeave?: (e: React.DragEvent, file: FileItem) => void;
     onDrop?: (e: React.DragEvent, file: FileItem) => void;
+    appendItems?: ReactNode;
 }
 
 export function FileGrid({
@@ -31,6 +33,7 @@ export function FileGrid({
     onDragOver,
     onDragLeave,
     onDrop,
+    appendItems,
 }: FileGridProps) {
     return (
         <div className="grid [grid-template-columns:repeat(auto-fill,minmax(8.75rem,8.75rem))] justify-start gap-3">
@@ -51,6 +54,7 @@ export function FileGrid({
                     onDrop={(e) => onDrop?.(e, file)}
                 />
             ))}
+            {appendItems}
         </div>
     );
 }

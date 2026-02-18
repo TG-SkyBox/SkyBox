@@ -2981,26 +2981,21 @@ export default function ExplorerPage() {
                   </>
                 ) : (
                   <>
-                    {sortedFiles.length > 0 && (
-                      <FileGrid
-                        files={sortedFiles}
-                        selectedFile={selectedFile}
-                        onSelect={handleFileSelect}
-                        onOpen={handleFileOpen}
-                        onContextMenu={(event, file) => handleFileContextMenu(event, file)}
-                        isDraggable={isDraggableItem}
-                        isDropTarget={(file) => dropTargetPath === file.path}
-                        onDragStart={(event, file) => handleItemDragStart(event, file)}
-                        onDragEnd={handleItemDragEnd}
-                        onDragOver={(event, file) => handleItemDragOver(event, file)}
-                        onDragLeave={(_, file) => handleItemDragLeave(file)}
-                        onDrop={(event, file) => handleItemDrop(event, file)}
-                      />
-                    )}
-
-                    {uploadSkeletonCount > 0 && (
-                      <div className={`grid [grid-template-columns:repeat(auto-fill,minmax(8.75rem,8.75rem))] justify-start gap-3 ${sortedFiles.length > 0 ? "mt-3" : ""}`}>
-                        {Array.from({ length: uploadSkeletonCount }).map((_, index) => (
+                    <FileGrid
+                      files={sortedFiles}
+                      selectedFile={selectedFile}
+                      onSelect={handleFileSelect}
+                      onOpen={handleFileOpen}
+                      onContextMenu={(event, file) => handleFileContextMenu(event, file)}
+                      isDraggable={isDraggableItem}
+                      isDropTarget={(file) => dropTargetPath === file.path}
+                      onDragStart={(event, file) => handleItemDragStart(event, file)}
+                      onDragEnd={handleItemDragEnd}
+                      onDragOver={(event, file) => handleItemDragOver(event, file)}
+                      onDragLeave={(_, file) => handleItemDragLeave(file)}
+                      onDrop={(event, file) => handleItemDrop(event, file)}
+                      appendItems={uploadSkeletonCount > 0
+                        ? Array.from({ length: uploadSkeletonCount }).map((_, index) => (
                           <div
                             key={`upload-grid-skeleton-${index}`}
                             className="flex flex-col items-center p-2 rounded-xl border border-primary/12 bg-secondary/20"
@@ -3009,9 +3004,9 @@ export default function ExplorerPage() {
                             <Skeleton className="skeleton-shimmer h-4 w-20 mt-3 bg-secondary/45" />
                             <Skeleton className="skeleton-shimmer h-3 w-12 mt-1.5 bg-secondary/40" />
                           </div>
-                        ))}
-                      </div>
-                    )}
+                        ))
+                        : null}
+                    />
                   </>
                 )}
 
