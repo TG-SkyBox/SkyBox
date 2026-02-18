@@ -236,6 +236,14 @@ const INTERNAL_DRAG_MIME = "application/x-skybox-item-path";
 const SAVED_ITEMS_PAGE_SIZE = 50;
 const EXPLORER_VIEW_MODE_KEY = "explorer_view_mode";
 const RECYCLE_BIN_VIRTUAL_PATH = "tg://saved/Recycle Bin";
+const NOTES_VIRTUAL_PATH = "tg://saved/Notes";
+const SAVED_PROTECTED_FOLDER_PATHS = new Set([
+  "tg://saved/Images",
+  "tg://saved/Videos",
+  "tg://saved/Audios",
+  "tg://saved/Documents",
+  NOTES_VIRTUAL_PATH,
+]);
 const DETAILS_PANEL_ANIMATION_MS = 220;
 const UPLOAD_PROGRESS_ANIMATION_MS = 240;
 
@@ -288,6 +296,10 @@ const isSavedVirtualItemPath = (path: string): boolean => isSavedVirtualFolderPa
 const isRecycleBinPath = (path: string): boolean => (
   path === RECYCLE_BIN_VIRTUAL_PATH || path.startsWith(`${RECYCLE_BIN_VIRTUAL_PATH}/`)
 );
+const isNotesVirtualPath = (path: string): boolean => (
+  path === NOTES_VIRTUAL_PATH || path.startsWith(`${NOTES_VIRTUAL_PATH}/`)
+);
+const isProtectedSavedFolderPath = (path: string): boolean => SAVED_PROTECTED_FOLDER_PATHS.has(path);
 
 const normalizePath = (path: string): string => path.replace(/\\/g, "/");
 
@@ -366,6 +378,15 @@ const extensionFromFileName = (fileName: string): string | undefined => {
   return parts[parts.length - 1]?.toLowerCase();
 };
 
+const buildNoteDisplayText = (rawText?: string | null): string => {
+  const normalized = (rawText || "").trim();
+  if (!normalized) {
+    return "(empty message)";
+  }
+
+  return normalized;
+};
+
 const virtualToSavedPath = (virtualPath: string): string => {
   if (virtualPath === "tg://saved") {
     return "/Home";
@@ -389,11 +410,17 @@ const savedToVirtualPath = (savedPath: string): string => {
 };
 
 const savedItemToFileItem = (item: TelegramSavedItem): FileItem => {
+  const isTextMessage = item.file_type === "text";
+  const noteText = isTextMessage ? buildNoteDisplayText(item.file_caption) : undefined;
   const resolvedName = item.file_name?.trim()
     ? item.file_name
     : (["image", "video", "audio"].includes(item.file_type)
       ? `${item.file_type}_${item.file_unique_id}`
       : `message_${item.message_id || item.file_unique_id}`);
+
+  const displayName = isTextMessage
+    ? noteText || resolvedName
+    : resolvedName;
 
   const isDirectory = item.file_type === "folder";
   if (isDirectory) {
@@ -407,32 +434,39 @@ const savedItemToFileItem = (item: TelegramSavedItem): FileItem => {
   }
 
   return {
-    name: resolvedName,
+    name: displayName,
     path: `tg://msg/${item.message_id}`,
     isDirectory: false,
     size: item.file_size,
     modifiedAt: item.modified_date,
-    extension: extensionFromFileName(resolvedName),
+    extension: isTextMessage ? undefined : extensionFromFileName(resolvedName),
     messageId: item.message_id > 0 ? item.message_id : undefined,
     thumbnail: resolveThumbnailSrc(item.thumbnail),
+    noteText,
+    isNoteMessage: isTextMessage,
   };
 };
 
 const telegramMessageToFileItem = (message: TelegramMessage): FileItem => {
+  const isNoteMessage = message.category === "Notes";
+  const noteText = isNoteMessage ? buildNoteDisplayText(message.text) : undefined;
   const fallbackName = message.extension
     ? `message_${message.message_id}.${message.extension}`
     : `message_${message.message_id}`;
   const resolvedName = message.filename?.trim() ? message.filename : fallbackName;
+  const displayName = isNoteMessage ? (noteText || resolvedName) : resolvedName;
 
   return {
-    name: resolvedName,
+    name: displayName,
     path: `tg://msg/${message.message_id}`,
     isDirectory: false,
     size: typeof message.size === "number" ? message.size : undefined,
     modifiedAt: message.timestamp,
-    extension: message.extension || extensionFromFileName(resolvedName),
+    extension: isNoteMessage ? undefined : (message.extension || extensionFromFileName(resolvedName)),
     messageId: message.message_id > 0 ? message.message_id : undefined,
     thumbnail: resolveThumbnailSrc(message.thumbnail),
+    noteText,
+    isNoteMessage,
   };
 };
 
@@ -485,6 +519,8 @@ export default function ExplorerPage() {
   const [newFolderName, setNewFolderName] = useState("");
   const [renameTarget, setRenameTarget] = useState<FileItem | null>(null);
   const [renameValue, setRenameValue] = useState("");
+  const [noteEditTarget, setNoteEditTarget] = useState<FileItem | null>(null);
+  const [noteEditValue, setNoteEditValue] = useState("");
   const [isLoading, setIsLoading] = useState(false);
   const [files, setFiles] = useState<FileItem[]>([]);
   const [currentPath, setCurrentPath] = useState<string>("tg://saved");
@@ -1676,10 +1712,13 @@ export default function ExplorerPage() {
   const contextMenuDangerItemClassName = "w-full flex items-center gap-2 rounded-lg px-3 py-2 text-left text-body text-destructive transition-colors hover:bg-destructive/10 outline-none focus-visible:outline-none";
   const contextTargetFile = contextMenuState?.targetFile ?? null;
   const isMultiSelectionContextMenu = !!contextTargetFile && selectedPaths.length > 1 && selectedPathSet.has(contextTargetFile.path);
+  const isNotesMessageContextMenu = !!contextTargetFile && !!contextTargetFile.isNoteMessage && isNotesVirtualPath(currentPath);
+  const isProtectedContextFolder = !!contextTargetFile && contextTargetFile.isDirectory && isProtectedSavedFolderPath(contextTargetFile.path);
   const canPaste = !!clipboardItem;
   const cutClipboardPath = clipboardItem?.mode === "cut" ? clipboardItem.path : null;
   const cutPathSet = useMemo(() => (cutClipboardPath ? new Set([cutClipboardPath]) : undefined), [cutClipboardPath]);
   const isRecycleBinView = isRecycleBinPath(currentPath);
+  const isNotesFolderView = isNotesVirtualPath(currentPath);
   const currentMediaViewerFile = isMediaViewerOpen
     ? mediaViewerItems[mediaViewerIndex] ?? null
     : null;

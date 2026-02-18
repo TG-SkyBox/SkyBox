@@ -23,6 +23,8 @@ export interface FileItem {
   extension?: string;
   messageId?: number;
   thumbnail?: string;
+  noteText?: string;
+  isNoteMessage?: boolean;
 }
 
 interface FileRowProps {
@@ -184,6 +186,35 @@ export function FileRow({
 
     setThumbUrl(undefined);
   };
+
+  if (file.isNoteMessage) {
+    return (
+      <div
+        data-file-item="true"
+        data-file-path={file.path}
+        onClick={onSelect}
+        onDoubleClick={onOpen}
+        onContextMenu={onContextMenu}
+        draggable={draggable}
+        onDragStart={onDragStart}
+        onDragEnd={onDragEnd}
+        onDragOver={onDragOver}
+        onDragLeave={onDragLeave}
+        onDrop={onDrop}
+        className={`px-2 py-1 rounded-lg cursor-pointer transition-all duration-150 ${isSelected ? "bg-sidebar-accent/70" : "hover:bg-sidebar-accent/40"
+          } ${isDropTarget ? "ring-1 ring-primary/60 bg-primary/10" : ""} ${isCutItem ? "opacity-50 grayscale" : ""}`}
+      >
+        <div className="max-w-[85%] rounded-2xl bg-secondary/45 px-3 py-2">
+          <p className="text-body text-foreground whitespace-pre-wrap break-words leading-5">
+            {file.noteText || file.name}
+          </p>
+          <p className="mt-1 text-small text-muted-foreground text-right">
+            {formatDate(file.modifiedAt)}
+          </p>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div
