@@ -140,6 +140,7 @@ interface TelegramIndexSavedMessagesResult {
 
 type DownloadStage = "selecting" | "downloading" | "moving" | "completed" | "failed" | "cancelled";
 type UploadStage = "uploading" | "sending" | "completed" | "failed";
+type UploadQueueStatus = "queued" | "uploading" | "sending" | "completed" | "failed" | "cancelled";
 
 interface DownloadProgressPayload {
   sourcePath: string;
@@ -165,8 +166,17 @@ interface UploadProgressState {
   totalFiles: number;
   uploadedFiles: number;
   failedFiles: number;
+  cancelledFiles: number;
   activeFileProgress: number;
   activeFileName: string | null;
+}
+
+interface UploadQueueItemState {
+  id: string;
+  fileName: string;
+  status: UploadQueueStatus;
+  progress: number;
+  message?: string;
 }
 
 interface SavedPathCacheEntry {
@@ -237,6 +247,25 @@ const getDownloadStageLabel = (stage: DownloadStage): string => {
       return "Cancelled";
     default:
       return "Downloading";
+  }
+};
+
+const getUploadQueueStatusLabel = (status: UploadQueueStatus): string => {
+  switch (status) {
+    case "queued":
+      return "Queued";
+    case "uploading":
+      return "Uploading";
+    case "sending":
+      return "Sending";
+    case "completed":
+      return "Completed";
+    case "failed":
+      return "Failed";
+    case "cancelled":
+      return "Cancelled";
+    default:
+      return "Queued";
   }
 };
 
@@ -456,9 +485,11 @@ export default function ExplorerPage() {
   const [isExternalDragging, setIsExternalDragging] = useState(false);
   const [isUploadingFiles, setIsUploadingFiles] = useState(false);
   const [uploadProgress, setUploadProgress] = useState<UploadProgressState | null>(null);
+  const [uploadQueueItems, setUploadQueueItems] = useState<UploadQueueItemState[]>([]);
   const [isUploadProgressMounted, setIsUploadProgressMounted] = useState(false);
   const [isUploadProgressVisible, setIsUploadProgressVisible] = useState(false);
   const [activeDownload, setActiveDownload] = useState<DownloadProgressPayload | null>(null);
+  const [isTransferMenuOpen, setIsTransferMenuOpen] = useState(false);
   const [isMediaViewerOpen, setIsMediaViewerOpen] = useState(false);
   const [mediaViewerItems, setMediaViewerItems] = useState<FileItem[]>([]);
   const [mediaViewerIndex, setMediaViewerIndex] = useState(0);
@@ -483,10 +514,14 @@ export default function ExplorerPage() {
   const thumbnailFetchInFlightRef = useRef<Set<number>>(new Set());
   const savedPathCacheRef = useRef<Record<string, SavedPathCacheEntry>>({});
   const contextMenuRef = useRef<HTMLDivElement | null>(null);
+  const transferMenuRef = useRef<HTMLDivElement | null>(null);
+  const transferMenuTriggerRef = useRef<HTMLDivElement | null>(null);
   const detailsPanelRef = useRef<HTMLDivElement | null>(null);
   const detailsPanelCloseTimerRef = useRef<number | null>(null);
   const uploadProgressHideTimerRef = useRef<number | null>(null);
   const uploadProgressEnterFrameRef = useRef<number | null>(null);
+  const uploadCancelRequestedRef = useRef(false);
+  const currentUploadQueueIndexRef = useRef<number | null>(null);
   const mediaViewerOpenedPathRef = useRef<string | null>(null);
   const navigationStateRef = useRef({
     backHistory: [] as string[],
@@ -676,6 +711,46 @@ export default function ExplorerPage() {
       window.removeEventListener("blur", handleViewportChange);
     };
   }, [contextMenuState]);
+
+  useEffect(() => {
+    if (!isTransferMenuOpen) {
+      return;
+    }
+
+    const handlePointerDown = (event: MouseEvent) => {
+      const target = event.target as Node | null;
+      if (transferMenuRef.current && target && transferMenuRef.current.contains(target)) {
+        return;
+      }
+
+      if (transferMenuTriggerRef.current && target && transferMenuTriggerRef.current.contains(target)) {
+        return;
+      }
+
+      setIsTransferMenuOpen(false);
+    };
+
+    const handleEscape = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        setIsTransferMenuOpen(false);
+      }
+    };
+
+    window.addEventListener("mousedown", handlePointerDown, true);
+    window.addEventListener("keydown", handleEscape);
+    return () => {
+      window.removeEventListener("mousedown", handlePointerDown, true);
+      window.removeEventListener("keydown", handleEscape);
+    };
+  }, [isTransferMenuOpen]);
+
+  useEffect(() => {
+    if (activeDownload || uploadQueueItems.length > 0) {
+      return;
+    }
+
+    setIsTransferMenuOpen(false);
+  }, [activeDownload, uploadQueueItems.length]);
 
   useEffect(() => {
     if (!showDetails) {
@@ -1427,7 +1502,7 @@ export default function ExplorerPage() {
 
   const syncProgressLabel = `${Math.min(100, Math.max(0, Math.round(savedSyncProgress)))}%`;
   const uploadProcessedFiles = uploadProgress
-    ? uploadProgress.uploadedFiles + uploadProgress.failedFiles
+    ? uploadProgress.uploadedFiles + uploadProgress.failedFiles + uploadProgress.cancelledFiles
     : 0;
   const uploadActiveFileFraction = uploadProgress
     ? Math.max(0, Math.min(1, uploadProgress.activeFileProgress))
@@ -1451,6 +1526,11 @@ export default function ExplorerPage() {
   const downloadProgressLabel = activeDownload
     ? getDownloadStageLabel(activeDownload.stage)
     : "";
+  const hasTransferEntries = !!activeDownload || uploadQueueItems.length > 0;
+  const canCancelDownload = !!activeDownload && !["completed", "failed", "cancelled"].includes(activeDownload.stage);
+  const canCancelUploads = isUploadingFiles && uploadQueueItems.some((item) => (
+    item.status === "queued" || item.status === "uploading" || item.status === "sending"
+  ));
   const uploadSkeletonCount = isUploadInProgress ? 1 : 0;
   const hasVisibleItems = sortedFiles.length > 0 || uploadSkeletonCount > 0;
   const contextMenuItemClassName = "w-full flex items-center gap-2 rounded-lg px-3 py-2 text-left text-body text-foreground transition-colors hover:bg-primary/15 outline-none focus-visible:outline-none";
@@ -2632,6 +2712,16 @@ export default function ExplorerPage() {
     }
 
     const uploadTargetPath = currentPath;
+    uploadCancelRequestedRef.current = false;
+    currentUploadQueueIndexRef.current = null;
+    setUploadQueueItems(
+      droppedFiles.map((file, index) => ({
+        id: `${Date.now()}-${index}-${file.name}`,
+        fileName: file.name,
+        status: "queued",
+        progress: 0,
+      })),
+    );
 
     setIsUploadingFiles(true);
     clearUploadProgressTimers();
@@ -2646,6 +2736,7 @@ export default function ExplorerPage() {
       totalFiles: droppedFiles.length,
       uploadedFiles: 0,
       failedFiles: 0,
+      cancelledFiles: 0,
       activeFileProgress: 0,
       activeFileName: null,
     });
@@ -2661,6 +2752,28 @@ export default function ExplorerPage() {
         }
 
         const progressFraction = Math.max(0, Math.min(100, payload.progress)) / 100;
+        const progressPercent = Math.max(0, Math.min(100, payload.progress));
+        const currentUploadIndex = currentUploadQueueIndexRef.current;
+        const queueStatus: UploadQueueStatus = payload.stage === "uploading"
+          ? "uploading"
+          : payload.stage === "sending"
+            ? "sending"
+            : payload.stage === "completed"
+              ? "completed"
+              : "failed";
+
+        if (currentUploadIndex !== null) {
+          setUploadQueueItems((prev) => prev.map((item, index) => (
+            index === currentUploadIndex
+              ? {
+                ...item,
+                status: queueStatus,
+                progress: progressPercent,
+                message: payload.message || undefined,
+              }
+              : item
+          )));
+        }
 
         setUploadProgress((prev) => {
           if (!prev) {
@@ -2681,15 +2794,48 @@ export default function ExplorerPage() {
 
       let uploadedCount = 0;
       let failedCount = 0;
+      let cancelledCount = 0;
       const uploadedMessages: TelegramMessage[] = [];
 
-      for (const droppedFile of droppedFiles) {
+      for (let index = 0; index < droppedFiles.length; index += 1) {
+        const droppedFile = droppedFiles[index];
+
+        if (uploadCancelRequestedRef.current) {
+          const remainingCount = droppedFiles.length - index;
+          if (remainingCount > 0) {
+            cancelledCount += remainingCount;
+            setUploadQueueItems((prev) => prev.map((item, itemIndex) => (
+              itemIndex >= index && item.status === "queued"
+                ? { ...item, status: "cancelled", message: "Cancelled" }
+                : item
+            )));
+
+            setUploadProgress({
+              totalFiles: droppedFiles.length,
+              uploadedFiles: uploadedCount,
+              failedFiles: failedCount,
+              cancelledFiles: cancelledCount,
+              activeFileProgress: 0,
+              activeFileName: null,
+            });
+          }
+          break;
+        }
+
+        currentUploadQueueIndexRef.current = index;
         currentUploadingFileName = droppedFile.name;
+
+        setUploadQueueItems((prev) => prev.map((item, itemIndex) => (
+          itemIndex === index
+            ? { ...item, status: "uploading", progress: 0, message: undefined }
+            : item
+        )));
 
         setUploadProgress({
           totalFiles: droppedFiles.length,
           uploadedFiles: uploadedCount,
           failedFiles: failedCount,
+          cancelledFiles: cancelledCount,
           activeFileProgress: 0,
           activeFileName: currentUploadingFileName,
         });
@@ -2704,20 +2850,60 @@ export default function ExplorerPage() {
 
           uploadedCount += 1;
           uploadedMessages.push(uploadedMessage);
+          setUploadQueueItems((prev) => prev.map((item, itemIndex) => (
+            itemIndex === index
+              ? { ...item, status: "completed", progress: 100, message: undefined }
+              : item
+          )));
         } catch (error) {
           failedCount += 1;
           console.error("Failed to upload file:", droppedFile.name, error);
+          setUploadQueueItems((prev) => prev.map((item, itemIndex) => (
+            itemIndex === index
+              ? {
+                ...item,
+                status: "failed",
+                progress: 0,
+                message: (error as TelegramError)?.message || "Upload failed",
+              }
+              : item
+          )));
         }
 
         setUploadProgress({
           totalFiles: droppedFiles.length,
           uploadedFiles: uploadedCount,
           failedFiles: failedCount,
+          cancelledFiles: cancelledCount,
           activeFileProgress: 0,
           activeFileName: null,
         });
 
+        currentUploadQueueIndexRef.current = null;
         currentUploadingFileName = null;
+
+        if (uploadCancelRequestedRef.current) {
+          const remainingCount = droppedFiles.length - (index + 1);
+          if (remainingCount > 0) {
+            cancelledCount += remainingCount;
+            setUploadQueueItems((prev) => prev.map((item, itemIndex) => (
+              itemIndex > index && item.status === "queued"
+                ? { ...item, status: "cancelled", message: "Cancelled" }
+                : item
+            )));
+
+            setUploadProgress({
+              totalFiles: droppedFiles.length,
+              uploadedFiles: uploadedCount,
+              failedFiles: failedCount,
+              cancelledFiles: cancelledCount,
+              activeFileProgress: 0,
+              activeFileName: null,
+            });
+          }
+
+          break;
+        }
       }
 
       if (uploadedCount > 0) {
@@ -2732,6 +2918,8 @@ export default function ExplorerPage() {
         });
       }
     } finally {
+      uploadCancelRequestedRef.current = false;
+      currentUploadQueueIndexRef.current = null;
       currentUploadingFileName = null;
       if (unlistenUploadProgress) {
         unlistenUploadProgress();
@@ -2743,8 +2931,72 @@ export default function ExplorerPage() {
       uploadProgressHideTimerRef.current = window.setTimeout(() => {
         setIsUploadProgressMounted(false);
         setUploadProgress(null);
+        setUploadQueueItems([]);
         uploadProgressHideTimerRef.current = null;
       }, UPLOAD_PROGRESS_ANIMATION_MS);
+    }
+  };
+
+  const handleToggleTransferMenu = () => {
+    if (!hasTransferEntries) {
+      return;
+    }
+
+    setIsTransferMenuOpen((prev) => !prev);
+  };
+
+  const handleCancelUploadQueue = () => {
+    if (!isUploadingFiles) {
+      return;
+    }
+
+    uploadCancelRequestedRef.current = true;
+
+    const currentIndex = currentUploadQueueIndexRef.current;
+    setUploadQueueItems((prev) => prev.map((item, index) => {
+      if (item.status !== "queued") {
+        return item;
+      }
+
+      if (currentIndex !== null && index <= currentIndex) {
+        return item;
+      }
+
+      return {
+        ...item,
+        status: "cancelled",
+        message: "Cancelled",
+      };
+    }));
+  };
+
+  const handleCancelActiveDownload = async () => {
+    if (!activeDownload || !canCancelDownload) {
+      return;
+    }
+
+    setActiveDownload((prev) => {
+      if (!prev || prev.sourcePath !== activeDownload.sourcePath) {
+        return prev;
+      }
+
+      return {
+        ...prev,
+        message: "Cancelling download...",
+      };
+    });
+
+    try {
+      await invoke("tg_cancel_saved_file_download", {
+        sourcePath: activeDownload.sourcePath,
+      });
+    } catch (error) {
+      const typedError = error as TelegramError;
+      toast({
+        title: "Cancel failed",
+        description: typedError.message || "Unable to cancel download",
+        variant: "destructive",
+      });
     }
   };
 
@@ -2906,45 +3158,53 @@ export default function ExplorerPage() {
             )}
           </div>
 
-          <div className="flex items-center gap-2 min-w-0">
-            {activeDownload && (
-              <div className="mr-1 flex items-center gap-2 min-w-[220px]">
-                <span
-                  className="max-w-[130px] truncate text-small text-muted-foreground"
-                  title={`${activeDownload.fileName} - ${downloadProgressLabel}`}
+          <div className="relative flex items-center gap-2 min-w-0">
+            <div ref={transferMenuTriggerRef} className="flex items-center gap-2 min-w-0">
+              {activeDownload && (
+                <button
+                  type="button"
+                  onClick={handleToggleTransferMenu}
+                  className="mr-1 flex items-center gap-2 min-w-[220px] rounded-md px-1.5 py-1 transition-colors hover:bg-secondary/40"
                 >
-                  {downloadProgressLabel}
-                </span>
-                <Progress
-                  value={downloadProgressPercent}
-                  className="h-1.5 w-24 bg-secondary/60"
-                  aria-label="Download progress"
-                />
-                <span className="w-9 text-right text-small text-muted-foreground tabular-nums">
-                  {downloadProgressPercent}%
-                </span>
-              </div>
-            )}
-            {isUploadProgressMounted && uploadProgress && (
-              <div
-                className={`mr-1 flex items-center gap-2 min-w-[220px] transform-gpu transition-all duration-200 ease-out ${isUploadProgressVisible
-                  ? "translate-y-0 opacity-100"
-                  : "-translate-y-3 opacity-0"
-                  }`}
-              >
-                <span className="text-small text-muted-foreground whitespace-nowrap tabular-nums">
-                  {uploadProgressLabel}
-                </span>
-                <Progress
-                  value={uploadProgressPercent}
-                  className="h-1.5 w-24 bg-secondary/60"
-                  aria-label="Upload progress"
-                />
-                <span className="w-9 text-right text-small text-muted-foreground tabular-nums">
-                  {uploadProgressPercent}%
-                </span>
-              </div>
-            )}
+                  <span
+                    className="max-w-[130px] truncate text-small text-muted-foreground"
+                    title={`${activeDownload.fileName} - ${downloadProgressLabel}`}
+                  >
+                    {downloadProgressLabel}
+                  </span>
+                  <Progress
+                    value={downloadProgressPercent}
+                    className="h-1.5 w-24 bg-secondary/60"
+                    aria-label="Download progress"
+                  />
+                  <span className="w-9 text-right text-small text-muted-foreground tabular-nums">
+                    {downloadProgressPercent}%
+                  </span>
+                </button>
+              )}
+              {isUploadProgressMounted && uploadProgress && (
+                <button
+                  type="button"
+                  onClick={handleToggleTransferMenu}
+                  className={`mr-1 flex items-center gap-2 min-w-[220px] rounded-md px-1.5 py-1 transform-gpu transition-all duration-200 ease-out hover:bg-secondary/40 ${isUploadProgressVisible
+                    ? "translate-y-0 opacity-100"
+                    : "-translate-y-3 opacity-0"
+                    }`}
+                >
+                  <span className="text-small text-muted-foreground whitespace-nowrap tabular-nums">
+                    {uploadProgressLabel}
+                  </span>
+                  <Progress
+                    value={uploadProgressPercent}
+                    className="h-1.5 w-24 bg-secondary/60"
+                    aria-label="Upload progress"
+                  />
+                  <span className="w-9 text-right text-small text-muted-foreground tabular-nums">
+                    {uploadProgressPercent}%
+                  </span>
+                </button>
+              )}
+            </div>
             <button className="flex items-center gap-1 px-2 py-1 rounded text-small text-muted-foreground hover:text-foreground hover:bg-secondary transition-colors">
               <SortAsc className="w-3 h-3" />
               Name
@@ -2962,6 +3222,78 @@ export default function ExplorerPage() {
                 <span className="inline-block w-2 h-2 rounded-full bg-primary animate-pulse" />
                 Syncing... {syncProgressLabel}
               </span>
+            )}
+
+            {isTransferMenuOpen && hasTransferEntries && (
+              <div
+                ref={transferMenuRef}
+                className="absolute right-0 top-[calc(100%+8px)] z-[95] w-[360px] rounded-xl border border-border/60 bg-glass shadow-2xl shadow-black/50 backdrop-saturate-150 p-2"
+              >
+                {activeDownload && (
+                  <div className="rounded-lg border border-border/60 bg-secondary/10 px-3 py-2 mb-2">
+                    <div className="flex items-start justify-between gap-2">
+                      <div className="min-w-0">
+                        <p className="text-body font-medium text-foreground truncate" title={activeDownload.fileName}>
+                          {activeDownload.fileName}
+                        </p>
+                        <p className="text-small text-muted-foreground">
+                          {downloadProgressLabel}
+                        </p>
+                      </div>
+                      {canCancelDownload && (
+                        <TelegramButton
+                          variant="secondary"
+                          size="sm"
+                          onClick={handleCancelActiveDownload}
+                        >
+                          Cancel
+                        </TelegramButton>
+                      )}
+                    </div>
+                    <Progress
+                      value={downloadProgressPercent}
+                      className="mt-2 h-1.5 bg-secondary/60"
+                    />
+                  </div>
+                )}
+
+                {uploadQueueItems.length > 0 && (
+                  <div className="rounded-lg border border-border/60 bg-secondary/10 px-3 py-2">
+                    <div className="mb-2 flex items-center justify-between gap-2">
+                      <p className="text-body font-medium text-foreground">Uploads</p>
+                      {canCancelUploads && (
+                        <TelegramButton
+                          variant="secondary"
+                          size="sm"
+                          onClick={handleCancelUploadQueue}
+                        >
+                          Cancel remaining
+                        </TelegramButton>
+                      )}
+                    </div>
+
+                    <div className="max-h-52 space-y-1.5 overflow-y-auto pr-1">
+                      {uploadQueueItems.map((item) => (
+                        <div key={item.id} className="rounded-md bg-secondary/20 px-2 py-1.5">
+                          <div className="flex items-center justify-between gap-2">
+                            <span className="truncate text-small text-foreground" title={item.fileName}>
+                              {item.fileName}
+                            </span>
+                            <span className="text-small text-muted-foreground tabular-nums">
+                              {item.status === "uploading" || item.status === "sending"
+                                ? `${Math.round(item.progress)}%`
+                                : getUploadQueueStatusLabel(item.status)}
+                            </span>
+                          </div>
+                          {(item.status === "uploading" || item.status === "sending") && (
+                            <Progress value={item.progress} className="mt-1.5 h-1.5 bg-secondary/60" />
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </div>
             )}
           </div>
         </div>

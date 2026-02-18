@@ -5,6 +5,7 @@ use grammers_client::InputMessage;
 use grammers_client::types::{Attribute, Downloadable, Media, Message};
 use grammers_client::grammers_tl_types as tl;
 use serde_json::json;
+use std::collections::HashSet;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::pin::Pin;
@@ -26,6 +27,10 @@ const THUMBNAIL_PREFETCH_DELAY_MS: u64 = 90;
 
 static THUMBNAIL_FLOOD_WAIT_UNTIL: LazyLock<StdMutex<Option<Instant>>> =
     LazyLock::new(|| StdMutex::new(None));
+static DOWNLOAD_CANCEL_REQUESTS: LazyLock<StdMutex<HashSet<String>>> =
+    LazyLock::new(|| StdMutex::new(HashSet::new()));
+
+const DOWNLOAD_CANCELLED_MARKER: &str = "__SKYBOX_DOWNLOAD_CANCELLED__";
 
 fn parse_flood_wait_seconds(message: &str) -> Option<u64> {
     let upper = message.to_uppercase();
@@ -91,6 +96,30 @@ struct DownloadProgressPayload {
     total_bytes: Option<u64>,
     destination_path: Option<String>,
     message: Option<String>,
+}
+
+fn request_download_cancel(source_path: &str) {
+    if let Ok(mut guard) = DOWNLOAD_CANCEL_REQUESTS.lock() {
+        guard.insert(source_path.to_string());
+    }
+}
+
+fn clear_download_cancel(source_path: &str) {
+    if let Ok(mut guard) = DOWNLOAD_CANCEL_REQUESTS.lock() {
+        guard.remove(source_path);
+    }
+}
+
+fn is_download_cancel_requested(source_path: &str) -> bool {
+    if let Ok(guard) = DOWNLOAD_CANCEL_REQUESTS.lock() {
+        guard.contains(source_path)
+    } else {
+        false
+    }
+}
+
+fn is_download_cancel_error(error: &TelegramError) -> bool {
+    error.message == DOWNLOAD_CANCELLED_MARKER
 }
 
 #[derive(serde::Serialize, Clone)]
@@ -2430,6 +2459,26 @@ async fn download_saved_media_with_progress(
     );
 
     loop {
+        if is_download_cancel_requested(source_path) {
+            emit_download_progress(
+                app,
+                DownloadProgressPayload {
+                    source_path: source_path.to_string(),
+                    file_name: file_name.to_string(),
+                    stage: "cancelled".to_string(),
+                    progress: download_progress_percent(downloaded_bytes, total_bytes),
+                    downloaded_bytes,
+                    total_bytes,
+                    destination_path: None,
+                    message: Some("Download cancelled".to_string()),
+                },
+            );
+
+            return Err(TelegramError {
+                message: DOWNLOAD_CANCELLED_MARKER.to_string(),
+            });
+        }
+
         let maybe_chunk = download.next().await.map_err(|e| TelegramError {
             message: format!("Failed while downloading media chunks: {}", e),
         })?;
@@ -2485,6 +2534,11 @@ async fn download_saved_media_with_progress(
     );
 
     Ok((downloaded_bytes, total_bytes))
+}
+
+pub fn tg_cancel_saved_file_download_impl(source_path: String) -> Result<bool, TelegramError> {
+    request_download_cancel(&source_path);
+    Ok(true)
 }
 
 pub async fn tg_prepare_saved_media_preview_impl(
@@ -2665,6 +2719,8 @@ pub async fn tg_download_saved_file_impl(
     db: Database,
     source_path: String,
 ) -> Result<Option<String>, TelegramError> {
+    clear_download_cancel(&source_path);
+
     let message_id = parse_message_id_from_virtual_path(&source_path).ok_or_else(|| TelegramError {
         message: "Only Saved Message files can be downloaded".to_string(),
     })?;
@@ -2767,6 +2823,8 @@ pub async fn tg_download_saved_file_impl(
         .blocking_save_file();
 
     let Some(selected_destination) = selected_destination else {
+        clear_download_cancel(&source_path);
+
         emit_download_progress(
             &app,
             DownloadProgressPayload {
@@ -2821,6 +2879,13 @@ pub async fn tg_download_saved_file_impl(
                 let _ = fs::remove_file(&staged_file_path);
             }
 
+            if is_download_cancel_error(&error) {
+                clear_download_cancel(&source_path);
+                return Ok(None);
+            }
+
+            clear_download_cancel(&source_path);
+
             emit_download_progress(
                 &app,
                 DownloadProgressPayload {
@@ -2843,6 +2908,8 @@ pub async fn tg_download_saved_file_impl(
         if staged_file_path.exists() {
             let _ = fs::remove_file(&staged_file_path);
         }
+
+        clear_download_cancel(&source_path);
 
         let error = TelegramError {
             message: "Selected item does not contain downloadable media".to_string(),
@@ -2883,6 +2950,8 @@ pub async fn tg_download_saved_file_impl(
     );
 
     if let Err(error) = move_staged_download(&staged_file_path, &destination_file_path) {
+        clear_download_cancel(&source_path);
+
         emit_download_progress(
             &app,
             DownloadProgressPayload {
@@ -2901,6 +2970,8 @@ pub async fn tg_download_saved_file_impl(
     }
 
     let destination_path_string = destination_file_path.to_string_lossy().replace('\\', "/");
+
+    clear_download_cancel(&source_path);
 
     emit_download_progress(
         &app,
