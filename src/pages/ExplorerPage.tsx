@@ -2052,6 +2052,10 @@ export default function ExplorerPage() {
       navigateToPath(file.path);
     } else {
       if (isSavedVirtualFilePath(file.path)) {
+        if (file.isNoteMessage) {
+          return;
+        }
+
         if (isSavedPreviewableFile(file)) {
           openSavedMediaViewer(file);
           return;
@@ -2133,6 +2137,15 @@ export default function ExplorerPage() {
 
     try {
       const target = deleteTarget;
+      if (target.isDirectory && isProtectedSavedFolderPath(target.path)) {
+        setDeleteTarget(null);
+        toast({
+          title: "Action unavailable",
+          description: "Default folders cannot be deleted.",
+        });
+        return;
+      }
+
       const isSavedItem = isSavedVirtualItemPath(target.path);
 
       if (isSavedItem) {
@@ -2484,9 +2497,120 @@ export default function ExplorerPage() {
     }
   };
 
+  const handleCopyNoteText = async (targetFile?: FileItem | null) => {
+    const file = targetFile ?? selectedFile;
+    if (!file || !file.isNoteMessage) {
+      return;
+    }
+
+    const textToCopy = (file.noteText || file.name || "").trim();
+    if (!textToCopy) {
+      return;
+    }
+
+    try {
+      await navigator.clipboard.writeText(textToCopy);
+    } catch (error) {
+      console.error("Failed to copy note text:", error);
+      toast({
+        title: "Copy failed",
+        description: "Unable to copy note text",
+        variant: "destructive",
+      });
+    }
+  };
+
+  const handleEditNoteMessage = (targetFile?: FileItem | null) => {
+    const file = targetFile ?? selectedFile;
+    if (!file || !file.isNoteMessage) {
+      return;
+    }
+
+    setNoteEditTarget(file);
+    setNoteEditValue(file.noteText || file.name || "");
+  };
+
+  const handleConfirmEditNoteMessage = async () => {
+    const target = noteEditTarget;
+    if (!target) {
+      return;
+    }
+
+    const nextText = noteEditValue.trim();
+    if (!nextText) {
+      toast({
+        title: "Message required",
+        description: "Message text cannot be empty.",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    try {
+      await invoke("tg_edit_saved_note_message", {
+        sourcePath: target.path,
+        text: nextText,
+      });
+
+      const normalizedTargetPath = normalizePath(target.path);
+      const nowIso = new Date().toISOString();
+      const updatedItems = filesRef.current.map((item) => (
+        normalizePath(item.path) === normalizedTargetPath
+          ? {
+            ...item,
+            name: nextText,
+            noteText: nextText,
+            modifiedAt: nowIso,
+          }
+          : item
+      ));
+
+      setFiles(updatedItems);
+
+      const cacheEntry = savedPathCacheRef.current[currentPathRef.current];
+      if (cacheEntry) {
+        savedPathCacheRef.current[currentPathRef.current] = {
+          ...cacheEntry,
+          items: updatedItems,
+        };
+      }
+
+      setSelectedFile((prev) => {
+        if (!prev || normalizePath(prev.path) !== normalizedTargetPath) {
+          return prev;
+        }
+
+        return {
+          ...prev,
+          name: nextText,
+          noteText: nextText,
+          modifiedAt: nowIso,
+        };
+      });
+
+      setNoteEditTarget(null);
+      setNoteEditValue("");
+    } catch (error) {
+      const typedError = error as TelegramError;
+      toast({
+        title: "Edit failed",
+        description: typedError.message || "Unable to edit note message",
+        variant: "destructive",
+      });
+    }
+  };
+
   const handleStageClipboardItem = (mode: ClipboardMode, targetFile?: FileItem | null) => {
     const file = targetFile ?? selectedFile;
     if (!file) {
+      return;
+    }
+
+    if (file.isNoteMessage || isNotesVirtualPath(currentPath)) {
+      toast({
+        title: "Action unavailable",
+        description: "Copy/Cut is disabled in Notes folder.",
+      });
       return;
     }
 
@@ -2588,6 +2712,15 @@ export default function ExplorerPage() {
       toast({
         title: "Paste unavailable",
         description: "Cannot paste items inside Recycle Bin.",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    if (isNotesVirtualPath(destinationFolderPath) || isNotesVirtualPath(currentPath)) {
+      toast({
+        title: "Paste unavailable",
+        description: "Paste is disabled in Notes folder.",
         variant: "destructive",
       });
       return;
