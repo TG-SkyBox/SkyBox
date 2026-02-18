@@ -7,11 +7,13 @@ use grammers_client::grammers_tl_types as tl;
 use serde_json::json;
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::pin::Pin;
 use std::sync::{LazyLock, Mutex as StdMutex};
+use std::task::{Context, Poll};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use tauri::{AppHandle, Emitter, Manager};
 use tauri_plugin_dialog::DialogExt;
-use tokio::io::AsyncWriteExt;
+use tokio::io::{AsyncRead, AsyncWriteExt, ReadBuf};
 use uuid::Uuid;
 
 const DEFAULT_BATCH_SIZE: usize = 50;
@@ -91,9 +93,26 @@ struct DownloadProgressPayload {
     message: Option<String>,
 }
 
+#[derive(serde::Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+struct UploadProgressPayload {
+    file_name: String,
+    stage: String,
+    progress: f64,
+    uploaded_bytes: u64,
+    total_bytes: Option<u64>,
+    message: Option<String>,
+}
+
 fn emit_download_progress(app: &AppHandle, payload: DownloadProgressPayload) {
     if let Err(error) = app.emit("tg-download-progress", payload) {
         log::warn!("Failed to emit download progress event: {}", error);
+    }
+}
+
+fn emit_upload_progress(app: &AppHandle, payload: UploadProgressPayload) {
+    if let Err(error) = app.emit("tg-upload-progress", payload) {
+        log::warn!("Failed to emit upload progress event: {}", error);
     }
 }
 
@@ -104,6 +123,71 @@ fn download_progress_percent(downloaded_bytes: u64, total_bytes: Option<u64>) ->
             (ratio * 100.0).clamp(0.0, 100.0)
         }
         _ => 0.0,
+    }
+}
+
+struct UploadProgressReader<R> {
+    inner: R,
+    app: AppHandle,
+    file_name: String,
+    total_bytes: u64,
+    uploaded_bytes: u64,
+    last_emit_at: Instant,
+}
+
+impl<R: AsyncRead + Unpin> UploadProgressReader<R> {
+    fn new(inner: R, app: AppHandle, file_name: String, total_bytes: u64) -> Self {
+        Self {
+            inner,
+            app,
+            file_name,
+            total_bytes,
+            uploaded_bytes: 0,
+            last_emit_at: Instant::now(),
+        }
+    }
+
+    fn emit_progress(&self, stage: &str, message: Option<String>) {
+        emit_upload_progress(
+            &self.app,
+            UploadProgressPayload {
+                file_name: self.file_name.clone(),
+                stage: stage.to_string(),
+                progress: download_progress_percent(self.uploaded_bytes, Some(self.total_bytes)),
+                uploaded_bytes: self.uploaded_bytes,
+                total_bytes: Some(self.total_bytes),
+                message,
+            },
+        );
+    }
+}
+
+impl<R: AsyncRead + Unpin> AsyncRead for UploadProgressReader<R> {
+    fn poll_read(
+        mut self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        buf: &mut ReadBuf<'_>,
+    ) -> Poll<std::io::Result<()>> {
+        let filled_before = buf.filled().len();
+        let poll = Pin::new(&mut self.inner).poll_read(cx, buf);
+
+        if let Poll::Ready(Ok(())) = &poll {
+            let filled_after = buf.filled().len();
+            let read_now = filled_after.saturating_sub(filled_before) as u64;
+
+            if read_now > 0 {
+                self.uploaded_bytes = (self.uploaded_bytes + read_now).min(self.total_bytes);
+
+                if self.last_emit_at.elapsed() >= Duration::from_millis(120)
+                    || self.uploaded_bytes >= self.total_bytes
+                {
+                    self.emit_progress("uploading", None);
+                    self.last_emit_at = Instant::now();
+                }
+            }
+        }
+
+        poll
     }
 }
 
