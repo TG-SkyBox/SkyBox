@@ -524,6 +524,8 @@ export default function ExplorerPage() {
   const [renameValue, setRenameValue] = useState("");
   const [noteEditTarget, setNoteEditTarget] = useState<FileItem | null>(null);
   const [noteEditValue, setNoteEditValue] = useState("");
+  const [noteComposerValue, setNoteComposerValue] = useState("");
+  const [isSendingNoteMessage, setIsSendingNoteMessage] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const [files, setFiles] = useState<FileItem[]>([]);
   const [currentPath, setCurrentPath] = useState<string>("tg://saved");
@@ -844,6 +846,13 @@ export default function ExplorerPage() {
 
     setIsTransferMenuOpen(false);
   }, [activeDownload, uploadQueueItems.length]);
+
+  useEffect(() => {
+    if (!isNotesVirtualPath(currentPath)) {
+      setNoteComposerValue("");
+      setIsSendingNoteMessage(false);
+    }
+  }, [currentPath]);
 
   useEffect(() => {
     if (!showDetails) {
@@ -1722,6 +1731,7 @@ export default function ExplorerPage() {
   const cutPathSet = useMemo(() => (cutClipboardPath ? new Set([cutClipboardPath]) : undefined), [cutClipboardPath]);
   const isRecycleBinView = isRecycleBinPath(currentPath);
   const isNotesFolderView = isNotesVirtualPath(currentPath);
+  const canPasteInCurrentPath = canPaste && !isNotesFolderView;
   const effectiveViewMode: ExplorerViewMode = isNotesFolderView ? "list" : viewMode;
   const currentMediaViewerFile = isMediaViewerOpen
     ? mediaViewerItems[mediaViewerIndex] ?? null
@@ -2601,6 +2611,42 @@ export default function ExplorerPage() {
         description: typedError.message || "Unable to edit note message",
         variant: "destructive",
       });
+    }
+  };
+
+  const handleSendNoteMessage = async () => {
+    if (!isNotesFolderView || isSendingNoteMessage) {
+      return;
+    }
+
+    const text = noteComposerValue.trim();
+    if (!text) {
+      return;
+    }
+
+    setIsSendingNoteMessage(true);
+    try {
+      const sentMessage = await invoke<TelegramMessage>("tg_send_saved_note_message", { text });
+      const noteItem = telegramMessageToFileItem(sentMessage);
+
+      appendItemToCurrentView(NOTES_VIRTUAL_PATH, noteItem);
+      setNoteComposerValue("");
+
+      window.requestAnimationFrame(() => {
+        const area = explorerAreaRef.current;
+        if (area) {
+          area.scrollTop = area.scrollHeight;
+        }
+      });
+    } catch (error) {
+      const typedError = error as TelegramError;
+      toast({
+        title: "Send failed",
+        description: typedError.message || "Unable to send note message",
+        variant: "destructive",
+      });
+    } finally {
+      setIsSendingNoteMessage(false);
     }
   };
 
@@ -3841,16 +3887,17 @@ export default function ExplorerPage() {
 
         {/* File list */}
         <div className="flex-1 flex min-h-0">
-          <div
-            ref={explorerAreaRef}
-            className="relative flex-1 overflow-y-auto p-4"
-            onDragOver={handleExplorerDragOver}
-            onDragLeave={handleExplorerDragLeave}
-            onDrop={handleExplorerDrop}
-            onScroll={handleDirectoryScroll}
-            onMouseDown={handleExplorerMouseDown}
-            onContextMenu={handleEmptyAreaContextMenu}
-          >
+          <div className="relative flex-1 min-w-0 flex flex-col">
+            <div
+              ref={explorerAreaRef}
+              className={`relative flex-1 overflow-y-auto p-4 ${isNotesFolderView ? "pb-3" : ""}`}
+              onDragOver={handleExplorerDragOver}
+              onDragLeave={handleExplorerDragLeave}
+              onDrop={handleExplorerDrop}
+              onScroll={handleDirectoryScroll}
+              onMouseDown={handleExplorerMouseDown}
+              onContextMenu={handleEmptyAreaContextMenu}
+            >
             {isExternalDragging && (
               <div className="pointer-events-none absolute inset-4 z-20 rounded-xl border-2 border-dashed border-primary/60 bg-primary/10 px-6 py-5">
                 <div className="flex h-full items-center justify-center">
@@ -4022,6 +4069,38 @@ export default function ExplorerPage() {
                 )}
               </div>
             )}
+            </div>
+
+            {isNotesFolderView && (
+              <div className="shrink-0 border-t border-border bg-glass px-4 py-3">
+                <div className="flex items-center gap-2 rounded-xl border border-border/70 bg-secondary/15 px-3 py-2">
+                  <input
+                    type="text"
+                    value={noteComposerValue}
+                    onChange={(event) => setNoteComposerValue(event.target.value)}
+                    onKeyDown={(event) => {
+                      if (event.key === "Enter" && !event.shiftKey) {
+                        event.preventDefault();
+                        void handleSendNoteMessage();
+                      }
+                    }}
+                    placeholder="Message"
+                    className="flex-1 bg-transparent text-body text-foreground placeholder:text-muted-foreground/70 focus:outline-none"
+                    disabled={isSendingNoteMessage}
+                  />
+                  <TelegramButton
+                    variant="primary"
+                    size="sm"
+                    onClick={() => {
+                      void handleSendNoteMessage();
+                    }}
+                    disabled={isSendingNoteMessage || !noteComposerValue.trim()}
+                  >
+                    Send
+                  </TelegramButton>
+                </div>
+              </div>
+            )}
           </div>
 
         </div>
@@ -4085,10 +4164,10 @@ export default function ExplorerPage() {
                 <span>New Folder</span>
               </button>
               <button
-                className={canPaste ? contextMenuItemClassName : contextMenuDisabledItemClassName}
-                disabled={!canPaste}
+                className={canPasteInCurrentPath ? contextMenuItemClassName : contextMenuDisabledItemClassName}
+                disabled={!canPasteInCurrentPath}
                 onClick={() => {
-                  if (!canPaste) {
+                  if (!canPasteInCurrentPath) {
                     return;
                   }
                   closeContextMenu();
@@ -4110,6 +4189,43 @@ export default function ExplorerPage() {
               >
                 <RotateCcw className="w-4 h-4 text-muted-foreground" />
                 <span>Restore</span>
+              </button>
+
+              <div className="my-1 h-px bg-border/70" />
+
+              <button
+                className={contextMenuDangerItemClassName}
+                onClick={() => {
+                  closeContextMenu();
+                  handleContextDelete();
+                }}
+              >
+                <Trash2 className="w-4 h-4" />
+                <span>Delete</span>
+              </button>
+            </>
+          ) : isNotesMessageContextMenu ? (
+            <>
+              <button
+                className={contextMenuItemClassName}
+                onClick={() => {
+                  closeContextMenu();
+                  void handleCopyNoteText(contextTargetFile);
+                }}
+              >
+                <Copy className="w-4 h-4 text-muted-foreground" />
+                <span>Copy as text</span>
+              </button>
+
+              <button
+                className={contextMenuItemClassName}
+                onClick={() => {
+                  closeContextMenu();
+                  handleEditNoteMessage(contextTargetFile);
+                }}
+              >
+                <Edit3 className="w-4 h-4 text-muted-foreground" />
+                <span>Edit</span>
               </button>
 
               <div className="my-1 h-px bg-border/70" />
@@ -4170,47 +4286,51 @@ export default function ExplorerPage() {
                 || (contextTargetFile && !contextTargetFile.isDirectory)
               ) && <div className="my-1 h-px bg-border/70" />}
 
-              <button
-                className={contextMenuItemClassName}
-                onClick={() => {
-                  if (!contextTargetFile) {
-                    return;
-                  }
-                  closeContextMenu();
-                  handleStageClipboardItem("cut", contextTargetFile);
-                }}
-              >
-                <Scissors className="w-4 h-4 text-muted-foreground" />
-                <span>Cut</span>
-              </button>
-              <button
-                className={contextMenuItemClassName}
-                onClick={() => {
-                  if (!contextTargetFile) {
-                    return;
-                  }
-                  closeContextMenu();
-                  handleStageClipboardItem("copy", contextTargetFile);
-                }}
-              >
-                <Copy className="w-4 h-4 text-muted-foreground" />
-                <span>Copy</span>
-              </button>
-              {!isMultiSelectionContextMenu && (
-                <button
-                  className={canPaste ? contextMenuItemClassName : contextMenuDisabledItemClassName}
-                  disabled={!canPaste}
-                  onClick={() => {
-                    if (!canPaste) {
-                      return;
-                    }
-                    closeContextMenu();
-                    void handlePaste();
-                  }}
-                >
-                  <ClipboardPaste className="w-4 h-4 text-muted-foreground" />
-                  <span>Paste</span>
-                </button>
+              {!isNotesFolderView && (
+                <>
+                  <button
+                    className={contextMenuItemClassName}
+                    onClick={() => {
+                      if (!contextTargetFile) {
+                        return;
+                      }
+                      closeContextMenu();
+                      handleStageClipboardItem("cut", contextTargetFile);
+                    }}
+                  >
+                    <Scissors className="w-4 h-4 text-muted-foreground" />
+                    <span>Cut</span>
+                  </button>
+                  <button
+                    className={contextMenuItemClassName}
+                    onClick={() => {
+                      if (!contextTargetFile) {
+                        return;
+                      }
+                      closeContextMenu();
+                      handleStageClipboardItem("copy", contextTargetFile);
+                    }}
+                  >
+                    <Copy className="w-4 h-4 text-muted-foreground" />
+                    <span>Copy</span>
+                  </button>
+                  {!isMultiSelectionContextMenu && (
+                    <button
+                      className={canPasteInCurrentPath ? contextMenuItemClassName : contextMenuDisabledItemClassName}
+                      disabled={!canPasteInCurrentPath}
+                      onClick={() => {
+                        if (!canPasteInCurrentPath) {
+                          return;
+                        }
+                        closeContextMenu();
+                        void handlePaste();
+                      }}
+                    >
+                      <ClipboardPaste className="w-4 h-4 text-muted-foreground" />
+                      <span>Paste</span>
+                    </button>
+                  )}
+                </>
               )}
 
               <div className="my-1 h-px bg-border/70" />
@@ -4228,8 +4348,12 @@ export default function ExplorerPage() {
                 </button>
               )}
               <button
-                className={contextMenuDangerItemClassName}
+                className={isProtectedContextFolder ? contextMenuDisabledItemClassName : contextMenuDangerItemClassName}
+                disabled={isProtectedContextFolder}
                 onClick={() => {
+                  if (isProtectedContextFolder) {
+                    return;
+                  }
                   closeContextMenu();
                   handleContextDelete();
                 }}
@@ -4294,6 +4418,26 @@ export default function ExplorerPage() {
         onCancel={() => {
           setRenameTarget(null);
           setRenameValue("");
+        }}
+      />
+
+      <TextInputDialog
+        isOpen={!!noteEditTarget}
+        title="Edit Message"
+        description={noteEditTarget ? "Update note message text" : undefined}
+        value={noteEditValue}
+        placeholder="Message"
+        confirmLabel="Save"
+        cancelLabel="Cancel"
+        icon={<Edit3 className="w-4 h-4 text-primary" />}
+        framed
+        onValueChange={setNoteEditValue}
+        onConfirm={() => {
+          void handleConfirmEditNoteMessage();
+        }}
+        onCancel={() => {
+          setNoteEditTarget(null);
+          setNoteEditValue("");
         }}
       />
 
