@@ -2,7 +2,7 @@ import { useState, useEffect, useMemo, useCallback, useRef } from "react";
 import { ExplorerSidebar } from "@/components/skybox/ExplorerSidebar";
 import { SearchBar } from "@/components/skybox/SearchBar";
 import { Breadcrumbs } from "@/components/skybox/Breadcrumbs";
-import { FileRow, FileItem, formatFileSize } from "@/components/skybox/FileRow";
+import { FileRow, FileItem } from "@/components/skybox/FileRow";
 import { FileGrid } from "@/components/skybox/FileGrid";
 import { DetailsPanel } from "@/components/skybox/DetailsPanel";
 import { SavedMediaViewer, type SavedMediaKind } from "@/components/skybox/SavedMediaViewer";
@@ -1354,6 +1354,12 @@ export default function ExplorerPage() {
     : 0;
   const uploadProgressLabel = uploadProgress
     ? `${uploadProcessedFiles}/${uploadProgress.totalFiles} files`
+    : "";
+  const downloadProgressPercent = activeDownload
+    ? Math.min(100, Math.max(0, Math.round(activeDownload.progress)))
+    : 0;
+  const downloadProgressLabel = activeDownload
+    ? getDownloadStageLabel(activeDownload.stage)
     : "";
   const uploadSkeletonCount = isUploadInProgress ? 1 : 0;
   const hasVisibleItems = sortedFiles.length > 0 || uploadSkeletonCount > 0;
@@ -2808,6 +2814,24 @@ export default function ExplorerPage() {
           </div>
 
           <div className="flex items-center gap-2 min-w-0">
+            {activeDownload && (
+              <div className="mr-1 flex items-center gap-2 min-w-[220px]">
+                <span
+                  className="max-w-[130px] truncate text-small text-muted-foreground"
+                  title={`${activeDownload.fileName} - ${downloadProgressLabel}`}
+                >
+                  {downloadProgressLabel}
+                </span>
+                <Progress
+                  value={downloadProgressPercent}
+                  className="h-1.5 w-24 bg-secondary/60"
+                  aria-label="Download progress"
+                />
+                <span className="w-9 text-right text-small text-muted-foreground tabular-nums">
+                  {downloadProgressPercent}%
+                </span>
+              </div>
+            )}
             {isUploadProgressMounted && uploadProgress && (
               <div
                 className={`mr-1 flex items-center gap-2 min-w-[220px] transform-gpu transition-all duration-200 ease-out ${isUploadProgressVisible
@@ -3043,40 +3067,6 @@ export default function ExplorerPage() {
         onNext={goToNextMedia}
         onClose={closeSavedMediaViewer}
       />
-
-      {activeDownload && (
-        <div className="absolute bottom-4 right-4 z-[92] w-80 rounded-xl bg-glass shadow-2xl shadow-black/50 backdrop-saturate-150 p-3">
-          <div className="flex items-start justify-between gap-2">
-            <div className="min-w-0">
-              <p className="text-body font-medium text-foreground truncate">{activeDownload.fileName}</p>
-              <p className="text-small text-muted-foreground">{getDownloadStageLabel(activeDownload.stage)}</p>
-            </div>
-            <span className="text-small text-muted-foreground">
-              {activeDownload.stage === "selecting"
-                ? ""
-                : `${Math.round(Math.max(0, Math.min(100, activeDownload.progress)))}%`}
-            </span>
-          </div>
-
-          <div className="mt-3">
-            <Progress
-              value={Math.max(0, Math.min(100, activeDownload.progress))}
-              className="h-2 bg-secondary/60"
-            />
-          </div>
-
-          <div className="mt-2 flex items-center justify-between text-small text-muted-foreground">
-            <span>
-              {activeDownload.totalBytes && activeDownload.totalBytes > 0
-                ? `${formatFileSize(activeDownload.downloadedBytes)} / ${formatFileSize(activeDownload.totalBytes)}`
-                : formatFileSize(activeDownload.downloadedBytes)}
-            </span>
-            {activeDownload.message && (
-              <span className="max-w-[140px] truncate text-right">{activeDownload.message}</span>
-            )}
-          </div>
-        </div>
-      )}
 
       {contextMenuState && (
         <div
