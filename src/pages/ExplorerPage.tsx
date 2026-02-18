@@ -2,7 +2,7 @@ import { useState, useEffect, useMemo, useCallback, useRef } from "react";
 import { ExplorerSidebar } from "@/components/skybox/ExplorerSidebar";
 import { SearchBar } from "@/components/skybox/SearchBar";
 import { Breadcrumbs } from "@/components/skybox/Breadcrumbs";
-import { FileRow, FileItem, formatFileSize } from "@/components/skybox/FileRow";
+import { FileRow, FileItem } from "@/components/skybox/FileRow";
 import { FileGrid } from "@/components/skybox/FileGrid";
 import { DetailsPanel } from "@/components/skybox/DetailsPanel";
 import { SavedMediaViewer, type SavedMediaKind } from "@/components/skybox/SavedMediaViewer";
@@ -139,6 +139,8 @@ interface TelegramIndexSavedMessagesResult {
 }
 
 type DownloadStage = "selecting" | "downloading" | "moving" | "completed" | "failed" | "cancelled";
+type UploadStage = "uploading" | "sending" | "completed" | "failed";
+type UploadQueueStatus = "queued" | "uploading" | "sending" | "completed" | "failed" | "cancelled";
 
 interface DownloadProgressPayload {
   sourcePath: string;
@@ -149,6 +151,44 @@ interface DownloadProgressPayload {
   totalBytes?: number | null;
   destinationPath?: string | null;
   message?: string | null;
+}
+
+interface UploadProgressPayload {
+  fileName: string;
+  stage: UploadStage;
+  progress: number;
+  uploadedBytes: number;
+  totalBytes?: number | null;
+  message?: string | null;
+}
+
+interface UploadProgressState {
+  totalFiles: number;
+  uploadedFiles: number;
+  failedFiles: number;
+  cancelledFiles: number;
+  activeFileProgress: number;
+  activeFileName: string | null;
+}
+
+interface UploadQueueItemState {
+  id: string;
+  fileName: string;
+  status: UploadQueueStatus;
+  progress: number;
+  message?: string;
+}
+
+interface SelectionBoxState {
+  startX: number;
+  startY: number;
+  currentX: number;
+  currentY: number;
+}
+
+interface PasteProgressState {
+  fileName: string;
+  destinationPath: string;
 }
 
 interface SavedPathCacheEntry {
@@ -196,7 +236,16 @@ const INTERNAL_DRAG_MIME = "application/x-skybox-item-path";
 const SAVED_ITEMS_PAGE_SIZE = 50;
 const EXPLORER_VIEW_MODE_KEY = "explorer_view_mode";
 const RECYCLE_BIN_VIRTUAL_PATH = "tg://saved/Recycle Bin";
+const NOTES_VIRTUAL_PATH = "tg://saved/Notes";
+const SAVED_PROTECTED_FOLDER_PATHS = new Set([
+  "tg://saved/Images",
+  "tg://saved/Videos",
+  "tg://saved/Audios",
+  "tg://saved/Documents",
+  NOTES_VIRTUAL_PATH,
+]);
 const DETAILS_PANEL_ANIMATION_MS = 220;
+const UPLOAD_PROGRESS_ANIMATION_MS = 240;
 
 const IMAGE_EXTENSIONS = new Set(["jpg", "jpeg", "png", "gif", "webp", "bmp", "svg"]);
 const VIDEO_EXTENSIONS = new Set(["mp4", "mkv", "mov", "avi", "webm", "wmv", "m4v"]);
@@ -221,6 +270,25 @@ const getDownloadStageLabel = (stage: DownloadStage): string => {
   }
 };
 
+const getUploadQueueStatusLabel = (status: UploadQueueStatus): string => {
+  switch (status) {
+    case "queued":
+      return "Queued";
+    case "uploading":
+      return "Uploading";
+    case "sending":
+      return "Sending";
+    case "completed":
+      return "Completed";
+    case "failed":
+      return "Failed";
+    case "cancelled":
+      return "Cancelled";
+    default:
+      return "Queued";
+  }
+};
+
 const isVirtualPath = (path: string): boolean => path.startsWith("tg://");
 const isSavedVirtualFolderPath = (path: string): boolean => path === "tg://saved" || path.startsWith("tg://saved/");
 const isSavedVirtualFilePath = (path: string): boolean => path.startsWith("tg://msg/");
@@ -228,6 +296,10 @@ const isSavedVirtualItemPath = (path: string): boolean => isSavedVirtualFolderPa
 const isRecycleBinPath = (path: string): boolean => (
   path === RECYCLE_BIN_VIRTUAL_PATH || path.startsWith(`${RECYCLE_BIN_VIRTUAL_PATH}/`)
 );
+const isNotesVirtualPath = (path: string): boolean => (
+  path === NOTES_VIRTUAL_PATH || path.startsWith(`${NOTES_VIRTUAL_PATH}/`)
+);
+const isProtectedSavedFolderPath = (path: string): boolean => SAVED_PROTECTED_FOLDER_PATHS.has(path);
 
 const normalizePath = (path: string): string => path.replace(/\\/g, "/");
 
@@ -306,6 +378,15 @@ const extensionFromFileName = (fileName: string): string | undefined => {
   return parts[parts.length - 1]?.toLowerCase();
 };
 
+const buildNoteDisplayText = (rawText?: string | null): string => {
+  const normalized = (rawText || "").trim();
+  if (!normalized) {
+    return "(empty message)";
+  }
+
+  return normalized;
+};
+
 const virtualToSavedPath = (virtualPath: string): string => {
   if (virtualPath === "tg://saved") {
     return "/Home";
@@ -329,11 +410,20 @@ const savedToVirtualPath = (savedPath: string): string => {
 };
 
 const savedItemToFileItem = (item: TelegramSavedItem): FileItem => {
+  const parentVirtualPath = savedToVirtualPath(item.file_path);
+  const isInsideNotesFolder = parentVirtualPath === NOTES_VIRTUAL_PATH
+    || parentVirtualPath.startsWith(`${NOTES_VIRTUAL_PATH}/`);
+  const isTextMessage = item.file_type === "text" || isInsideNotesFolder;
+  const noteText = isTextMessage ? buildNoteDisplayText(item.file_caption) : undefined;
   const resolvedName = item.file_name?.trim()
     ? item.file_name
     : (["image", "video", "audio"].includes(item.file_type)
       ? `${item.file_type}_${item.file_unique_id}`
       : `message_${item.message_id || item.file_unique_id}`);
+
+  const displayName = isTextMessage
+    ? noteText || resolvedName
+    : resolvedName;
 
   const isDirectory = item.file_type === "folder";
   if (isDirectory) {
@@ -347,15 +437,72 @@ const savedItemToFileItem = (item: TelegramSavedItem): FileItem => {
   }
 
   return {
-    name: resolvedName,
+    name: displayName,
     path: `tg://msg/${item.message_id}`,
     isDirectory: false,
     size: item.file_size,
     modifiedAt: item.modified_date,
-    extension: extensionFromFileName(resolvedName),
+    extension: isTextMessage ? undefined : extensionFromFileName(resolvedName),
     messageId: item.message_id > 0 ? item.message_id : undefined,
     thumbnail: resolveThumbnailSrc(item.thumbnail),
+    noteText,
+    isNoteMessage: isTextMessage,
   };
+};
+
+const telegramMessageToFileItem = (message: TelegramMessage): FileItem => {
+  const isNoteMessage = message.category === "Notes";
+  const noteText = isNoteMessage ? buildNoteDisplayText(message.text) : undefined;
+  const fallbackName = message.extension
+    ? `message_${message.message_id}.${message.extension}`
+    : `message_${message.message_id}`;
+  const resolvedName = message.filename?.trim() ? message.filename : fallbackName;
+  const displayName = isNoteMessage ? (noteText || resolvedName) : resolvedName;
+
+  return {
+    name: displayName,
+    path: `tg://msg/${message.message_id}`,
+    isDirectory: false,
+    size: typeof message.size === "number" ? message.size : undefined,
+    modifiedAt: message.timestamp,
+    extension: isNoteMessage ? undefined : (message.extension || extensionFromFileName(resolvedName)),
+    messageId: message.message_id > 0 ? message.message_id : undefined,
+    thumbnail: resolveThumbnailSrc(message.thumbnail),
+    noteText,
+    isNoteMessage,
+  };
+};
+
+const mergeFileItemsByIdentity = (existingItems: FileItem[], newItems: FileItem[]): FileItem[] => {
+  if (!newItems.length) {
+    return existingItems;
+  }
+
+  const existingPaths = new Set(existingItems.map((item) => item.path));
+  const existingMessageIds = new Set(
+    existingItems
+      .map((item) => item.messageId)
+      .filter((id): id is number => !!id && id > 0),
+  );
+
+  const merged = [...existingItems];
+  for (const item of newItems) {
+    if (existingPaths.has(item.path)) {
+      continue;
+    }
+
+    if (item.messageId && existingMessageIds.has(item.messageId)) {
+      continue;
+    }
+
+    merged.push(item);
+    existingPaths.add(item.path);
+    if (item.messageId) {
+      existingMessageIds.add(item.messageId);
+    }
+  }
+
+  return merged;
 };
 
 export default function ExplorerPage() {
@@ -375,6 +522,10 @@ export default function ExplorerPage() {
   const [newFolderName, setNewFolderName] = useState("");
   const [renameTarget, setRenameTarget] = useState<FileItem | null>(null);
   const [renameValue, setRenameValue] = useState("");
+  const [noteEditTarget, setNoteEditTarget] = useState<FileItem | null>(null);
+  const [noteEditValue, setNoteEditValue] = useState("");
+  const [noteComposerValue, setNoteComposerValue] = useState("");
+  const [isSendingNoteMessage, setIsSendingNoteMessage] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const [files, setFiles] = useState<FileItem[]>([]);
   const [currentPath, setCurrentPath] = useState<string>("tg://saved");
@@ -385,8 +536,16 @@ export default function ExplorerPage() {
   const [draggedPath, setDraggedPath] = useState<string | null>(null);
   const [dropTargetPath, setDropTargetPath] = useState<string | null>(null);
   const [isExternalDragging, setIsExternalDragging] = useState(false);
+  const [selectedPaths, setSelectedPaths] = useState<string[]>([]);
+  const [selectionBox, setSelectionBox] = useState<SelectionBoxState | null>(null);
+  const [activePaste, setActivePaste] = useState<PasteProgressState | null>(null);
   const [isUploadingFiles, setIsUploadingFiles] = useState(false);
+  const [uploadProgress, setUploadProgress] = useState<UploadProgressState | null>(null);
+  const [uploadQueueItems, setUploadQueueItems] = useState<UploadQueueItemState[]>([]);
+  const [isUploadProgressMounted, setIsUploadProgressMounted] = useState(false);
+  const [isUploadProgressVisible, setIsUploadProgressVisible] = useState(false);
   const [activeDownload, setActiveDownload] = useState<DownloadProgressPayload | null>(null);
+  const [isTransferMenuOpen, setIsTransferMenuOpen] = useState(false);
   const [isMediaViewerOpen, setIsMediaViewerOpen] = useState(false);
   const [mediaViewerItems, setMediaViewerItems] = useState<FileItem[]>([]);
   const [mediaViewerIndex, setMediaViewerIndex] = useState(0);
@@ -410,9 +569,16 @@ export default function ExplorerPage() {
   const prefetchedThumbnailIdsRef = useRef<Set<number>>(new Set());
   const thumbnailFetchInFlightRef = useRef<Set<number>>(new Set());
   const savedPathCacheRef = useRef<Record<string, SavedPathCacheEntry>>({});
+  const explorerAreaRef = useRef<HTMLDivElement | null>(null);
   const contextMenuRef = useRef<HTMLDivElement | null>(null);
+  const transferMenuRef = useRef<HTMLDivElement | null>(null);
+  const transferMenuTriggerRef = useRef<HTMLDivElement | null>(null);
   const detailsPanelRef = useRef<HTMLDivElement | null>(null);
   const detailsPanelCloseTimerRef = useRef<number | null>(null);
+  const uploadProgressHideTimerRef = useRef<number | null>(null);
+  const uploadProgressEnterFrameRef = useRef<number | null>(null);
+  const uploadCancelRequestedRef = useRef(false);
+  const currentUploadQueueIndexRef = useRef<number | null>(null);
   const mediaViewerOpenedPathRef = useRef<string | null>(null);
   const navigationStateRef = useRef({
     backHistory: [] as string[],
@@ -425,6 +591,18 @@ export default function ExplorerPage() {
     if (detailsPanelCloseTimerRef.current !== null) {
       window.clearTimeout(detailsPanelCloseTimerRef.current);
       detailsPanelCloseTimerRef.current = null;
+    }
+  }, []);
+
+  const clearUploadProgressTimers = useCallback(() => {
+    if (uploadProgressHideTimerRef.current !== null) {
+      window.clearTimeout(uploadProgressHideTimerRef.current);
+      uploadProgressHideTimerRef.current = null;
+    }
+
+    if (uploadProgressEnterFrameRef.current !== null) {
+      window.cancelAnimationFrame(uploadProgressEnterFrameRef.current);
+      uploadProgressEnterFrameRef.current = null;
     }
   }, []);
 
@@ -453,8 +631,9 @@ export default function ExplorerPage() {
   useEffect(() => {
     return () => {
       clearDetailsPanelCloseTimer();
+      clearUploadProgressTimers();
     };
-  }, [clearDetailsPanelCloseTimer]);
+  }, [clearDetailsPanelCloseTimer, clearUploadProgressTimers]);
 
   // Initialize with home directory and user info
   useEffect(() => {
@@ -489,6 +668,44 @@ export default function ExplorerPage() {
   useEffect(() => {
     filesRef.current = files;
   }, [files]);
+
+  useEffect(() => {
+    setSelectedPaths((prev) => {
+      if (!prev.length) {
+        return prev;
+      }
+
+      const availablePaths = new Set(files.map((item) => item.path));
+      const next = prev.filter((path) => availablePaths.has(path));
+      if (next.length === prev.length) {
+        return prev;
+      }
+
+      return next;
+    });
+  }, [files]);
+
+  useEffect(() => {
+    if (!selectedPaths.length) {
+      if (selectedFile) {
+        setSelectedFile(null);
+      }
+      return;
+    }
+
+    if (selectedFile && selectedPaths.includes(selectedFile.path)) {
+      return;
+    }
+
+    const nextSelectedFile = files.find((item) => item.path === selectedPaths[0]) || null;
+    setSelectedFile(nextSelectedFile);
+  }, [files, selectedFile, selectedPaths]);
+
+  useEffect(() => {
+    if (selectedPaths.length > 1) {
+      closeDetailsPanel();
+    }
+  }, [closeDetailsPanel, selectedPaths.length]);
 
   useEffect(() => {
     let cancelled = false;
@@ -589,6 +806,53 @@ export default function ExplorerPage() {
       window.removeEventListener("blur", handleViewportChange);
     };
   }, [contextMenuState]);
+
+  useEffect(() => {
+    if (!isTransferMenuOpen) {
+      return;
+    }
+
+    const handlePointerDown = (event: MouseEvent) => {
+      const target = event.target as Node | null;
+      if (transferMenuRef.current && target && transferMenuRef.current.contains(target)) {
+        return;
+      }
+
+      if (transferMenuTriggerRef.current && target && transferMenuTriggerRef.current.contains(target)) {
+        return;
+      }
+
+      setIsTransferMenuOpen(false);
+    };
+
+    const handleEscape = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        setIsTransferMenuOpen(false);
+      }
+    };
+
+    window.addEventListener("mousedown", handlePointerDown, true);
+    window.addEventListener("keydown", handleEscape);
+    return () => {
+      window.removeEventListener("mousedown", handlePointerDown, true);
+      window.removeEventListener("keydown", handleEscape);
+    };
+  }, [isTransferMenuOpen]);
+
+  useEffect(() => {
+    if (activeDownload || uploadQueueItems.length > 0) {
+      return;
+    }
+
+    setIsTransferMenuOpen(false);
+  }, [activeDownload, uploadQueueItems.length]);
+
+  useEffect(() => {
+    if (!isNotesVirtualPath(currentPath)) {
+      setNoteComposerValue("");
+      setIsSendingNoteMessage(false);
+    }
+  }, [currentPath]);
 
   useEffect(() => {
     if (!showDetails) {
@@ -882,6 +1146,78 @@ export default function ExplorerPage() {
         handleRefresh();
       }
 
+      if (canNavigateByKeyboard && (e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "a") {
+        e.preventDefault();
+
+        const query = search.trim().toLowerCase();
+        const visibleFiles = filesRef.current.filter((file) => {
+          if (
+            currentPath === "tg://saved"
+            && file.isDirectory
+            && file.path === RECYCLE_BIN_VIRTUAL_PATH
+          ) {
+            return false;
+          }
+
+          if (!query) {
+            return true;
+          }
+
+          return file.name.toLowerCase().includes(query);
+        });
+
+        const allVisiblePaths = visibleFiles.map((file) => file.path);
+        setSelectedPaths(allVisiblePaths);
+
+        if (allVisiblePaths.length > 0) {
+          setSelectedFile(visibleFiles[0]);
+        } else {
+          setSelectedFile(null);
+          closeDetailsPanel();
+        }
+
+        if (allVisiblePaths.length > 1) {
+          closeDetailsPanel();
+        }
+        return;
+      }
+
+      if (canNavigateByKeyboard && (e.ctrlKey || e.metaKey) && !e.altKey && e.key.toLowerCase() === "c") {
+        e.preventDefault();
+
+        const targetFile = selectedFile
+          ?? (selectedPaths.length > 0 ? filesRef.current.find((file) => file.path === selectedPaths[0]) || null : null);
+        if (!targetFile) {
+          return;
+        }
+
+        handleStageClipboardItem("copy", targetFile);
+        return;
+      }
+
+      if (canNavigateByKeyboard && (e.ctrlKey || e.metaKey) && !e.altKey && e.key.toLowerCase() === "x") {
+        e.preventDefault();
+
+        const targetFile = selectedFile
+          ?? (selectedPaths.length > 0 ? filesRef.current.find((file) => file.path === selectedPaths[0]) || null : null);
+        if (!targetFile) {
+          return;
+        }
+
+        handleStageClipboardItem("cut", targetFile);
+        return;
+      }
+
+      if (canNavigateByKeyboard && (e.ctrlKey || e.metaKey) && !e.altKey && e.key.toLowerCase() === "v") {
+        if (!clipboardItem) {
+          return;
+        }
+
+        e.preventDefault();
+        void handlePaste();
+        return;
+      }
+
       // Escape to close details panel
       if (e.key === 'Escape' && showDetails) {
         closeDetailsPanel();
@@ -897,7 +1233,7 @@ export default function ExplorerPage() {
     return () => {
       window.removeEventListener('keydown', handleKeyDown);
     };
-  }, [selectedFile, showDetails, backHistory, forwardHistory, currentPath, isLoading, markNavigationActivity, closeDetailsPanel, isMediaViewerOpen]);
+  }, [selectedFile, selectedPaths, clipboardItem, showDetails, backHistory, forwardHistory, currentPath, isLoading, markNavigationActivity, closeDetailsPanel, isMediaViewerOpen, search]);
 
   useEffect(() => {
     const suppressDefaultMouseNavigation = (event: MouseEvent) => {
@@ -1023,6 +1359,46 @@ export default function ExplorerPage() {
     setCurrentPath(path);
     cacheSavedPath(path, allItems, allItems.length, false, true);
     prefetchThumbnailsForItems(allItems);
+  };
+
+  const appendUploadedItemsToSavedFolder = (targetPath: string, uploadedMessages: TelegramMessage[]) => {
+    if (!uploadedMessages.length) {
+      return;
+    }
+
+    const uploadedItems = uploadedMessages.map(telegramMessageToFileItem);
+    const cacheEntry = savedPathCacheRef.current[targetPath];
+
+    if (cacheEntry) {
+      const mergedCacheItems = mergeFileItemsByIdentity(cacheEntry.items, uploadedItems);
+      const addedCacheCount = mergedCacheItems.length - cacheEntry.items.length;
+      savedPathCacheRef.current[targetPath] = {
+        ...cacheEntry,
+        items: mergedCacheItems,
+        nextOffset: cacheEntry.nextOffset + Math.max(0, addedCacheCount),
+      };
+    }
+
+    if (currentPathRef.current === targetPath) {
+      const mergedVisibleItems = mergeFileItemsByIdentity(filesRef.current, uploadedItems);
+      const addedVisibleCount = mergedVisibleItems.length - filesRef.current.length;
+
+      setFiles(mergedVisibleItems);
+      if (addedVisibleCount > 0) {
+        setSavedItemsOffset((prev) => prev + addedVisibleCount);
+      }
+
+      if (!cacheEntry) {
+        savedPathCacheRef.current[targetPath] = {
+          items: mergedVisibleItems,
+          nextOffset: savedItemsOffset + Math.max(0, addedVisibleCount),
+          hasMore: hasMoreSavedItems,
+          isCompleteSnapshot: !hasMoreSavedItems && isSavedSyncComplete,
+        };
+      }
+    }
+
+    prefetchThumbnailsForItems(uploadedItems);
   };
 
   const loadMoreSavedItems = async () => {
@@ -1299,12 +1675,64 @@ export default function ExplorerPage() {
   const isDirectoryLoading = isLoading || isLoadingSavedFiles;
 
   const syncProgressLabel = `${Math.min(100, Math.max(0, Math.round(savedSyncProgress)))}%`;
+  const uploadProcessedFiles = uploadProgress
+    ? uploadProgress.uploadedFiles + uploadProgress.failedFiles + uploadProgress.cancelledFiles
+    : 0;
+  const uploadActiveFileFraction = uploadProgress
+    ? Math.max(0, Math.min(1, uploadProgress.activeFileProgress))
+    : 0;
+  const isUploadInProgress =
+    isUploadingFiles &&
+    !!uploadProgress &&
+    uploadProcessedFiles < uploadProgress.totalFiles;
+  const uploadEffectiveProcessedFiles = uploadProgress
+    ? uploadProcessedFiles + (isUploadInProgress ? uploadActiveFileFraction : 0)
+    : 0;
+  const uploadProgressPercent = uploadProgress && uploadProgress.totalFiles > 0
+    ? Math.min(100, Math.max(0, Math.round((uploadEffectiveProcessedFiles / uploadProgress.totalFiles) * 100)))
+    : 0;
+  const uploadProgressLabel = uploadProgress
+    ? `${uploadProcessedFiles}/${uploadProgress.totalFiles} files`
+    : "";
+  const downloadProgressPercent = activeDownload
+    ? Math.min(100, Math.max(0, Math.round(activeDownload.progress)))
+    : 0;
+  const downloadProgressLabel = activeDownload
+    ? getDownloadStageLabel(activeDownload.stage)
+    : "";
+  const hasTransferEntries = !!activeDownload || uploadQueueItems.length > 0;
+  const canCancelDownload = !!activeDownload && !["completed", "failed", "cancelled"].includes(activeDownload.stage);
+  const canCancelUploads = isUploadingFiles && uploadQueueItems.some((item) => (
+    item.status === "queued" || item.status === "uploading" || item.status === "sending"
+  ));
+  const selectedPathSet = useMemo(() => new Set(selectedPaths), [selectedPaths]);
+  const selectionBoxStyle = selectionBox
+    ? {
+      left: `${Math.min(selectionBox.startX, selectionBox.currentX)}px`,
+      top: `${Math.min(selectionBox.startY, selectionBox.currentY)}px`,
+      width: `${Math.abs(selectionBox.currentX - selectionBox.startX)}px`,
+      height: `${Math.abs(selectionBox.currentY - selectionBox.startY)}px`,
+    }
+    : null;
+  const uploadSkeletonCount = isUploadInProgress ? 1 : 0;
+  const pasteSkeletonCount = activePaste && normalizePath(activePaste.destinationPath) === normalizePath(currentPath)
+    ? 1
+    : 0;
+  const hasVisibleItems = sortedFiles.length > 0 || uploadSkeletonCount > 0 || pasteSkeletonCount > 0;
   const contextMenuItemClassName = "w-full flex items-center gap-2 rounded-lg px-3 py-2 text-left text-body text-foreground transition-colors hover:bg-primary/15 outline-none focus-visible:outline-none";
   const contextMenuDisabledItemClassName = "w-full flex items-center gap-2 rounded-lg px-3 py-2 text-left text-body text-muted-foreground/60 pointer-events-none outline-none focus-visible:outline-none";
   const contextMenuDangerItemClassName = "w-full flex items-center gap-2 rounded-lg px-3 py-2 text-left text-body text-destructive transition-colors hover:bg-destructive/10 outline-none focus-visible:outline-none";
   const contextTargetFile = contextMenuState?.targetFile ?? null;
+  const isMultiSelectionContextMenu = !!contextTargetFile && selectedPaths.length > 1 && selectedPathSet.has(contextTargetFile.path);
+  const isNotesMessageContextMenu = !!contextTargetFile && !!contextTargetFile.isNoteMessage && isNotesVirtualPath(currentPath);
+  const isProtectedContextFolder = !!contextTargetFile && contextTargetFile.isDirectory && isProtectedSavedFolderPath(contextTargetFile.path);
   const canPaste = !!clipboardItem;
+  const cutClipboardPath = clipboardItem?.mode === "cut" ? clipboardItem.path : null;
+  const cutPathSet = useMemo(() => (cutClipboardPath ? new Set([cutClipboardPath]) : undefined), [cutClipboardPath]);
   const isRecycleBinView = isRecycleBinPath(currentPath);
+  const isNotesFolderView = isNotesVirtualPath(currentPath);
+  const canPasteInCurrentPath = canPaste && !isNotesFolderView;
+  const effectiveViewMode: ExplorerViewMode = isNotesFolderView ? "list" : viewMode;
   const currentMediaViewerFile = isMediaViewerOpen
     ? mediaViewerItems[mediaViewerIndex] ?? null
     : null;
@@ -1318,6 +1746,7 @@ export default function ExplorerPage() {
   const isSavedDeleteTarget = !!deleteTarget && isSavedVirtualItemPath(deleteTarget.path);
 
   const handleFileSelect = (file: FileItem) => {
+    setSelectedPaths([file.path]);
     setSelectedFile(file);
 
     if (isRecycleBinPath(currentPath)) {
@@ -1637,6 +2066,10 @@ export default function ExplorerPage() {
       navigateToPath(file.path);
     } else {
       if (isSavedVirtualFilePath(file.path)) {
+        if (file.isNoteMessage) {
+          return;
+        }
+
         if (isSavedPreviewableFile(file)) {
           openSavedMediaViewer(file);
           return;
@@ -1718,6 +2151,15 @@ export default function ExplorerPage() {
 
     try {
       const target = deleteTarget;
+      if (target.isDirectory && isProtectedSavedFolderPath(target.path)) {
+        setDeleteTarget(null);
+        toast({
+          title: "Action unavailable",
+          description: "Default folders cannot be deleted.",
+        });
+        return;
+      }
+
       const isSavedItem = isSavedVirtualItemPath(target.path);
 
       if (isSavedItem) {
@@ -1804,10 +2246,6 @@ export default function ExplorerPage() {
 
   const handleRefresh = async () => {
     await loadDirectory(currentPath, { force: true });
-    toast({
-      title: "Refreshed",
-      description: "Directory contents refreshed"
-    });
   };
 
   const handleLogout = async () => {
@@ -2020,11 +2458,17 @@ export default function ExplorerPage() {
   };
 
   const handleFileContextMenu = (event: React.MouseEvent, file: FileItem) => {
+    const isFileAlreadySelected = selectedPaths.includes(file.path);
+    if (!isFileAlreadySelected) {
+      setSelectedPaths([file.path]);
+    }
+
     setSelectedFile(file);
     openContextMenu(event, file, false);
   };
 
   const handleEmptyAreaContextMenu = (event: React.MouseEvent<HTMLDivElement>) => {
+    setSelectedPaths([]);
     setSelectedFile(null);
     closeDetailsPanel();
 
@@ -2067,9 +2511,156 @@ export default function ExplorerPage() {
     }
   };
 
+  const handleCopyNoteText = async (targetFile?: FileItem | null) => {
+    const file = targetFile ?? selectedFile;
+    if (!file || !file.isNoteMessage) {
+      return;
+    }
+
+    const textToCopy = (file.noteText || file.name || "").trim();
+    if (!textToCopy) {
+      return;
+    }
+
+    try {
+      await navigator.clipboard.writeText(textToCopy);
+    } catch (error) {
+      console.error("Failed to copy note text:", error);
+      toast({
+        title: "Copy failed",
+        description: "Unable to copy note text",
+        variant: "destructive",
+      });
+    }
+  };
+
+  const handleEditNoteMessage = (targetFile?: FileItem | null) => {
+    const file = targetFile ?? selectedFile;
+    if (!file || !file.isNoteMessage) {
+      return;
+    }
+
+    setNoteEditTarget(file);
+    setNoteEditValue(file.noteText || file.name || "");
+  };
+
+  const handleConfirmEditNoteMessage = async () => {
+    const target = noteEditTarget;
+    if (!target) {
+      return;
+    }
+
+    const nextText = noteEditValue.trim();
+    if (!nextText) {
+      toast({
+        title: "Message required",
+        description: "Message text cannot be empty.",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    try {
+      await invoke("tg_edit_saved_note_message", {
+        sourcePath: target.path,
+        text: nextText,
+      });
+
+      const normalizedTargetPath = normalizePath(target.path);
+      const nowIso = new Date().toISOString();
+      const updatedItems = filesRef.current.map((item) => (
+        normalizePath(item.path) === normalizedTargetPath
+          ? {
+            ...item,
+            name: nextText,
+            noteText: nextText,
+            modifiedAt: nowIso,
+          }
+          : item
+      ));
+
+      setFiles(updatedItems);
+
+      const cacheEntry = savedPathCacheRef.current[currentPathRef.current];
+      if (cacheEntry) {
+        savedPathCacheRef.current[currentPathRef.current] = {
+          ...cacheEntry,
+          items: updatedItems,
+        };
+      }
+
+      setSelectedFile((prev) => {
+        if (!prev || normalizePath(prev.path) !== normalizedTargetPath) {
+          return prev;
+        }
+
+        return {
+          ...prev,
+          name: nextText,
+          noteText: nextText,
+          modifiedAt: nowIso,
+        };
+      });
+
+      setNoteEditTarget(null);
+      setNoteEditValue("");
+    } catch (error) {
+      const typedError = error as TelegramError;
+      toast({
+        title: "Edit failed",
+        description: typedError.message || "Unable to edit note message",
+        variant: "destructive",
+      });
+    }
+  };
+
+  const handleSendNoteMessage = async () => {
+    if (!isNotesFolderView || isSendingNoteMessage) {
+      return;
+    }
+
+    const text = noteComposerValue.trim();
+    if (!text) {
+      return;
+    }
+
+    setIsSendingNoteMessage(true);
+    try {
+      const sentMessage = await invoke<TelegramMessage>("tg_send_saved_note_message", { text });
+      const noteItem = telegramMessageToFileItem(sentMessage);
+
+      appendItemToCurrentView(NOTES_VIRTUAL_PATH, noteItem);
+      setNoteComposerValue("");
+
+      window.requestAnimationFrame(() => {
+        const area = explorerAreaRef.current;
+        if (area) {
+          area.scrollTop = area.scrollHeight;
+        }
+      });
+    } catch (error) {
+      const typedError = error as TelegramError;
+      toast({
+        title: "Send failed",
+        description: typedError.message || "Unable to send note message",
+        variant: "destructive",
+      });
+    } finally {
+      setIsSendingNoteMessage(false);
+    }
+  };
+
   const handleStageClipboardItem = (mode: ClipboardMode, targetFile?: FileItem | null) => {
     const file = targetFile ?? selectedFile;
     if (!file) {
+      return;
+    }
+
+    if (file.isNoteMessage || isNotesVirtualPath(currentPath)) {
+      toast({
+        title: "Action unavailable",
+        description: "Copy/Cut is disabled in Notes folder.",
+      });
       return;
     }
 
@@ -2087,11 +2678,6 @@ export default function ExplorerPage() {
       isDirectory: file.isDirectory,
       mode,
     });
-
-    toast({
-      title: mode === "cut" ? "Ready to move" : "Ready to copy",
-      description: file.name,
-    });
   };
 
   const resolvePasteDestinationPath = (): string => {
@@ -2101,6 +2687,62 @@ export default function ExplorerPage() {
     }
 
     return currentPath;
+  };
+
+  const removeItemFromCurrentView = (path: string) => {
+    const normalizedPath = normalizePath(path);
+    const currentItems = filesRef.current;
+    const nextItems = currentItems.filter((item) => normalizePath(item.path) !== normalizedPath);
+
+    if (nextItems.length === currentItems.length) {
+      return;
+    }
+
+    setFiles(nextItems);
+    setSelectedPaths((prev) => prev.filter((selectedPath) => normalizePath(selectedPath) !== normalizedPath));
+
+    if (selectedFile && normalizePath(selectedFile.path) === normalizedPath) {
+      setSelectedFile(null);
+      closeDetailsPanel();
+    }
+
+    if (currentPathRef.current.startsWith("tg://saved")) {
+      setSavedItemsOffset((prev) => Math.max(0, prev - 1));
+      const cacheEntry = savedPathCacheRef.current[currentPathRef.current];
+      if (cacheEntry) {
+        savedPathCacheRef.current[currentPathRef.current] = {
+          ...cacheEntry,
+          items: nextItems,
+          nextOffset: Math.max(0, cacheEntry.nextOffset - 1),
+        };
+      }
+    }
+  };
+
+  const appendItemToCurrentView = (destinationFolderPath: string, item: FileItem) => {
+    if (normalizePath(currentPathRef.current) !== normalizePath(destinationFolderPath)) {
+      return;
+    }
+
+    const currentItems = filesRef.current;
+    const nextItems = mergeFileItemsByIdentity(currentItems, [item]);
+    if (nextItems.length === currentItems.length) {
+      return;
+    }
+
+    setFiles(nextItems);
+
+    if (currentPathRef.current.startsWith("tg://saved")) {
+      setSavedItemsOffset((prev) => prev + 1);
+      const cacheEntry = savedPathCacheRef.current[currentPathRef.current];
+      if (cacheEntry) {
+        savedPathCacheRef.current[currentPathRef.current] = {
+          ...cacheEntry,
+          items: nextItems,
+          nextOffset: cacheEntry.nextOffset + 1,
+        };
+      }
+    }
   };
 
   const handlePaste = async () => {
@@ -2125,6 +2767,15 @@ export default function ExplorerPage() {
       return;
     }
 
+    if (isNotesVirtualPath(destinationFolderPath) || isNotesVirtualPath(currentPath)) {
+      toast({
+        title: "Paste unavailable",
+        description: "Paste is disabled in Notes folder.",
+        variant: "destructive",
+      });
+      return;
+    }
+
     try {
       const sourceIsSaved = isSavedVirtualItemPath(sourcePath);
       const destinationIsSaved = isSavedVirtualFolderPath(destinationFolderPath);
@@ -2139,18 +2790,44 @@ export default function ExplorerPage() {
           return;
         }
 
+        setActivePaste({
+          fileName: sourceName,
+          destinationPath: destinationFolderPath,
+        });
+
         await invoke("tg_move_saved_item", {
           sourcePath,
           destinationPath: destinationFolderPath,
         });
 
+        const sourceIsVisible = filesRef.current.some((file) => normalizePath(file.path) === normalizePath(sourcePath));
+        const destinationIsCurrent = normalizePath(destinationFolderPath) === normalizePath(currentPathRef.current);
+
+        if (sourceIsVisible && !destinationIsCurrent) {
+          removeItemFromCurrentView(sourcePath);
+        }
+
+        if (destinationIsCurrent) {
+          const sourceItem = filesRef.current.find((file) => normalizePath(file.path) === normalizePath(sourcePath));
+          const optimisticPath = isSavedVirtualFilePath(sourcePath)
+            ? sourcePath
+            : `${destinationFolderPath}/${sourceName}`.replace("//", "/");
+
+          const optimisticItem: FileItem = sourceItem
+            ? { ...sourceItem, name: sourceName, path: optimisticPath }
+            : {
+              name: sourceName,
+              path: optimisticPath,
+              isDirectory: clipboardItem.isDirectory,
+              extension: clipboardItem.isDirectory ? undefined : extensionFromFileName(sourceName),
+              modifiedAt: new Date().toISOString(),
+            };
+
+          appendItemToCurrentView(destinationFolderPath, optimisticItem);
+        }
+
         setClipboardItem(null);
         savedPathCacheRef.current = {};
-        await loadDirectory(currentPath, { force: true });
-        toast({
-          title: "Pasted",
-          description: `${sourceName} moved successfully`,
-        });
         return;
       }
 
@@ -2165,10 +2842,6 @@ export default function ExplorerPage() {
 
       const destinationPath = joinPath(destinationFolderPath, sourceName);
       if (normalizePath(sourcePath) === normalizePath(destinationPath)) {
-        toast({
-          title: "Paste skipped",
-          description: "Source and destination are the same.",
-        });
         return;
       }
 
@@ -2182,34 +2855,51 @@ export default function ExplorerPage() {
           return;
         }
 
+        setActivePaste({
+          fileName: sourceName,
+          destinationPath: destinationFolderPath,
+        });
+
         await invoke("copy_file", {
           source: sourcePath,
           destination: destinationPath,
         });
 
-        toast({
-          title: "Copied",
-          description: `${sourceName} copied successfully`,
+        appendItemToCurrentView(destinationFolderPath, {
+          name: sourceName,
+          path: destinationPath,
+          isDirectory: clipboardItem.isDirectory,
+          extension: clipboardItem.isDirectory ? undefined : extensionFromFileName(sourceName),
+          modifiedAt: new Date().toISOString(),
         });
       } else {
+        setActivePaste({
+          fileName: sourceName,
+          destinationPath: destinationFolderPath,
+        });
+
         await invoke("move_file", {
           source: sourcePath,
           destination: destinationPath,
         });
 
         setClipboardItem(null);
-        if (selectedFile?.path === sourcePath) {
-          setSelectedFile(null);
-          closeDetailsPanel();
+
+        const sourceIsVisible = filesRef.current.some((file) => normalizePath(file.path) === normalizePath(sourcePath));
+        const destinationIsCurrent = normalizePath(destinationFolderPath) === normalizePath(currentPathRef.current);
+
+        if (sourceIsVisible && !destinationIsCurrent) {
+          removeItemFromCurrentView(sourcePath);
         }
 
-        toast({
-          title: "Moved",
-          description: `${sourceName} moved successfully`,
+        appendItemToCurrentView(destinationFolderPath, {
+          name: sourceName,
+          path: destinationPath,
+          isDirectory: clipboardItem.isDirectory,
+          extension: clipboardItem.isDirectory ? undefined : extensionFromFileName(sourceName),
+          modifiedAt: new Date().toISOString(),
         });
       }
-
-      await loadDirectory(currentPath, { force: true });
     } catch (error) {
       const typedError = error as FsError | TelegramError;
       toast({
@@ -2217,6 +2907,8 @@ export default function ExplorerPage() {
         description: typedError.message || "An unknown error occurred",
         variant: "destructive",
       });
+    } finally {
+      setActivePaste(null);
     }
   };
 
@@ -2240,6 +2932,10 @@ export default function ExplorerPage() {
   };
 
   const handleContextDetails = (targetFile?: FileItem | null) => {
+    if (selectedPaths.length > 1) {
+      return;
+    }
+
     const file = targetFile ?? contextMenuState?.targetFile ?? selectedFile;
     if (!file || isRecycleBinPath(currentPath)) {
       return;
@@ -2481,41 +3177,203 @@ export default function ExplorerPage() {
       return;
     }
 
+    const uploadTargetPath = currentPath;
+    uploadCancelRequestedRef.current = false;
+    currentUploadQueueIndexRef.current = null;
+    setUploadQueueItems(
+      droppedFiles.map((file, index) => ({
+        id: `${Date.now()}-${index}-${file.name}`,
+        fileName: file.name,
+        status: "queued",
+        progress: 0,
+      })),
+    );
+
     setIsUploadingFiles(true);
+    clearUploadProgressTimers();
+    setIsUploadProgressMounted(true);
+    setIsUploadProgressVisible(false);
+    uploadProgressEnterFrameRef.current = window.requestAnimationFrame(() => {
+      setIsUploadProgressVisible(true);
+      uploadProgressEnterFrameRef.current = null;
+    });
+
+    setUploadProgress({
+      totalFiles: droppedFiles.length,
+      uploadedFiles: 0,
+      failedFiles: 0,
+      cancelledFiles: 0,
+      activeFileProgress: 0,
+      activeFileName: null,
+    });
+
+    let unlistenUploadProgress: (() => void) | null = null;
+    let currentUploadingFileName: string | null = null;
+
     try {
+      unlistenUploadProgress = await listen<UploadProgressPayload>("tg-upload-progress", (event) => {
+        const payload = event.payload;
+        if (!payload) {
+          return;
+        }
+
+        const progressFraction = Math.max(0, Math.min(100, payload.progress)) / 100;
+        const progressPercent = Math.max(0, Math.min(100, payload.progress));
+        const currentUploadIndex = currentUploadQueueIndexRef.current;
+        const queueStatus: UploadQueueStatus = payload.stage === "uploading"
+          ? "uploading"
+          : payload.stage === "sending"
+            ? "sending"
+            : payload.stage === "completed"
+              ? "completed"
+              : "failed";
+
+        if (currentUploadIndex !== null) {
+          setUploadQueueItems((prev) => prev.map((item, index) => (
+            index === currentUploadIndex
+              ? {
+                ...item,
+                status: queueStatus,
+                progress: progressPercent,
+                message: payload.message || undefined,
+              }
+              : item
+          )));
+        }
+
+        setUploadProgress((prev) => {
+          if (!prev) {
+            return prev;
+          }
+
+          if (currentUploadingFileName && payload.fileName !== currentUploadingFileName) {
+            return prev;
+          }
+
+          return {
+            ...prev,
+            activeFileName: payload.fileName,
+            activeFileProgress: progressFraction,
+          };
+        });
+      });
+
       let uploadedCount = 0;
       let failedCount = 0;
-      const uploadedCategories = new Set<string>();
+      let cancelledCount = 0;
+      const uploadedMessages: TelegramMessage[] = [];
 
-      for (const droppedFile of droppedFiles) {
+      for (let index = 0; index < droppedFiles.length; index += 1) {
+        const droppedFile = droppedFiles[index];
+
+        if (uploadCancelRequestedRef.current) {
+          const remainingCount = droppedFiles.length - index;
+          if (remainingCount > 0) {
+            cancelledCount += remainingCount;
+            setUploadQueueItems((prev) => prev.map((item, itemIndex) => (
+              itemIndex >= index && item.status === "queued"
+                ? { ...item, status: "cancelled", message: "Cancelled" }
+                : item
+            )));
+
+            setUploadProgress({
+              totalFiles: droppedFiles.length,
+              uploadedFiles: uploadedCount,
+              failedFiles: failedCount,
+              cancelledFiles: cancelledCount,
+              activeFileProgress: 0,
+              activeFileName: null,
+            });
+          }
+          break;
+        }
+
+        currentUploadQueueIndexRef.current = index;
+        currentUploadingFileName = droppedFile.name;
+
+        setUploadQueueItems((prev) => prev.map((item, itemIndex) => (
+          itemIndex === index
+            ? { ...item, status: "uploading", progress: 0, message: undefined }
+            : item
+        )));
+
+        setUploadProgress({
+          totalFiles: droppedFiles.length,
+          uploadedFiles: uploadedCount,
+          failedFiles: failedCount,
+          cancelledFiles: cancelledCount,
+          activeFileProgress: 0,
+          activeFileName: currentUploadingFileName,
+        });
+
         try {
           const fileBytes = Array.from(new Uint8Array(await droppedFile.arrayBuffer()));
-          const uploadedMessage: TelegramMessage = await invoke("tg_upload_file_to_saved_messages", {
+          const uploadedMessage = await invoke<TelegramMessage>("tg_upload_file_to_saved_messages", {
             fileName: droppedFile.name,
             fileBytes,
-            filePath: virtualToSavedPath(currentPath),
+            filePath: virtualToSavedPath(uploadTargetPath),
           });
 
           uploadedCount += 1;
-          uploadedCategories.add(uploadedMessage.category);
+          uploadedMessages.push(uploadedMessage);
+          setUploadQueueItems((prev) => prev.map((item, itemIndex) => (
+            itemIndex === index
+              ? { ...item, status: "completed", progress: 100, message: undefined }
+              : item
+          )));
         } catch (error) {
           failedCount += 1;
           console.error("Failed to upload file:", droppedFile.name, error);
+          setUploadQueueItems((prev) => prev.map((item, itemIndex) => (
+            itemIndex === index
+              ? {
+                ...item,
+                status: "failed",
+                progress: 0,
+                message: (error as TelegramError)?.message || "Upload failed",
+              }
+              : item
+          )));
+        }
+
+        setUploadProgress({
+          totalFiles: droppedFiles.length,
+          uploadedFiles: uploadedCount,
+          failedFiles: failedCount,
+          cancelledFiles: cancelledCount,
+          activeFileProgress: 0,
+          activeFileName: null,
+        });
+
+        currentUploadQueueIndexRef.current = null;
+        currentUploadingFileName = null;
+
+        if (uploadCancelRequestedRef.current) {
+          const remainingCount = droppedFiles.length - (index + 1);
+          if (remainingCount > 0) {
+            cancelledCount += remainingCount;
+            setUploadQueueItems((prev) => prev.map((item, itemIndex) => (
+              itemIndex > index && item.status === "queued"
+                ? { ...item, status: "cancelled", message: "Cancelled" }
+                : item
+            )));
+
+            setUploadProgress({
+              totalFiles: droppedFiles.length,
+              uploadedFiles: uploadedCount,
+              failedFiles: failedCount,
+              cancelledFiles: cancelledCount,
+              activeFileProgress: 0,
+              activeFileName: null,
+            });
+          }
+
+          break;
         }
       }
 
       if (uploadedCount > 0) {
-        savedPathCacheRef.current = {};
-        await loadDirectory(currentPath, { force: true });
-
-        const categorySummary = uploadedCategories.size
-          ? ` to ${Array.from(uploadedCategories).join(", ")}`
-          : "";
-
-        toast({
-          title: "Upload complete",
-          description: `Uploaded ${uploadedCount} file${uploadedCount === 1 ? "" : "s"}${categorySummary}`,
-        });
+        appendUploadedItemsToSavedFolder(uploadTargetPath, uploadedMessages);
       }
 
       if (failedCount > 0) {
@@ -2526,8 +3384,205 @@ export default function ExplorerPage() {
         });
       }
     } finally {
+      uploadCancelRequestedRef.current = false;
+      currentUploadQueueIndexRef.current = null;
+      currentUploadingFileName = null;
+      if (unlistenUploadProgress) {
+        unlistenUploadProgress();
+      }
+
       setIsUploadingFiles(false);
+      setIsUploadProgressVisible(false);
+      clearUploadProgressTimers();
+      uploadProgressHideTimerRef.current = window.setTimeout(() => {
+        setIsUploadProgressMounted(false);
+        setUploadProgress(null);
+        setUploadQueueItems([]);
+        uploadProgressHideTimerRef.current = null;
+      }, UPLOAD_PROGRESS_ANIMATION_MS);
     }
+  };
+
+  const handleToggleTransferMenu = () => {
+    if (!hasTransferEntries) {
+      return;
+    }
+
+    setIsTransferMenuOpen((prev) => !prev);
+  };
+
+  const handleCancelUploadQueue = () => {
+    if (!isUploadingFiles) {
+      return;
+    }
+
+    uploadCancelRequestedRef.current = true;
+
+    const currentIndex = currentUploadQueueIndexRef.current;
+    setUploadQueueItems((prev) => prev.map((item, index) => {
+      if (item.status !== "queued") {
+        return item;
+      }
+
+      if (currentIndex !== null && index <= currentIndex) {
+        return item;
+      }
+
+      return {
+        ...item,
+        status: "cancelled",
+        message: "Cancelled",
+      };
+    }));
+  };
+
+  const handleCancelActiveDownload = async () => {
+    if (!activeDownload || !canCancelDownload) {
+      return;
+    }
+
+    setActiveDownload((prev) => {
+      if (!prev || prev.sourcePath !== activeDownload.sourcePath) {
+        return prev;
+      }
+
+      return {
+        ...prev,
+        message: "Cancelling download...",
+      };
+    });
+
+    try {
+      await invoke("tg_cancel_saved_file_download", {
+        sourcePath: activeDownload.sourcePath,
+      });
+    } catch (error) {
+      const typedError = error as TelegramError;
+      toast({
+        title: "Cancel failed",
+        description: typedError.message || "Unable to cancel download",
+        variant: "destructive",
+      });
+    }
+  };
+
+  const applySelectionFromPaths = useCallback((paths: string[]) => {
+    if (!paths.length) {
+      setSelectedPaths([]);
+      setSelectedFile(null);
+      closeDetailsPanel();
+      return;
+    }
+
+    setSelectedPaths(paths);
+    const firstSelected = filesRef.current.find((item) => item.path === paths[0]) || null;
+    setSelectedFile(firstSelected);
+
+    if (paths.length > 1) {
+      closeDetailsPanel();
+    }
+  }, [closeDetailsPanel]);
+
+  const updateSelectionFromMarquee = useCallback((
+    startX: number,
+    startY: number,
+    currentX: number,
+    currentY: number,
+    baseSelection: string[],
+  ) => {
+    const explorerArea = explorerAreaRef.current;
+    if (!explorerArea) {
+      return;
+    }
+
+    const left = Math.min(startX, currentX);
+    const right = Math.max(startX, currentX);
+    const top = Math.min(startY, currentY);
+    const bottom = Math.max(startY, currentY);
+
+    const intersectedPaths = new Set<string>();
+    const itemNodes = explorerArea.querySelectorAll<HTMLElement>("[data-file-item='true']");
+    itemNodes.forEach((node) => {
+      const path = node.dataset.filePath;
+      if (!path) {
+        return;
+      }
+
+      const rect = node.getBoundingClientRect();
+      const intersects = !(
+        rect.right < left
+        || rect.left > right
+        || rect.bottom < top
+        || rect.top > bottom
+      );
+
+      if (intersects) {
+        intersectedPaths.add(path);
+      }
+    });
+
+    const orderedIntersectedPaths = sortedFiles
+      .map((item) => item.path)
+      .filter((path) => intersectedPaths.has(path));
+
+    const mergedSelection = baseSelection.length > 0
+      ? Array.from(new Set([...baseSelection, ...orderedIntersectedPaths]))
+      : orderedIntersectedPaths;
+
+    applySelectionFromPaths(mergedSelection);
+  }, [applySelectionFromPaths, sortedFiles]);
+
+  const handleExplorerMouseDown = (event: React.MouseEvent<HTMLDivElement>) => {
+    if (event.button !== 0 || isDirectoryLoading) {
+      return;
+    }
+
+    if (isTextInputElement(event.target)) {
+      return;
+    }
+
+    const targetElement = event.target as HTMLElement | null;
+    if (targetElement?.closest("[data-file-item='true']")) {
+      return;
+    }
+
+    closeContextMenu();
+
+    const startX = event.clientX;
+    const startY = event.clientY;
+    const additiveSelection = event.ctrlKey || event.metaKey;
+    const baseSelection = additiveSelection ? selectedPaths : [];
+
+    setSelectionBox({ startX, startY, currentX: startX, currentY: startY });
+    if (!additiveSelection) {
+      applySelectionFromPaths([]);
+    }
+
+    const handleMouseMove = (moveEvent: MouseEvent) => {
+      const nextX = moveEvent.clientX;
+      const nextY = moveEvent.clientY;
+
+      setSelectionBox({
+        startX,
+        startY,
+        currentX: nextX,
+        currentY: nextY,
+      });
+
+      updateSelectionFromMarquee(startX, startY, nextX, nextY, baseSelection);
+    };
+
+    const handleMouseUp = (upEvent: MouseEvent) => {
+      window.removeEventListener("mousemove", handleMouseMove);
+      window.removeEventListener("mouseup", handleMouseUp);
+
+      setSelectionBox(null);
+      updateSelectionFromMarquee(startX, startY, upEvent.clientX, upEvent.clientY, baseSelection);
+    };
+
+    window.addEventListener("mousemove", handleMouseMove);
+    window.addEventListener("mouseup", handleMouseUp);
+    event.preventDefault();
   };
 
   const handleExplorerDragOver = (event: React.DragEvent) => {
@@ -2550,12 +3605,16 @@ export default function ExplorerPage() {
   };
 
   const handleExplorerDrop = async (event: React.DragEvent) => {
-    if (!isExternalFileDrag(event) || isRecycleBinPath(currentPath)) {
+    if (!isExternalFileDrag(event)) {
       return;
     }
 
     event.preventDefault();
     setIsExternalDragging(false);
+
+    if (isRecycleBinPath(currentPath)) {
+      return;
+    }
 
     await handleUploadFiles(Array.from(event.dataTransfer.files));
   };
@@ -2620,31 +3679,33 @@ export default function ExplorerPage() {
               placeholder="Search files..."
             />
 
-            <div className="flex items-center gap-1 ml-2">
-              <button
-                onClick={() => handleViewModeChange("list")}
-                className={`p-2 rounded transition-colors ${viewMode === "list" ? "bg-secondary text-foreground" : "text-muted-foreground hover:text-foreground"
-                  }`}
-                title="List view"
-              >
-                <List className="w-4 h-4" />
-              </button>
-              <button
-                onClick={() => handleViewModeChange("grid")}
-                className={`p-2 rounded transition-colors ${viewMode === "grid" ? "bg-secondary text-foreground" : "text-muted-foreground hover:text-foreground"
-                  }`}
-                title="Grid view"
-              >
-                <Grid className="w-4 h-4" />
-              </button>
-            </div>
+            {!isNotesFolderView && (
+              <div className="flex items-center gap-1 ml-2">
+                <button
+                  onClick={() => handleViewModeChange("list")}
+                  className={`p-2 rounded transition-colors ${viewMode === "list" ? "bg-secondary text-foreground" : "text-muted-foreground hover:text-foreground"
+                    }`}
+                  title="List view"
+                >
+                  <List className="w-4 h-4" />
+                </button>
+                <button
+                  onClick={() => handleViewModeChange("grid")}
+                  className={`p-2 rounded transition-colors ${viewMode === "grid" ? "bg-secondary text-foreground" : "text-muted-foreground hover:text-foreground"
+                    }`}
+                  title="Grid view"
+                >
+                  <Grid className="w-4 h-4" />
+                </button>
+              </div>
+            )}
           </div>
         </div>
 
         {/* Toolbar */}
         <div className="h-12 bg-glass border-b border-border flex items-center justify-between px-4">
           <div className="flex items-center gap-2">
-            {!isRecycleBinView && (
+            {!isRecycleBinView && !isNotesFolderView && (
               <TelegramButton variant="secondary" size="sm" onClick={handleNewFolder}>
                 <FolderPlus className="w-4 h-4" />
                 New Folder
@@ -2652,7 +3713,7 @@ export default function ExplorerPage() {
             )}
 
             {/* Contextual actions for selected file */}
-            {selectedFile && !isRecycleBinView && (
+            {selectedFile && selectedPaths.length === 1 && !isRecycleBinView && (
               <>
                 <TelegramButton
                   variant="secondary"
@@ -2684,7 +3745,53 @@ export default function ExplorerPage() {
             )}
           </div>
 
-          <div className="flex items-center gap-2">
+          <div className="relative flex items-center gap-2 min-w-0">
+            <div ref={transferMenuTriggerRef} className="flex items-center gap-2 min-w-0">
+              {activeDownload && (
+                <button
+                  type="button"
+                  onClick={handleToggleTransferMenu}
+                  className="mr-1 flex items-center gap-2 min-w-[220px] rounded-md px-1.5 py-1 transition-colors hover:bg-secondary/40"
+                >
+                  <span
+                    className="max-w-[130px] truncate text-small text-muted-foreground"
+                    title={`${activeDownload.fileName} - ${downloadProgressLabel}`}
+                  >
+                    {downloadProgressLabel}
+                  </span>
+                  <Progress
+                    value={downloadProgressPercent}
+                    className="h-1.5 w-24 bg-secondary/60"
+                    aria-label="Download progress"
+                  />
+                  <span className="w-9 text-right text-small text-muted-foreground tabular-nums">
+                    {downloadProgressPercent}%
+                  </span>
+                </button>
+              )}
+              {isUploadProgressMounted && uploadProgress && (
+                <button
+                  type="button"
+                  onClick={handleToggleTransferMenu}
+                  className={`mr-1 flex items-center gap-2 min-w-[220px] rounded-md px-1.5 py-1 transform-gpu transition-all duration-200 ease-out hover:bg-secondary/40 ${isUploadProgressVisible
+                    ? "translate-y-0 opacity-100"
+                    : "-translate-y-3 opacity-0"
+                    }`}
+                >
+                  <span className="text-small text-muted-foreground whitespace-nowrap tabular-nums">
+                    {uploadProgressLabel}
+                  </span>
+                  <Progress
+                    value={uploadProgressPercent}
+                    className="h-1.5 w-24 bg-secondary/60"
+                    aria-label="Upload progress"
+                  />
+                  <span className="w-9 text-right text-small text-muted-foreground tabular-nums">
+                    {uploadProgressPercent}%
+                  </span>
+                </button>
+              )}
+            </div>
             <button className="flex items-center gap-1 px-2 py-1 rounded text-small text-muted-foreground hover:text-foreground hover:bg-secondary transition-colors">
               <SortAsc className="w-3 h-3" />
               Name
@@ -2703,27 +3810,109 @@ export default function ExplorerPage() {
                 Syncing... {syncProgressLabel}
               </span>
             )}
+
+            {isTransferMenuOpen && hasTransferEntries && (
+              <div
+                ref={transferMenuRef}
+                className="absolute right-0 top-[calc(100%+8px)] z-[95] w-[360px] rounded-xl border border-border/60 bg-glass shadow-2xl shadow-black/50 backdrop-saturate-150 p-2"
+              >
+                {activeDownload && (
+                  <div className="rounded-lg border border-border/60 bg-secondary/10 px-3 py-2 mb-2">
+                    <div className="flex items-start justify-between gap-2">
+                      <div className="min-w-0">
+                        <p className="text-body font-medium text-foreground truncate" title={activeDownload.fileName}>
+                          {activeDownload.fileName}
+                        </p>
+                        <p className="text-small text-muted-foreground">
+                          {downloadProgressLabel}
+                        </p>
+                      </div>
+                      {canCancelDownload && (
+                        <TelegramButton
+                          variant="secondary"
+                          size="sm"
+                          onClick={handleCancelActiveDownload}
+                        >
+                          Cancel
+                        </TelegramButton>
+                      )}
+                    </div>
+                    <Progress
+                      value={downloadProgressPercent}
+                      className="mt-2 h-1.5 bg-secondary/60"
+                    />
+                  </div>
+                )}
+
+                {uploadQueueItems.length > 0 && (
+                  <div className="rounded-lg border border-border/60 bg-secondary/10 px-3 py-2">
+                    <div className="mb-2 flex items-center justify-between gap-2">
+                      <p className="text-body font-medium text-foreground">Uploads</p>
+                      {canCancelUploads && (
+                        <TelegramButton
+                          variant="secondary"
+                          size="sm"
+                          onClick={handleCancelUploadQueue}
+                        >
+                          Cancel remaining
+                        </TelegramButton>
+                      )}
+                    </div>
+
+                    <div className="max-h-52 space-y-1.5 overflow-y-auto pr-1">
+                      {uploadQueueItems.map((item) => (
+                        <div key={item.id} className="rounded-md bg-secondary/20 px-2 py-1.5">
+                          <div className="flex items-center justify-between gap-2">
+                            <span className="truncate text-small text-foreground" title={item.fileName}>
+                              {item.fileName}
+                            </span>
+                            <span className="text-small text-muted-foreground tabular-nums">
+                              {item.status === "uploading" || item.status === "sending"
+                                ? `${Math.round(item.progress)}%`
+                                : getUploadQueueStatusLabel(item.status)}
+                            </span>
+                          </div>
+                          {(item.status === "uploading" || item.status === "sending") && (
+                            <Progress value={item.progress} className="mt-1.5 h-1.5 bg-secondary/60" />
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
           </div>
         </div>
 
         {/* File list */}
         <div className="flex-1 flex min-h-0">
-          <div
-            className="relative flex-1 overflow-y-auto p-4"
-            onDragOver={handleExplorerDragOver}
-            onDragLeave={handleExplorerDragLeave}
-            onDrop={handleExplorerDrop}
-            onScroll={handleDirectoryScroll}
-            onContextMenu={handleEmptyAreaContextMenu}
-          >
-            {(isExternalDragging || isUploadingFiles) && (
-              <div className="pointer-events-none absolute inset-4 z-20 rounded-xl border-2 border-dashed border-primary/60 bg-primary/10 flex items-center justify-center">
-                <p className="text-body font-medium text-foreground">
-                  {isUploadingFiles
-                    ? "Uploading files to Saved Messages..."
-                    : "Drop files here to upload to Saved Messages"}
-                </p>
+          <div className="relative flex-1 min-w-0 flex flex-col">
+            <div
+              ref={explorerAreaRef}
+              className={`relative flex-1 overflow-y-auto p-4 ${isNotesFolderView ? "pb-3" : ""}`}
+              onDragOver={handleExplorerDragOver}
+              onDragLeave={handleExplorerDragLeave}
+              onDrop={handleExplorerDrop}
+              onScroll={handleDirectoryScroll}
+              onMouseDown={handleExplorerMouseDown}
+              onContextMenu={handleEmptyAreaContextMenu}
+            >
+            {isExternalDragging && (
+              <div className="pointer-events-none absolute inset-4 z-20 rounded-xl border-2 border-dashed border-primary/60 bg-primary/10 px-6 py-5">
+                <div className="flex h-full items-center justify-center">
+                  <p className="text-body font-medium text-foreground">
+                    Drop files here to upload to Saved Messages
+                  </p>
+                </div>
               </div>
+            )}
+
+            {selectionBox && selectionBoxStyle && (
+              <div
+                className="pointer-events-none fixed z-[94] rounded-md border border-primary/50 bg-primary/15"
+                style={selectionBoxStyle}
+              />
             )}
 
             {error ? (
@@ -2737,27 +3926,35 @@ export default function ExplorerPage() {
               </div>
             ) : isDirectoryLoading ? (
               <div className="h-full">
-                <p className="text-small text-muted-foreground mb-3">
-                  {isLoadingSavedFiles
-                    ? `Loading files... ${syncProgressLabel}`
-                    : "Loading directory contents..."}
-                </p>
-
-                {viewMode === "list" ? (
-                  <div className="space-y-1">
-                    {Array.from({ length: 10 }).map((_, index) => (
-                      <div key={`list-skeleton-${index}`} className="flex items-center gap-3 px-3 py-1 rounded-lg border border-primary/12 bg-secondary/20">
-                        <Skeleton className="skeleton-shimmer animate-none h-8 w-8 rounded-md bg-secondary/55" />
-                        <Skeleton className="skeleton-shimmer animate-none h-4 flex-1 max-w-[45%] bg-secondary/45" />
-                        <Skeleton className="skeleton-shimmer animate-none h-3 w-14 bg-secondary/40" />
-                        <Skeleton className="skeleton-shimmer animate-none h-3 w-16 bg-secondary/40" />
-                      </div>
-                    ))}
-                  </div>
+                {effectiveViewMode === "list" ? (
+                  isNotesFolderView ? (
+                    <div className="space-y-2">
+                      {Array.from({ length: 10 }).map((_, index) => (
+                        <div key={`list-skeleton-${index}`} className="px-2 py-1">
+                          <div className="ml-auto max-w-[86%] rounded-2xl rounded-br-md bg-primary/18 px-3 py-2">
+                            <Skeleton className="skeleton-shimmer animate-none h-4 w-[72%] bg-primary/32" />
+                            <Skeleton className="skeleton-shimmer animate-none h-4 w-[58%] mt-1.5 bg-primary/26" />
+                            <Skeleton className="skeleton-shimmer animate-none h-3 w-14 mt-2 ml-auto bg-primary/20" />
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  ) : (
+                    <div className="space-y-1">
+                      {Array.from({ length: 10 }).map((_, index) => (
+                        <div key={`list-skeleton-${index}`} className="flex items-center gap-3 px-3 py-1 rounded-lg bg-secondary/20">
+                          <Skeleton className="skeleton-shimmer animate-none h-8 w-8 rounded-md bg-secondary/55" />
+                          <Skeleton className="skeleton-shimmer animate-none h-4 flex-1 max-w-[45%] bg-secondary/45" />
+                          <Skeleton className="skeleton-shimmer animate-none h-3 w-14 bg-secondary/40" />
+                          <Skeleton className="skeleton-shimmer animate-none h-3 w-16 bg-secondary/40" />
+                        </div>
+                      ))}
+                    </div>
+                  )
                 ) : (
                   <div className="grid [grid-template-columns:repeat(auto-fill,minmax(8.75rem,8.75rem))] justify-start gap-3">
                     {Array.from({ length: 12 }).map((_, index) => (
-                      <div key={`grid-skeleton-${index}`} className="flex flex-col items-center p-2 rounded-xl border border-primary/12 bg-secondary/20">
+                      <div key={`grid-skeleton-${index}`} className="flex flex-col items-center p-2 rounded-xl bg-secondary/20">
                         <Skeleton className="skeleton-shimmer animate-none h-24 w-24 rounded-lg bg-secondary/50" />
                         <Skeleton className="skeleton-shimmer animate-none h-4 w-20 mt-3 bg-secondary/45" />
                         <Skeleton className="skeleton-shimmer animate-none h-3 w-12 mt-1.5 bg-secondary/40" />
@@ -2766,7 +3963,7 @@ export default function ExplorerPage() {
                   </div>
                 )}
               </div>
-            ) : sortedFiles.length === 0 ? (
+            ) : !hasVisibleItems ? (
               <div className="flex flex-col items-center justify-center h-full text-center">
                 <p className="text-body text-muted-foreground mb-2">
                   {search
@@ -2788,40 +3985,115 @@ export default function ExplorerPage() {
                 )}
               </div>
             ) : (
-              <div className={viewMode === "list" ? "space-y-0.5" : "p-1"}>
-                {viewMode === "list" ? (
-                  sortedFiles.map((file) => (
-                    <FileRow
-                      key={file.path}
-                      file={file}
-                      isSelected={selectedFile?.path === file.path}
-                      onSelect={() => handleFileSelect(file)}
-                      onOpen={() => handleFileOpen(file)}
-                      onContextMenu={(event) => handleFileContextMenu(event, file)}
-                      draggable={isDraggableItem(file)}
-                      isDropTarget={dropTargetPath === file.path}
-                      onDragStart={(event) => handleItemDragStart(event, file)}
-                      onDragEnd={handleItemDragEnd}
-                      onDragOver={(event) => handleItemDragOver(event, file)}
-                      onDragLeave={() => handleItemDragLeave(file)}
-                      onDrop={(event) => handleItemDrop(event, file)}
-                    />
-                  ))
+              <div className={effectiveViewMode === "list" ? (isNotesFolderView ? "space-y-1.5" : "space-y-0.5") : "p-1"}>
+                {effectiveViewMode === "list" ? (
+                  <>
+                    {sortedFiles.map((file) => (
+                      <FileRow
+                        key={file.path}
+                        file={file}
+                        isSelected={selectedPathSet.has(file.path)}
+                        isCutItem={cutClipboardPath === file.path}
+                        onSelect={() => handleFileSelect(file)}
+                        onOpen={() => handleFileOpen(file)}
+                        onContextMenu={(event) => handleFileContextMenu(event, file)}
+                        draggable={isDraggableItem(file)}
+                        isDropTarget={dropTargetPath === file.path}
+                        onDragStart={(event) => handleItemDragStart(event, file)}
+                        onDragEnd={handleItemDragEnd}
+                        onDragOver={(event) => handleItemDragOver(event, file)}
+                        onDragLeave={() => handleItemDragLeave(file)}
+                        onDrop={(event) => handleItemDrop(event, file)}
+                      />
+                    ))}
+
+                    {Array.from({ length: uploadSkeletonCount }).map((_, index) => (
+                      isNotesFolderView ? (
+                        <div key={`upload-list-skeleton-${index}`} className="px-2 py-1">
+                          <div className="ml-auto max-w-[86%] rounded-2xl rounded-br-md bg-primary/18 px-3 py-2">
+                            <Skeleton className="skeleton-shimmer h-4 w-[66%] bg-primary/32" />
+                            <Skeleton className="skeleton-shimmer h-4 w-[42%] mt-1.5 bg-primary/26" />
+                            <Skeleton className="skeleton-shimmer h-3 w-12 mt-2 ml-auto bg-primary/20" />
+                          </div>
+                        </div>
+                      ) : (
+                        <div
+                          key={`upload-list-skeleton-${index}`}
+                          className="flex items-center gap-3 px-3 py-1.5 rounded-lg bg-secondary/20"
+                        >
+                          <Skeleton className="skeleton-shimmer h-8 w-8 rounded-md bg-secondary/55" />
+                          <Skeleton className="skeleton-shimmer h-4 flex-1 max-w-[45%] bg-secondary/45" />
+                          <Skeleton className="skeleton-shimmer h-3 w-14 bg-secondary/40" />
+                          <Skeleton className="skeleton-shimmer h-3 w-16 bg-secondary/40" />
+                        </div>
+                      )
+                    ))}
+
+                    {pasteSkeletonCount > 0 && (
+                      isNotesFolderView ? (
+                        <div key="paste-list-skeleton" className="px-2 py-1">
+                          <div className="ml-auto max-w-[86%] rounded-2xl rounded-br-md bg-primary/18 px-3 py-2">
+                            <Skeleton className="skeleton-shimmer h-4 w-[64%] bg-primary/32" />
+                            <Skeleton className="skeleton-shimmer h-4 w-[50%] mt-1.5 bg-primary/26" />
+                            <Skeleton className="skeleton-shimmer h-3 w-12 mt-2 ml-auto bg-primary/20" />
+                          </div>
+                        </div>
+                      ) : (
+                        <div
+                          key="paste-list-skeleton"
+                          className="flex items-center gap-3 px-3 py-1.5 rounded-lg bg-secondary/20"
+                        >
+                          <Skeleton className="skeleton-shimmer h-8 w-8 rounded-md bg-secondary/55" />
+                          <Skeleton className="skeleton-shimmer h-4 flex-1 max-w-[45%] bg-secondary/45" />
+                          <Skeleton className="skeleton-shimmer h-3 w-14 bg-secondary/40" />
+                          <Skeleton className="skeleton-shimmer h-3 w-16 bg-secondary/40" />
+                        </div>
+                      )
+                    )}
+                  </>
                 ) : (
-                  <FileGrid
-                    files={sortedFiles}
-                    selectedFile={selectedFile}
-                    onSelect={handleFileSelect}
-                    onOpen={handleFileOpen}
-                    onContextMenu={(event, file) => handleFileContextMenu(event, file)}
-                    isDraggable={isDraggableItem}
-                    isDropTarget={(file) => dropTargetPath === file.path}
-                    onDragStart={(event, file) => handleItemDragStart(event, file)}
-                    onDragEnd={handleItemDragEnd}
-                    onDragOver={(event, file) => handleItemDragOver(event, file)}
-                    onDragLeave={(_, file) => handleItemDragLeave(file)}
-                    onDrop={(event, file) => handleItemDrop(event, file)}
-                  />
+                  <>
+                    <FileGrid
+                      files={sortedFiles}
+                      selectedFile={selectedFile}
+                      selectedPaths={selectedPathSet}
+                      cutPaths={cutPathSet}
+                      onSelect={handleFileSelect}
+                      onOpen={handleFileOpen}
+                      onContextMenu={(event, file) => handleFileContextMenu(event, file)}
+                      isDraggable={isDraggableItem}
+                      isDropTarget={(file) => dropTargetPath === file.path}
+                      onDragStart={(event, file) => handleItemDragStart(event, file)}
+                      onDragEnd={handleItemDragEnd}
+                      onDragOver={(event, file) => handleItemDragOver(event, file)}
+                      onDragLeave={(_, file) => handleItemDragLeave(file)}
+                      onDrop={(event, file) => handleItemDrop(event, file)}
+                      appendItems={
+                        <>
+                          {Array.from({ length: uploadSkeletonCount }).map((_, index) => (
+                            <div
+                              key={`upload-grid-skeleton-${index}`}
+                              className="flex flex-col items-center p-2 rounded-xl bg-secondary/20"
+                            >
+                              <Skeleton className="skeleton-shimmer h-24 w-24 rounded-lg bg-secondary/50" />
+                              <Skeleton className="skeleton-shimmer h-4 w-20 mt-3 bg-secondary/45" />
+                              <Skeleton className="skeleton-shimmer h-3 w-12 mt-1.5 bg-secondary/40" />
+                            </div>
+                          ))}
+                          {pasteSkeletonCount > 0 && (
+                            <div
+                              key="paste-grid-skeleton"
+                              className="flex flex-col items-center p-2 rounded-xl bg-secondary/20"
+                            >
+                              <Skeleton className="skeleton-shimmer h-24 w-24 rounded-lg bg-secondary/50" />
+                              <Skeleton className="skeleton-shimmer h-4 w-20 mt-3 bg-secondary/45" />
+                              <Skeleton className="skeleton-shimmer h-3 w-12 mt-1.5 bg-secondary/40" />
+                            </div>
+                          )}
+                        </>
+                      }
+                    />
+                  </>
                 )}
 
                 {isLoadingMoreSavedItems && (
@@ -2829,6 +4101,38 @@ export default function ExplorerPage() {
                     <div className="animate-spin rounded-full h-5 w-5 border-b-2 border-primary" />
                   </div>
                 )}
+              </div>
+            )}
+            </div>
+
+            {isNotesFolderView && (
+              <div className="shrink-0 bg-glass px-4 py-3">
+                <div className="flex items-center gap-2 rounded-xl bg-primary/14 px-3 py-2">
+                  <input
+                    type="text"
+                    value={noteComposerValue}
+                    onChange={(event) => setNoteComposerValue(event.target.value)}
+                    onKeyDown={(event) => {
+                      if (event.key === "Enter" && !event.shiftKey) {
+                        event.preventDefault();
+                        void handleSendNoteMessage();
+                      }
+                    }}
+                    placeholder="Message"
+                    className="flex-1 bg-transparent text-body text-foreground placeholder:text-muted-foreground/70 focus:outline-none"
+                    disabled={isSendingNoteMessage}
+                  />
+                  <TelegramButton
+                    variant="primary"
+                    size="sm"
+                    onClick={() => {
+                      void handleSendNoteMessage();
+                    }}
+                    disabled={isSendingNoteMessage || !noteComposerValue.trim()}
+                  >
+                    Send
+                  </TelegramButton>
+                </div>
               </div>
             )}
           </div>
@@ -2873,40 +4177,6 @@ export default function ExplorerPage() {
         onClose={closeSavedMediaViewer}
       />
 
-      {activeDownload && (
-        <div className="absolute bottom-4 right-4 z-[92] w-80 rounded-xl bg-glass shadow-2xl shadow-black/50 backdrop-saturate-150 p-3">
-          <div className="flex items-start justify-between gap-2">
-            <div className="min-w-0">
-              <p className="text-body font-medium text-foreground truncate">{activeDownload.fileName}</p>
-              <p className="text-small text-muted-foreground">{getDownloadStageLabel(activeDownload.stage)}</p>
-            </div>
-            <span className="text-small text-muted-foreground">
-              {activeDownload.stage === "selecting"
-                ? ""
-                : `${Math.round(Math.max(0, Math.min(100, activeDownload.progress)))}%`}
-            </span>
-          </div>
-
-          <div className="mt-3">
-            <Progress
-              value={Math.max(0, Math.min(100, activeDownload.progress))}
-              className="h-2 bg-secondary/60"
-            />
-          </div>
-
-          <div className="mt-2 flex items-center justify-between text-small text-muted-foreground">
-            <span>
-              {activeDownload.totalBytes && activeDownload.totalBytes > 0
-                ? `${formatFileSize(activeDownload.downloadedBytes)} / ${formatFileSize(activeDownload.totalBytes)}`
-                : formatFileSize(activeDownload.downloadedBytes)}
-            </span>
-            {activeDownload.message && (
-              <span className="max-w-[140px] truncate text-right">{activeDownload.message}</span>
-            )}
-          </div>
-        </div>
-      )}
-
       {contextMenuState && (
         <div
           ref={contextMenuRef}
@@ -2928,10 +4198,10 @@ export default function ExplorerPage() {
                 <span>New Folder</span>
               </button>
               <button
-                className={canPaste ? contextMenuItemClassName : contextMenuDisabledItemClassName}
-                disabled={!canPaste}
+                className={canPasteInCurrentPath ? contextMenuItemClassName : contextMenuDisabledItemClassName}
+                disabled={!canPasteInCurrentPath}
                 onClick={() => {
-                  if (!canPaste) {
+                  if (!canPasteInCurrentPath) {
                     return;
                   }
                   closeContextMenu();
@@ -2968,18 +4238,57 @@ export default function ExplorerPage() {
                 <span>Delete</span>
               </button>
             </>
-          ) : (
+          ) : isNotesMessageContextMenu ? (
             <>
               <button
                 className={contextMenuItemClassName}
                 onClick={() => {
                   closeContextMenu();
-                  void handleContextOpen();
+                  void handleCopyNoteText(contextTargetFile);
                 }}
               >
-                <FolderOpen className="w-4 h-4 text-muted-foreground" />
-                <span>Open</span>
+                <Copy className="w-4 h-4 text-muted-foreground" />
+                <span>Copy as text</span>
               </button>
+
+              <button
+                className={contextMenuItemClassName}
+                onClick={() => {
+                  closeContextMenu();
+                  handleEditNoteMessage(contextTargetFile);
+                }}
+              >
+                <Edit3 className="w-4 h-4 text-muted-foreground" />
+                <span>Edit</span>
+              </button>
+
+              <div className="my-1 h-px bg-border/70" />
+
+              <button
+                className={contextMenuDangerItemClassName}
+                onClick={() => {
+                  closeContextMenu();
+                  handleContextDelete();
+                }}
+              >
+                <Trash2 className="w-4 h-4" />
+                <span>Delete</span>
+              </button>
+            </>
+          ) : (
+            <>
+              {!isMultiSelectionContextMenu && (
+                <button
+                  className={contextMenuItemClassName}
+                  onClick={() => {
+                    closeContextMenu();
+                    void handleContextOpen();
+                  }}
+                >
+                  <FolderOpen className="w-4 h-4 text-muted-foreground" />
+                  <span>Open</span>
+                </button>
+              )}
 
               {contextTargetFile && !contextTargetFile.isDirectory && isSavedVirtualFilePath(contextTargetFile.path) && (
                 <button
@@ -3007,64 +4316,78 @@ export default function ExplorerPage() {
                 </button>
               )}
 
+              {( !isMultiSelectionContextMenu
+                || (contextTargetFile && !contextTargetFile.isDirectory)
+              ) && <div className="my-1 h-px bg-border/70" />}
+
+              {!isNotesFolderView && (
+                <>
+                  <button
+                    className={contextMenuItemClassName}
+                    onClick={() => {
+                      if (!contextTargetFile) {
+                        return;
+                      }
+                      closeContextMenu();
+                      handleStageClipboardItem("cut", contextTargetFile);
+                    }}
+                  >
+                    <Scissors className="w-4 h-4 text-muted-foreground" />
+                    <span>Cut</span>
+                  </button>
+                  <button
+                    className={contextMenuItemClassName}
+                    onClick={() => {
+                      if (!contextTargetFile) {
+                        return;
+                      }
+                      closeContextMenu();
+                      handleStageClipboardItem("copy", contextTargetFile);
+                    }}
+                  >
+                    <Copy className="w-4 h-4 text-muted-foreground" />
+                    <span>Copy</span>
+                  </button>
+                  {!isMultiSelectionContextMenu && (
+                    <button
+                      className={canPasteInCurrentPath ? contextMenuItemClassName : contextMenuDisabledItemClassName}
+                      disabled={!canPasteInCurrentPath}
+                      onClick={() => {
+                        if (!canPasteInCurrentPath) {
+                          return;
+                        }
+                        closeContextMenu();
+                        void handlePaste();
+                      }}
+                    >
+                      <ClipboardPaste className="w-4 h-4 text-muted-foreground" />
+                      <span>Paste</span>
+                    </button>
+                  )}
+                </>
+              )}
+
               <div className="my-1 h-px bg-border/70" />
 
+              {!isMultiSelectionContextMenu && (
+                <button
+                  className={contextMenuItemClassName}
+                  onClick={() => {
+                    closeContextMenu();
+                    void handleRename(contextTargetFile);
+                  }}
+                >
+                  <Edit3 className="w-4 h-4 text-muted-foreground" />
+                  <span>Rename</span>
+                </button>
+              )}
               <button
-                className={contextMenuItemClassName}
+                className={isProtectedContextFolder ? contextMenuDisabledItemClassName : contextMenuDangerItemClassName}
+                disabled={isProtectedContextFolder}
                 onClick={() => {
-                  if (!contextTargetFile) {
+                  if (isProtectedContextFolder) {
                     return;
                   }
-                  closeContextMenu();
-                  handleStageClipboardItem("cut", contextTargetFile);
-                }}
-              >
-                <Scissors className="w-4 h-4 text-muted-foreground" />
-                <span>Cut</span>
-              </button>
-              <button
-                className={contextMenuItemClassName}
-                onClick={() => {
-                  if (!contextTargetFile) {
-                    return;
-                  }
-                  closeContextMenu();
-                  handleStageClipboardItem("copy", contextTargetFile);
-                }}
-              >
-                <Copy className="w-4 h-4 text-muted-foreground" />
-                <span>Copy</span>
-              </button>
-              <button
-                className={canPaste ? contextMenuItemClassName : contextMenuDisabledItemClassName}
-                disabled={!canPaste}
-                onClick={() => {
-                  if (!canPaste) {
-                    return;
-                  }
-                  closeContextMenu();
-                  void handlePaste();
-                }}
-              >
-                <ClipboardPaste className="w-4 h-4 text-muted-foreground" />
-                <span>Paste</span>
-              </button>
-
-              <div className="my-1 h-px bg-border/70" />
-
-              <button
-                className={contextMenuItemClassName}
-                onClick={() => {
-                  closeContextMenu();
-                  void handleRename(contextTargetFile);
-                }}
-              >
-                <Edit3 className="w-4 h-4 text-muted-foreground" />
-                <span>Rename</span>
-              </button>
-              <button
-                className={contextMenuDangerItemClassName}
-                onClick={() => {
                   closeContextMenu();
                   handleContextDelete();
                 }}
@@ -3073,18 +4396,22 @@ export default function ExplorerPage() {
                 <span>Delete</span>
               </button>
 
-              <div className="my-1 h-px bg-border/70" />
+              {!isMultiSelectionContextMenu && (
+                <>
+                  <div className="my-1 h-px bg-border/70" />
 
-              <button
-                className={contextMenuItemClassName}
-                onClick={() => {
-                  closeContextMenu();
-                  handleContextDetails(contextTargetFile);
-                }}
-              >
-                <Info className="w-4 h-4 text-muted-foreground" />
-                <span>Details</span>
-              </button>
+                  <button
+                    className={contextMenuItemClassName}
+                    onClick={() => {
+                      closeContextMenu();
+                      handleContextDetails(contextTargetFile);
+                    }}
+                  >
+                    <Info className="w-4 h-4 text-muted-foreground" />
+                    <span>Details</span>
+                  </button>
+                </>
+              )}
             </>
           )}
         </div>
@@ -3125,6 +4452,26 @@ export default function ExplorerPage() {
         onCancel={() => {
           setRenameTarget(null);
           setRenameValue("");
+        }}
+      />
+
+      <TextInputDialog
+        isOpen={!!noteEditTarget}
+        title="Edit Message"
+        description={noteEditTarget ? "Update note message text" : undefined}
+        value={noteEditValue}
+        placeholder="Message"
+        confirmLabel="Save"
+        cancelLabel="Cancel"
+        icon={<Edit3 className="w-4 h-4 text-primary" />}
+        framed
+        onValueChange={setNoteEditValue}
+        onConfirm={() => {
+          void handleConfirmEditNoteMessage();
+        }}
+        onCancel={() => {
+          setNoteEditTarget(null);
+          setNoteEditValue("");
         }}
       />
 

@@ -869,6 +869,41 @@ impl Database {
         Ok(())
     }
 
+    pub fn update_telegram_message_text(
+        &self,
+        chat_id: i64,
+        message_id: i32,
+        text: &str,
+        timestamp: &str,
+    ) -> Result<(), DbError> {
+        let conn = self.0.lock().unwrap();
+
+        let mut statement = conn
+            .prepare("UPDATE telegram_messages SET text = ?, timestamp = ? WHERE chat_id = ? AND message_id = ?")
+            .map_err(|e| DbError {
+                message: format!("Failed to prepare statement: {}", e),
+            })?;
+
+        statement.bind((1, text)).map_err(|e| DbError {
+            message: format!("Failed to bind text: {}", e),
+        })?;
+        statement.bind((2, timestamp)).map_err(|e| DbError {
+            message: format!("Failed to bind timestamp: {}", e),
+        })?;
+        statement.bind((3, chat_id)).map_err(|e| DbError {
+            message: format!("Failed to bind chat_id: {}", e),
+        })?;
+        statement.bind((4, message_id as i64)).map_err(|e| DbError {
+            message: format!("Failed to bind message_id: {}", e),
+        })?;
+
+        statement.next().map_err(|e| DbError {
+            message: format!("Failed to execute statement: {}", e),
+        })?;
+
+        Ok(())
+    }
+
     pub fn get_indexed_messages_by_category(&self, chat_id: i64, category: &str) -> Result<Vec<TelegramMessage>, DbError> {
         let conn = self.0.lock().unwrap();
         
@@ -1454,6 +1489,45 @@ impl Database {
             message: format!("Failed to bind owner_id: {}", e),
         })?;
         statement.bind((5, message_id as i64)).map_err(|e| DbError {
+            message: format!("Failed to bind message_id: {}", e),
+        })?;
+
+        statement.next().map_err(|e| DbError {
+            message: format!("Failed to execute statement: {}", e),
+        })?;
+
+        Ok(())
+    }
+
+    pub fn update_telegram_saved_item_caption_by_message_id(
+        &self,
+        owner_id: &str,
+        message_id: i32,
+        file_caption: &str,
+        modified_date: &str,
+    ) -> Result<(), DbError> {
+        let conn = self.0.lock().unwrap();
+
+        let mut statement = conn
+            .prepare(
+                "UPDATE telegram_saved_items
+                 SET file_caption = ?, modified_date = ?
+                 WHERE owner_id = ? AND message_id = ? AND file_type != 'folder'",
+            )
+            .map_err(|e| DbError {
+                message: format!("Failed to prepare statement: {}", e),
+            })?;
+
+        statement.bind((1, file_caption)).map_err(|e| DbError {
+            message: format!("Failed to bind file_caption: {}", e),
+        })?;
+        statement.bind((2, modified_date)).map_err(|e| DbError {
+            message: format!("Failed to bind modified_date: {}", e),
+        })?;
+        statement.bind((3, owner_id)).map_err(|e| DbError {
+            message: format!("Failed to bind owner_id: {}", e),
+        })?;
+        statement.bind((4, message_id as i64)).map_err(|e| DbError {
             message: format!("Failed to bind message_id: {}", e),
         })?;
 

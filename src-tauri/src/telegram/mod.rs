@@ -9,6 +9,8 @@ use tokio::sync::{Mutex, mpsc::UnboundedReceiver};
 use once_cell::sync::Lazy;
 use std::sync::Arc;
 use std::sync::atomic::AtomicU64;
+use std::future::Future;
+use std::time::{Duration, Instant};
 use log;
 use once_cell::sync::OnceCell;
 use std::env;
@@ -130,6 +132,101 @@ pub(crate) struct AuthState {
 
 
 pub(crate) static AUTH_STATE: Lazy<Mutex<Option<AuthState>>> = Lazy::new(|| Mutex::const_new(None));
+static TELEGRAM_LAST_REQUEST_AT: Lazy<Mutex<Option<Instant>>> = Lazy::new(|| Mutex::new(None));
+
+const TELEGRAM_REQUEST_DELAY_MS: u64 = 350;
+const TELEGRAM_FLOOD_WAIT_RETRY_LIMIT: usize = 3;
+
+pub(crate) fn parse_flood_wait_seconds(message: &str) -> Option<u64> {
+    let upper = message.to_uppercase();
+    if !upper.contains("FLOOD_WAIT") {
+        return None;
+    }
+
+    if let Some(value_pos) = upper.find("VALUE:") {
+        let suffix = &upper[value_pos + "VALUE:".len()..];
+        let digits: String = suffix
+            .chars()
+            .skip_while(|ch| !ch.is_ascii_digit())
+            .take_while(|ch| ch.is_ascii_digit())
+            .collect();
+        if let Ok(seconds) = digits.parse::<u64>() {
+            return Some(seconds.max(1));
+        }
+    }
+
+    if let Some(wait_pos) = upper.find("FLOOD_WAIT_") {
+        let suffix = &upper[wait_pos + "FLOOD_WAIT_".len()..];
+        let digits: String = suffix
+            .chars()
+            .take_while(|ch| ch.is_ascii_digit())
+            .collect();
+        if let Ok(seconds) = digits.parse::<u64>() {
+            return Some(seconds.max(1));
+        }
+    }
+
+    Some(1)
+}
+
+async fn wait_for_telegram_request_slot() {
+    let mut last_request_at = TELEGRAM_LAST_REQUEST_AT.lock().await;
+    if let Some(previous) = *last_request_at {
+        let min_delay = Duration::from_millis(TELEGRAM_REQUEST_DELAY_MS);
+        let elapsed = previous.elapsed();
+        if elapsed < min_delay {
+            tokio::time::sleep(min_delay - elapsed).await;
+        }
+    }
+
+    *last_request_at = Some(Instant::now());
+}
+
+pub(crate) async fn run_telegram_request<T, E, F, Fut>(
+    operation_name: &str,
+    mut request_fn: F,
+) -> Result<T, E>
+where
+    F: FnMut() -> Fut,
+    Fut: Future<Output = Result<T, E>>,
+    E: std::fmt::Display,
+{
+    let mut flood_wait_retries = 0usize;
+
+    loop {
+        wait_for_telegram_request_slot().await;
+
+        match request_fn().await {
+            Ok(result) => return Ok(result),
+            Err(error) => {
+                let error_message = error.to_string();
+                let Some(wait_seconds) = parse_flood_wait_seconds(&error_message) else {
+                    return Err(error);
+                };
+
+                if flood_wait_retries >= TELEGRAM_FLOOD_WAIT_RETRY_LIMIT {
+                    log::warn!(
+                        "{} hit Telegram flood wait ({}s) and retries were exhausted",
+                        operation_name,
+                        wait_seconds
+                    );
+                    return Err(error);
+                }
+
+                flood_wait_retries += 1;
+                log::warn!(
+                    "{} hit Telegram flood wait ({}s), retry {}/{}",
+                    operation_name,
+                    wait_seconds,
+                    flood_wait_retries,
+                    TELEGRAM_FLOOD_WAIT_RETRY_LIMIT
+                );
+
+                tokio::time::sleep(Duration::from_secs(wait_seconds.max(1))).await;
+            }
+        }
+    }
+}
 
 // ===== Constants =====
 // Dev builds: read from runtime env (dotenvy loads .env)
@@ -224,8 +321,11 @@ use messages::{
     tg_delete_saved_item_permanently_impl,
     tg_move_saved_item_impl,
     tg_rename_saved_item_impl,
+    tg_send_saved_note_message_impl,
+    tg_edit_saved_note_message_impl,
     tg_get_message_thumbnail_impl,
     tg_prefetch_message_thumbnails_impl,
+    tg_cancel_saved_file_download_impl,
     tg_prepare_saved_media_preview_impl,
     tg_download_saved_file_impl,
     tg_upload_file_to_saved_messages_impl,
@@ -374,6 +474,23 @@ pub async fn tg_rename_saved_item(
 }
 
 #[tauri::command]
+pub async fn tg_send_saved_note_message(
+    db: State<'_, crate::db::Database>,
+    text: String,
+) -> Result<crate::db::TelegramMessage, TelegramError> {
+    tg_send_saved_note_message_impl(db.inner().clone(), text).await
+}
+
+#[tauri::command]
+pub async fn tg_edit_saved_note_message(
+    db: State<'_, crate::db::Database>,
+    source_path: String,
+    text: String,
+) -> Result<(), TelegramError> {
+    tg_edit_saved_note_message_impl(db.inner().clone(), source_path, text).await
+}
+
+#[tauri::command]
 pub async fn tg_get_message_thumbnail(db: State<'_, crate::db::Database>, message_id: i32) -> Result<Option<String>, TelegramError> {
     tg_get_message_thumbnail_impl(db.inner().clone(), message_id).await
 }
@@ -396,6 +513,11 @@ pub async fn tg_download_saved_file(
 }
 
 #[tauri::command]
+pub async fn tg_cancel_saved_file_download(source_path: String) -> Result<bool, TelegramError> {
+    tg_cancel_saved_file_download_impl(source_path)
+}
+
+#[tauri::command]
 pub async fn tg_prepare_saved_media_preview(
     app: tauri::AppHandle,
     db: State<'_, crate::db::Database>,
@@ -406,12 +528,14 @@ pub async fn tg_prepare_saved_media_preview(
 
 #[tauri::command]
 pub async fn tg_upload_file_to_saved_messages(
+    app: tauri::AppHandle,
     db: State<'_, crate::db::Database>,
     file_name: String,
     file_bytes: Vec<u8>,
     file_path: Option<String>,
 ) -> Result<crate::db::TelegramMessage, TelegramError> {
-    tg_upload_file_to_saved_messages_impl(db.inner().clone(), file_name, file_bytes, file_path).await
+    tg_upload_file_to_saved_messages_impl(app, db.inner().clone(), file_name, file_bytes, file_path)
+        .await
 }
 
 // ===== Utility Functions =====

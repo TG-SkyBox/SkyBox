@@ -1,4 +1,4 @@
-use super::{TelegramError, AUTH_STATE};
+use super::{run_telegram_request, TelegramError, AUTH_STATE};
 use crate::db::Database;
 use grammers_client::grammers_tl_types as tl;
 use base64::Engine;
@@ -31,7 +31,9 @@ pub async fn tg_get_my_profile_photo_impl(db: State<'_, Database>) -> Result<Opt
     };
     
     // Get current user
-    let me = match client.get_me().await {
+    let me = match run_telegram_request("tg_get_my_profile_photo_impl.get_me", || async {
+        client.get_me().await
+    }).await {
         Ok(user) => user,
         Err(e) => {
             log::error!("tg_get_my_profile_photo_impl: Failed to get user info: {}", e);
@@ -63,7 +65,10 @@ pub async fn tg_get_my_profile_photo_impl(db: State<'_, Database>) -> Result<Opt
         limit: 1, // Only get the first (current) photo
     };
     
-    let photos_result = match client.invoke(&get_photos_request).await {
+    let photos_result = match run_telegram_request(
+        "tg_get_my_profile_photo_impl.get_user_photos",
+        || async { client.invoke(&get_photos_request).await },
+    ).await {
         Ok(result) => result,
         Err(e) => {
             log::warn!("tg_get_my_profile_photo_impl: Failed to get photos: {}", e);
@@ -139,7 +144,10 @@ pub async fn tg_get_my_profile_photo_impl(db: State<'_, Database>) -> Result<Opt
             cdn_supported: false,
         };
         
-        let file_result = match client.invoke(&get_file_request).await {
+        let file_result = match run_telegram_request(
+            "tg_get_my_profile_photo_impl.get_file_chunk",
+            || async { client.invoke(&get_file_request).await },
+        ).await {
             Ok(result) => result,
             Err(e) => {
                 log::error!("tg_get_my_profile_photo_impl: Failed to download file chunk: {}", e);

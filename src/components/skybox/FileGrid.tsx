@@ -1,11 +1,14 @@
 import { FileItem, getFileIcon, formatFileSize } from "./FileRow";
 import { useState, useEffect } from "react";
+import type { ReactNode } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { resolveThumbnailSrc } from "@/lib/thumbnail-src";
 
 interface FileGridProps {
     files: FileItem[];
     selectedFile: FileItem | null;
+    selectedPaths?: Set<string>;
+    cutPaths?: Set<string>;
     onSelect: (file: FileItem) => void;
     onOpen: (file: FileItem) => void;
     onContextMenu: (e: React.MouseEvent, file: FileItem) => void;
@@ -16,11 +19,14 @@ interface FileGridProps {
     onDragOver?: (e: React.DragEvent, file: FileItem) => void;
     onDragLeave?: (e: React.DragEvent, file: FileItem) => void;
     onDrop?: (e: React.DragEvent, file: FileItem) => void;
+    appendItems?: ReactNode;
 }
 
 export function FileGrid({
     files,
     selectedFile,
+    selectedPaths,
+    cutPaths,
     onSelect,
     onOpen,
     onContextMenu,
@@ -31,6 +37,7 @@ export function FileGrid({
     onDragOver,
     onDragLeave,
     onDrop,
+    appendItems,
 }: FileGridProps) {
     return (
         <div className="grid [grid-template-columns:repeat(auto-fill,minmax(8.75rem,8.75rem))] justify-start gap-3">
@@ -38,7 +45,8 @@ export function FileGrid({
                 <FileGridItem
                     key={file.path}
                     file={file}
-                    isSelected={selectedFile?.path === file.path}
+                    isSelected={selectedPaths ? selectedPaths.has(file.path) : selectedFile?.path === file.path}
+                    isCutItem={cutPaths ? cutPaths.has(file.path) : false}
                     onSelect={() => onSelect(file)}
                     onOpen={() => onOpen(file)}
                     onContextMenu={(e) => onContextMenu(e, file)}
@@ -51,6 +59,7 @@ export function FileGrid({
                     onDrop={(e) => onDrop?.(e, file)}
                 />
             ))}
+            {appendItems}
         </div>
     );
 }
@@ -58,6 +67,7 @@ export function FileGrid({
 interface FileGridItemProps {
     file: FileItem;
     isSelected: boolean;
+    isCutItem?: boolean;
     onSelect: () => void;
     onOpen: () => void;
     onContextMenu: (e: React.MouseEvent) => void;
@@ -73,6 +83,7 @@ interface FileGridItemProps {
 function FileGridItem({
     file,
     isSelected,
+    isCutItem,
     onSelect,
     onOpen,
     onContextMenu,
@@ -120,28 +131,10 @@ function FileGridItem({
         setThumbUrl(undefined);
     };
 
-    useEffect(() => {
-        // If we have a messageId but no thumbnail, try to fetch it
-        if (file.messageId && !thumbUrl && !hasRetriedBrokenThumbnail) {
-            setHasRetriedBrokenThumbnail(true);
-
-            const fetchThumb = async () => {
-                try {
-                    const result: string | null = await invoke("tg_get_message_thumbnail", { messageId: file.messageId });
-                    const resolved = resolveThumbnailSrc(result);
-                    if (resolved) {
-                        setThumbUrl(resolved);
-                    }
-                } catch (e) {
-                    console.error("Failed to fetch thumbnail for message:", file.messageId, e);
-                }
-            };
-            fetchThumb();
-        }
-    }, [file.messageId, hasRetriedBrokenThumbnail, thumbUrl]);
-
     return (
         <div
+            data-file-item="true"
+            data-file-path={file.path}
             onClick={onSelect}
             onDoubleClick={onOpen}
             onContextMenu={onContextMenu}
@@ -154,7 +147,7 @@ function FileGridItem({
             className={`group flex flex-col items-center p-2 rounded-xl cursor-pointer transition-all duration-200 border ${isSelected
                     ? "bg-sidebar-accent border-primary/30 shadow-lg shadow-primary/5"
                     : "hover:bg-sidebar-accent/50 border-transparent hover:border-border"
-                } ${isDropTarget ? "ring-1 ring-primary/60 bg-primary/10" : ""}`}
+                } ${isDropTarget ? "ring-1 ring-primary/60 bg-primary/10" : ""} ${isCutItem ? "opacity-50 grayscale" : ""}`}
         >
             <div className="w-full max-w-24 max-h-24 aspect-square mb-3 mx-auto flex items-center justify-center rounded-lg overflow-hidden bg-secondary/30 group-hover:bg-secondary/50 transition-colors relative">
                 {thumbUrl ? (

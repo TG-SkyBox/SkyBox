@@ -1,5 +1,5 @@
 use super::{TelegramAuthResult, TelegramError, UserInfo, AuthState};
-use super::AUTH_STATE;
+use super::{run_telegram_request, AUTH_STATE};
 use super::utils::{decode_session, build_client};
 use crate::db::Database;
 use tauri::State;
@@ -21,7 +21,9 @@ pub async fn tg_restore_session_impl(db: State<'_, Database>, session_data: Stri
 
     // Instead of checking is_authorized() which might fail, try to get user info directly
     // If this succeeds, the session is valid
-    let me = match built.client.get_me().await {
+    let me = match run_telegram_request("tg_restore_session_impl.get_me", || async {
+        built.client.get_me().await
+    }).await {
         Ok(user) => {
             log::info!("tg_restore_session_impl: Successfully got user info, session is valid");
             user

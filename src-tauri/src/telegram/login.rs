@@ -1,5 +1,5 @@
 use super::{TelegramAuthData, TelegramAuthResult, TelegramError, UserInfo, QrLoginData, QrPollResult, QrLoginStatus, QrState, PasswordToken};
-use super::{AUTH_STATE, get_api_hash, get_api_id, AUTH_FLOW_ID, Database};
+use super::{run_telegram_request, AUTH_STATE, get_api_hash, get_api_id, AUTH_FLOW_ID, Database};
 #[allow(deprecated)]
 use super::{Client, SignInError, TlSession};
 use super::Arc;
@@ -49,15 +49,14 @@ pub async fn resolve_export_login_token(
         api_hash: get_api_hash().to_string(),
         except_ids: vec![],
     };
-    
-    match client.invoke(&export_request).await {
-        Ok(token) => Ok(token),
-        Err(e) => {
-            return Err(TelegramError {
-                message: format!("Failed to export login token: {}", e),
-            });
-        }
-    }
+
+    run_telegram_request("resolve_export_login_token", || async {
+        client.invoke(&export_request).await
+    })
+    .await
+    .map_err(|e| TelegramError {
+        message: format!("Failed to export login token: {}", e),
+    })
 }
 
 
@@ -74,8 +73,11 @@ pub async fn tg_request_auth_code_impl(auth_data: TelegramAuthData) -> Result<Te
     log::info!("tg_request_auth_code_impl: Calling request_login_code for phone: {}", auth_data.phone_number);
     
     // request_login_code(phone, api_hash) -> LoginToken
-    let token = built.client
-        .request_login_code(&auth_data.phone_number, get_api_hash())
+    let token = run_telegram_request("tg_request_auth_code_impl.request_login_code", || async {
+        built.client
+            .request_login_code(&auth_data.phone_number, get_api_hash())
+            .await
+    })
         .await
         .map_err(|e| {
             log::error!("tg_request_auth_code_impl: Failed to request auth code for phone '{}': {}", auth_data.phone_number, e);
@@ -172,11 +174,15 @@ pub async fn tg_sign_in_with_code_impl(phone_code: String) -> Result<TelegramAut
     let masked = if code.len() <= 2 { "**".to_string() } else { format!("{}***{}", &code[0..1], &code[code.len()-1..]) };
     log::info!("tg_sign_in_with_code_impl: attempting sign_in code={} for phone={:?} flow_id={}", masked, stored_phone, flow_id);
 
-    match client.sign_in(&token, &code).await {
+    match run_telegram_request("tg_sign_in_with_code_impl.sign_in", || async {
+        client.sign_in(&token, &code).await
+    }).await {
         Ok(user) => {
             log::info!("tg_sign_in_with_code_impl: sign_in OK user_id={}", user.raw.id());
 
-            let me = client.get_me().await.map_err(|e| TelegramError {
+            let me = run_telegram_request("tg_sign_in_with_code_impl.get_me", || async {
+                client.get_me().await
+            }).await.map_err(|e| TelegramError {
                 message: format!("get_me failed after sign_in: {e}"),
             })?;
 
@@ -324,9 +330,12 @@ pub async fn tg_generate_qr_code_impl(_app: tauri::AppHandle) -> Result<QrLoginD
         );
 
         let import_req = tl::functions::auth::ImportLoginToken { token: m.token };
-        token_result = built
-            .client
-            .invoke_in_dc(m.dc_id, &import_req)
+        token_result = run_telegram_request("tg_generate_qr_code_impl.import_login_token", || async {
+            built
+                .client
+                .invoke_in_dc(m.dc_id, &import_req)
+                .await
+        })
             .await
             .map_err(|e| TelegramError {
                 message: format!(
@@ -600,7 +609,9 @@ async fn handle_dc_migration_safe(
         }
 
         let import_req = tl::functions::auth::ImportLoginToken { token };
-        let import_result = match current_client.invoke_in_dc(current_dc, &import_req).await {
+        let import_result = match run_telegram_request("handle_dc_migration_safe.import_login_token", || async {
+            current_client.invoke_in_dc(current_dc, &import_req).await
+        }).await {
             Ok(res) => res,
 
             Err(e) if e.is("SESSION_PASSWORD_NEEDED") => {
@@ -609,8 +620,14 @@ async fn handle_dc_migration_safe(
                     current_dc
                 );
 
-                let pwd: tl::types::account::Password = current_client
-                    .invoke_in_dc(current_dc, &tl::functions::account::GetPassword {})
+                let pwd: tl::types::account::Password = run_telegram_request(
+                    "handle_dc_migration_safe.get_password",
+                    || async {
+                        current_client
+                            .invoke_in_dc(current_dc, &tl::functions::account::GetPassword {})
+                            .await
+                    },
+                )
                     .await
                     .map(|p| p.into())
                     .map_err(|err| TelegramError {
@@ -852,13 +869,17 @@ pub async fn tg_sign_in_with_password_impl(password: String, db: Database) -> Re
 
     // PasswordToken is Clone, keep a copy so user can retry on failure.
     let password_token_retry = password_token.clone();
-    let check = client.check_password(password_token, pwd.as_bytes()).await;
+    let check = run_telegram_request("tg_sign_in_with_password_impl.check_password", || async {
+        client.check_password(password_token.clone(), pwd.as_bytes()).await
+    }).await;
 
     match check {
         Ok(_user) => {
             log::info!("tg_sign_in_with_password_impl: check_password OK");
 
-            let me = client.get_me().await.map_err(|e| TelegramError {
+            let me = run_telegram_request("tg_sign_in_with_password_impl.get_me", || async {
+                client.get_me().await
+            }).await.map_err(|e| TelegramError {
                 message: format!("Failed to get user info: {e}"),
             })?;
 
@@ -970,7 +991,9 @@ async fn handle_already_authorized(
     session: Arc<TlSession>, 
     _flow_id: u64
 ) -> Result<QrLoginData, TelegramError> {
-    let user = client.get_me().await
+    let user = run_telegram_request("handle_already_authorized.get_me", || async {
+        client.get_me().await
+    }).await
         .map_err(|e| TelegramError {
             message: format!("Failed to get authorized user: {}", e)
         })?;

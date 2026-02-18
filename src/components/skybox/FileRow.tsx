@@ -23,11 +23,14 @@ export interface FileItem {
   extension?: string;
   messageId?: number;
   thumbnail?: string;
+  noteText?: string;
+  isNoteMessage?: boolean;
 }
 
 interface FileRowProps {
   file: FileItem;
   isSelected?: boolean;
+  isCutItem?: boolean;
   onSelect?: () => void;
   onOpen?: () => void;
   onContextMenu?: (e: React.MouseEvent) => void;
@@ -136,6 +139,7 @@ const formatDate = (dateStr?: string): string => {
 export function FileRow({
   file,
   isSelected,
+  isCutItem,
   onSelect,
   onOpen,
   onContextMenu,
@@ -183,28 +187,39 @@ export function FileRow({
     setThumbUrl(undefined);
   };
 
-  useEffect(() => {
-    // If we have a messageId but no thumbnail, try to fetch it
-    if (file.messageId && !thumbUrl && !hasRetriedBrokenThumbnail) {
-      setHasRetriedBrokenThumbnail(true);
-
-      const fetchThumb = async () => {
-        try {
-          const result: string | null = await invoke("tg_get_message_thumbnail", { messageId: file.messageId });
-          const resolved = resolveThumbnailSrc(result);
-          if (resolved) {
-            setThumbUrl(resolved);
-          }
-        } catch (e) {
-          console.error("Failed to fetch thumbnail for message:", file.messageId, e);
-        }
-      };
-      fetchThumb();
-    }
-  }, [file.messageId, hasRetriedBrokenThumbnail, thumbUrl]);
+  if (file.isNoteMessage) {
+    return (
+      <div
+        data-file-item="true"
+        data-file-path={file.path}
+        onClick={onSelect}
+        onDoubleClick={onOpen}
+        onContextMenu={onContextMenu}
+        draggable={draggable}
+        onDragStart={onDragStart}
+        onDragEnd={onDragEnd}
+        onDragOver={onDragOver}
+        onDragLeave={onDragLeave}
+        onDrop={onDrop}
+        className={`px-2 py-1 rounded-lg cursor-pointer transition-all duration-150 ${isSelected ? "bg-primary/14" : "hover:bg-primary/8"
+          } ${isDropTarget ? "ring-1 ring-primary/60 bg-primary/12" : ""} ${isCutItem ? "opacity-50 grayscale" : ""}`}
+      >
+        <div className="ml-auto max-w-[86%] rounded-2xl rounded-br-md bg-primary/30 px-3 py-2">
+          <p className="text-body text-foreground whitespace-pre-wrap break-words leading-5">
+            {file.noteText || file.name}
+          </p>
+          <p className="mt-1 text-small text-muted-foreground/90 text-right">
+            {formatDate(file.modifiedAt)}
+          </p>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div
+      data-file-item="true"
+      data-file-path={file.path}
       onClick={onSelect}
       onDoubleClick={onOpen}
       onContextMenu={onContextMenu}
@@ -215,7 +230,7 @@ export function FileRow({
       onDragLeave={onDragLeave}
       onDrop={onDrop}
       className={`flex items-center gap-3 px-3 py-1 rounded-lg cursor-pointer transition-all duration-150 ${isSelected ? "bg-sidebar-accent text-foreground" : "hover:bg-sidebar-accent/50"
-        } ${isDropTarget ? "ring-1 ring-primary/60 bg-primary/10" : ""}`}
+        } ${isDropTarget ? "ring-1 ring-primary/60 bg-primary/10" : ""} ${isCutItem ? "opacity-50 grayscale" : ""}`}
     >
       <div className="w-8 h-8 flex-shrink-0 flex items-center justify-center rounded-md overflow-hidden bg-secondary/50">
         {thumbUrl ? (

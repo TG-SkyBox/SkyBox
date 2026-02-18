@@ -160,6 +160,16 @@ Progress events are emitted on `tg-download-progress` during select/download/mov
 
 **Returns:** `Result<Option<String>, TelegramError>` (absolute final path when saved, `null` if user cancels)
 
+### `tg_cancel_saved_file_download(source_path: String)`
+Requests cancellation for an in-progress Saved Messages download.
+
+If cancellation succeeds, `tg-download-progress` emits a `cancelled` stage and the staged partial file is discarded.
+
+**Parameters:**
+- `source_path`: Source virtual file path (`tg://msg/<id>`)
+
+**Returns:** `Result<bool, TelegramError>`
+
 ### `tg_prepare_saved_media_preview(source_path: String)`
 Downloads (or reuses cached) Saved Messages media for in-app preview/player usage.
 
