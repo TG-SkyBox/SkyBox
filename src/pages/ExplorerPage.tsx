@@ -3790,16 +3790,18 @@ export default function ExplorerPage() {
             </>
           ) : (
             <>
-              <button
-                className={contextMenuItemClassName}
-                onClick={() => {
-                  closeContextMenu();
-                  void handleContextOpen();
-                }}
-              >
-                <FolderOpen className="w-4 h-4 text-muted-foreground" />
-                <span>Open</span>
-              </button>
+              {!isMultiSelectionContextMenu && (
+                <button
+                  className={contextMenuItemClassName}
+                  onClick={() => {
+                    closeContextMenu();
+                    void handleContextOpen();
+                  }}
+                >
+                  <FolderOpen className="w-4 h-4 text-muted-foreground" />
+                  <span>Open</span>
+                </button>
+              )}
 
               {contextTargetFile && !contextTargetFile.isDirectory && isSavedVirtualFilePath(contextTargetFile.path) && (
                 <button
@@ -3827,7 +3829,9 @@ export default function ExplorerPage() {
                 </button>
               )}
 
-              <div className="my-1 h-px bg-border/70" />
+              {( !isMultiSelectionContextMenu
+                || (contextTargetFile && !contextTargetFile.isDirectory)
+              ) && <div className="my-1 h-px bg-border/70" />}
 
               <button
                 className={contextMenuItemClassName}
@@ -3855,33 +3859,37 @@ export default function ExplorerPage() {
                 <Copy className="w-4 h-4 text-muted-foreground" />
                 <span>Copy</span>
               </button>
-              <button
-                className={canPaste ? contextMenuItemClassName : contextMenuDisabledItemClassName}
-                disabled={!canPaste}
-                onClick={() => {
-                  if (!canPaste) {
-                    return;
-                  }
-                  closeContextMenu();
-                  void handlePaste();
-                }}
-              >
-                <ClipboardPaste className="w-4 h-4 text-muted-foreground" />
-                <span>Paste</span>
-              </button>
+              {!isMultiSelectionContextMenu && (
+                <button
+                  className={canPaste ? contextMenuItemClassName : contextMenuDisabledItemClassName}
+                  disabled={!canPaste}
+                  onClick={() => {
+                    if (!canPaste) {
+                      return;
+                    }
+                    closeContextMenu();
+                    void handlePaste();
+                  }}
+                >
+                  <ClipboardPaste className="w-4 h-4 text-muted-foreground" />
+                  <span>Paste</span>
+                </button>
+              )}
 
               <div className="my-1 h-px bg-border/70" />
 
-              <button
-                className={contextMenuItemClassName}
-                onClick={() => {
-                  closeContextMenu();
-                  void handleRename(contextTargetFile);
-                }}
-              >
-                <Edit3 className="w-4 h-4 text-muted-foreground" />
-                <span>Rename</span>
-              </button>
+              {!isMultiSelectionContextMenu && (
+                <button
+                  className={contextMenuItemClassName}
+                  onClick={() => {
+                    closeContextMenu();
+                    void handleRename(contextTargetFile);
+                  }}
+                >
+                  <Edit3 className="w-4 h-4 text-muted-foreground" />
+                  <span>Rename</span>
+                </button>
+              )}
               <button
                 className={contextMenuDangerItemClassName}
                 onClick={() => {
