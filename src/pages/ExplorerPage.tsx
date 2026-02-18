@@ -1705,6 +1705,7 @@ export default function ExplorerPage() {
   const isMultiSelectionContextMenu = !!contextTargetFile && selectedPaths.length > 1 && selectedPathSet.has(contextTargetFile.path);
   const canPaste = !!clipboardItem;
   const cutClipboardPath = clipboardItem?.mode === "cut" ? clipboardItem.path : null;
+  const cutPathSet = useMemo(() => (cutClipboardPath ? new Set([cutClipboardPath]) : undefined), [cutClipboardPath]);
   const isRecycleBinView = isRecycleBinPath(currentPath);
   const currentMediaViewerFile = isMediaViewerOpen
     ? mediaViewerItems[mediaViewerIndex] ?? null
@@ -3688,6 +3689,7 @@ export default function ExplorerPage() {
                         key={file.path}
                         file={file}
                         isSelected={selectedPathSet.has(file.path)}
+                        isCutItem={cutClipboardPath === file.path}
                         onSelect={() => handleFileSelect(file)}
                         onOpen={() => handleFileOpen(file)}
                         onContextMenu={(event) => handleFileContextMenu(event, file)}
@@ -3719,6 +3721,7 @@ export default function ExplorerPage() {
                       files={sortedFiles}
                       selectedFile={selectedFile}
                       selectedPaths={selectedPathSet}
+                      cutPaths={cutPathSet}
                       onSelect={handleFileSelect}
                       onOpen={handleFileOpen}
                       onContextMenu={(event, file) => handleFileContextMenu(event, file)}
