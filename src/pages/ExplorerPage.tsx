@@ -179,6 +179,13 @@ interface UploadQueueItemState {
   message?: string;
 }
 
+interface SelectionBoxState {
+  startX: number;
+  startY: number;
+  currentX: number;
+  currentY: number;
+}
+
 interface SavedPathCacheEntry {
   items: FileItem[];
   nextOffset: number;
@@ -483,6 +490,8 @@ export default function ExplorerPage() {
   const [draggedPath, setDraggedPath] = useState<string | null>(null);
   const [dropTargetPath, setDropTargetPath] = useState<string | null>(null);
   const [isExternalDragging, setIsExternalDragging] = useState(false);
+  const [selectedPaths, setSelectedPaths] = useState<string[]>([]);
+  const [selectionBox, setSelectionBox] = useState<SelectionBoxState | null>(null);
   const [isUploadingFiles, setIsUploadingFiles] = useState(false);
   const [uploadProgress, setUploadProgress] = useState<UploadProgressState | null>(null);
   const [uploadQueueItems, setUploadQueueItems] = useState<UploadQueueItemState[]>([]);
@@ -513,6 +522,7 @@ export default function ExplorerPage() {
   const prefetchedThumbnailIdsRef = useRef<Set<number>>(new Set());
   const thumbnailFetchInFlightRef = useRef<Set<number>>(new Set());
   const savedPathCacheRef = useRef<Record<string, SavedPathCacheEntry>>({});
+  const explorerAreaRef = useRef<HTMLDivElement | null>(null);
   const contextMenuRef = useRef<HTMLDivElement | null>(null);
   const transferMenuRef = useRef<HTMLDivElement | null>(null);
   const transferMenuTriggerRef = useRef<HTMLDivElement | null>(null);
@@ -611,6 +621,44 @@ export default function ExplorerPage() {
   useEffect(() => {
     filesRef.current = files;
   }, [files]);
+
+  useEffect(() => {
+    setSelectedPaths((prev) => {
+      if (!prev.length) {
+        return prev;
+      }
+
+      const availablePaths = new Set(files.map((item) => item.path));
+      const next = prev.filter((path) => availablePaths.has(path));
+      if (next.length === prev.length) {
+        return prev;
+      }
+
+      return next;
+    });
+  }, [files]);
+
+  useEffect(() => {
+    if (!selectedPaths.length) {
+      if (selectedFile) {
+        setSelectedFile(null);
+      }
+      return;
+    }
+
+    if (selectedFile && selectedPaths.includes(selectedFile.path)) {
+      return;
+    }
+
+    const nextSelectedFile = files.find((item) => item.path === selectedPaths[0]) || null;
+    setSelectedFile(nextSelectedFile);
+  }, [files, selectedFile, selectedPaths]);
+
+  useEffect(() => {
+    if (selectedPaths.length > 1) {
+      closeDetailsPanel();
+    }
+  }, [closeDetailsPanel, selectedPaths.length]);
 
   useEffect(() => {
     let cancelled = false;
@@ -1044,6 +1092,42 @@ export default function ExplorerPage() {
         handleRefresh();
       }
 
+      if (canNavigateByKeyboard && (e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "a") {
+        e.preventDefault();
+
+        const query = search.trim().toLowerCase();
+        const visibleFiles = filesRef.current.filter((file) => {
+          if (
+            currentPath === "tg://saved"
+            && file.isDirectory
+            && file.path === RECYCLE_BIN_VIRTUAL_PATH
+          ) {
+            return false;
+          }
+
+          if (!query) {
+            return true;
+          }
+
+          return file.name.toLowerCase().includes(query);
+        });
+
+        const allVisiblePaths = visibleFiles.map((file) => file.path);
+        setSelectedPaths(allVisiblePaths);
+
+        if (allVisiblePaths.length > 0) {
+          setSelectedFile(visibleFiles[0]);
+        } else {
+          setSelectedFile(null);
+          closeDetailsPanel();
+        }
+
+        if (allVisiblePaths.length > 1) {
+          closeDetailsPanel();
+        }
+        return;
+      }
+
       // Escape to close details panel
       if (e.key === 'Escape' && showDetails) {
         closeDetailsPanel();
@@ -1059,7 +1143,7 @@ export default function ExplorerPage() {
     return () => {
       window.removeEventListener('keydown', handleKeyDown);
     };
-  }, [selectedFile, showDetails, backHistory, forwardHistory, currentPath, isLoading, markNavigationActivity, closeDetailsPanel, isMediaViewerOpen]);
+  }, [selectedFile, showDetails, backHistory, forwardHistory, currentPath, isLoading, markNavigationActivity, closeDetailsPanel, isMediaViewerOpen, search]);
 
   useEffect(() => {
     const suppressDefaultMouseNavigation = (event: MouseEvent) => {
@@ -1531,12 +1615,22 @@ export default function ExplorerPage() {
   const canCancelUploads = isUploadingFiles && uploadQueueItems.some((item) => (
     item.status === "queued" || item.status === "uploading" || item.status === "sending"
   ));
+  const selectedPathSet = useMemo(() => new Set(selectedPaths), [selectedPaths]);
+  const selectionBoxStyle = selectionBox
+    ? {
+      left: `${Math.min(selectionBox.startX, selectionBox.currentX)}px`,
+      top: `${Math.min(selectionBox.startY, selectionBox.currentY)}px`,
+      width: `${Math.abs(selectionBox.currentX - selectionBox.startX)}px`,
+      height: `${Math.abs(selectionBox.currentY - selectionBox.startY)}px`,
+    }
+    : null;
   const uploadSkeletonCount = isUploadInProgress ? 1 : 0;
   const hasVisibleItems = sortedFiles.length > 0 || uploadSkeletonCount > 0;
   const contextMenuItemClassName = "w-full flex items-center gap-2 rounded-lg px-3 py-2 text-left text-body text-foreground transition-colors hover:bg-primary/15 outline-none focus-visible:outline-none";
   const contextMenuDisabledItemClassName = "w-full flex items-center gap-2 rounded-lg px-3 py-2 text-left text-body text-muted-foreground/60 pointer-events-none outline-none focus-visible:outline-none";
   const contextMenuDangerItemClassName = "w-full flex items-center gap-2 rounded-lg px-3 py-2 text-left text-body text-destructive transition-colors hover:bg-destructive/10 outline-none focus-visible:outline-none";
   const contextTargetFile = contextMenuState?.targetFile ?? null;
+  const isMultiSelectionContextMenu = !!contextTargetFile && selectedPaths.length > 1 && selectedPathSet.has(contextTargetFile.path);
   const canPaste = !!clipboardItem;
   const isRecycleBinView = isRecycleBinPath(currentPath);
   const currentMediaViewerFile = isMediaViewerOpen
@@ -1552,6 +1646,7 @@ export default function ExplorerPage() {
   const isSavedDeleteTarget = !!deleteTarget && isSavedVirtualItemPath(deleteTarget.path);
 
   const handleFileSelect = (file: FileItem) => {
+    setSelectedPaths([file.path]);
     setSelectedFile(file);
 
     if (isRecycleBinPath(currentPath)) {
@@ -2250,11 +2345,17 @@ export default function ExplorerPage() {
   };
 
   const handleFileContextMenu = (event: React.MouseEvent, file: FileItem) => {
+    const isFileAlreadySelected = selectedPaths.includes(file.path);
+    if (!isFileAlreadySelected) {
+      setSelectedPaths([file.path]);
+    }
+
     setSelectedFile(file);
     openContextMenu(event, file, false);
   };
 
   const handleEmptyAreaContextMenu = (event: React.MouseEvent<HTMLDivElement>) => {
+    setSelectedPaths([]);
     setSelectedFile(null);
     closeDetailsPanel();
 
@@ -2470,6 +2571,10 @@ export default function ExplorerPage() {
   };
 
   const handleContextDetails = (targetFile?: FileItem | null) => {
+    if (selectedPaths.length > 1) {
+      return;
+    }
+
     const file = targetFile ?? contextMenuState?.targetFile ?? selectedFile;
     if (!file || isRecycleBinPath(currentPath)) {
       return;
@@ -3000,6 +3105,125 @@ export default function ExplorerPage() {
     }
   };
 
+  const applySelectionFromPaths = useCallback((paths: string[]) => {
+    if (!paths.length) {
+      setSelectedPaths([]);
+      setSelectedFile(null);
+      closeDetailsPanel();
+      return;
+    }
+
+    setSelectedPaths(paths);
+    const firstSelected = filesRef.current.find((item) => item.path === paths[0]) || null;
+    setSelectedFile(firstSelected);
+
+    if (paths.length > 1) {
+      closeDetailsPanel();
+    }
+  }, [closeDetailsPanel]);
+
+  const updateSelectionFromMarquee = useCallback((
+    startX: number,
+    startY: number,
+    currentX: number,
+    currentY: number,
+    baseSelection: string[],
+  ) => {
+    const explorerArea = explorerAreaRef.current;
+    if (!explorerArea) {
+      return;
+    }
+
+    const left = Math.min(startX, currentX);
+    const right = Math.max(startX, currentX);
+    const top = Math.min(startY, currentY);
+    const bottom = Math.max(startY, currentY);
+
+    const intersectedPaths = new Set<string>();
+    const itemNodes = explorerArea.querySelectorAll<HTMLElement>("[data-file-item='true']");
+    itemNodes.forEach((node) => {
+      const path = node.dataset.filePath;
+      if (!path) {
+        return;
+      }
+
+      const rect = node.getBoundingClientRect();
+      const intersects = !(
+        rect.right < left
+        || rect.left > right
+        || rect.bottom < top
+        || rect.top > bottom
+      );
+
+      if (intersects) {
+        intersectedPaths.add(path);
+      }
+    });
+
+    const orderedIntersectedPaths = sortedFiles
+      .map((item) => item.path)
+      .filter((path) => intersectedPaths.has(path));
+
+    const mergedSelection = baseSelection.length > 0
+      ? Array.from(new Set([...baseSelection, ...orderedIntersectedPaths]))
+      : orderedIntersectedPaths;
+
+    applySelectionFromPaths(mergedSelection);
+  }, [applySelectionFromPaths, sortedFiles]);
+
+  const handleExplorerMouseDown = (event: React.MouseEvent<HTMLDivElement>) => {
+    if (event.button !== 0 || isDirectoryLoading) {
+      return;
+    }
+
+    if (isTextInputElement(event.target)) {
+      return;
+    }
+
+    const targetElement = event.target as HTMLElement | null;
+    if (targetElement?.closest("[data-file-item='true']")) {
+      return;
+    }
+
+    closeContextMenu();
+
+    const startX = event.clientX;
+    const startY = event.clientY;
+    const additiveSelection = event.ctrlKey || event.metaKey;
+    const baseSelection = additiveSelection ? selectedPaths : [];
+
+    setSelectionBox({ startX, startY, currentX: startX, currentY: startY });
+    if (!additiveSelection) {
+      applySelectionFromPaths([]);
+    }
+
+    const handleMouseMove = (moveEvent: MouseEvent) => {
+      const nextX = moveEvent.clientX;
+      const nextY = moveEvent.clientY;
+
+      setSelectionBox({
+        startX,
+        startY,
+        currentX: nextX,
+        currentY: nextY,
+      });
+
+      updateSelectionFromMarquee(startX, startY, nextX, nextY, baseSelection);
+    };
+
+    const handleMouseUp = (upEvent: MouseEvent) => {
+      window.removeEventListener("mousemove", handleMouseMove);
+      window.removeEventListener("mouseup", handleMouseUp);
+
+      setSelectionBox(null);
+      updateSelectionFromMarquee(startX, startY, upEvent.clientX, upEvent.clientY, baseSelection);
+    };
+
+    window.addEventListener("mousemove", handleMouseMove);
+    window.addEventListener("mouseup", handleMouseUp);
+    event.preventDefault();
+  };
+
   const handleExplorerDragOver = (event: React.DragEvent) => {
     if (!isExternalFileDrag(event) || isRecycleBinPath(currentPath)) {
       return;
@@ -3126,7 +3350,7 @@ export default function ExplorerPage() {
             )}
 
             {/* Contextual actions for selected file */}
-            {selectedFile && !isRecycleBinView && (
+            {selectedFile && selectedPaths.length === 1 && !isRecycleBinView && (
               <>
                 <TelegramButton
                   variant="secondary"
@@ -3301,11 +3525,13 @@ export default function ExplorerPage() {
         {/* File list */}
         <div className="flex-1 flex min-h-0">
           <div
+            ref={explorerAreaRef}
             className="relative flex-1 overflow-y-auto p-4"
             onDragOver={handleExplorerDragOver}
             onDragLeave={handleExplorerDragLeave}
             onDrop={handleExplorerDrop}
             onScroll={handleDirectoryScroll}
+            onMouseDown={handleExplorerMouseDown}
             onContextMenu={handleEmptyAreaContextMenu}
           >
             {isExternalDragging && (
@@ -3316,6 +3542,13 @@ export default function ExplorerPage() {
                   </p>
                 </div>
               </div>
+            )}
+
+            {selectionBox && selectionBoxStyle && (
+              <div
+                className="pointer-events-none fixed z-[94] rounded-md border border-primary/50 bg-primary/15"
+                style={selectionBoxStyle}
+              />
             )}
 
             {error ? (
@@ -3387,7 +3620,7 @@ export default function ExplorerPage() {
                       <FileRow
                         key={file.path}
                         file={file}
-                        isSelected={selectedFile?.path === file.path}
+                        isSelected={selectedPathSet.has(file.path)}
                         onSelect={() => handleFileSelect(file)}
                         onOpen={() => handleFileOpen(file)}
                         onContextMenu={(event) => handleFileContextMenu(event, file)}
@@ -3418,6 +3651,7 @@ export default function ExplorerPage() {
                     <FileGrid
                       files={sortedFiles}
                       selectedFile={selectedFile}
+                      selectedPaths={selectedPathSet}
                       onSelect={handleFileSelect}
                       onOpen={handleFileOpen}
                       onContextMenu={(event, file) => handleFileContextMenu(event, file)}
@@ -3659,18 +3893,22 @@ export default function ExplorerPage() {
                 <span>Delete</span>
               </button>
 
-              <div className="my-1 h-px bg-border/70" />
+              {!isMultiSelectionContextMenu && (
+                <>
+                  <div className="my-1 h-px bg-border/70" />
 
-              <button
-                className={contextMenuItemClassName}
-                onClick={() => {
-                  closeContextMenu();
-                  handleContextDetails(contextTargetFile);
-                }}
-              >
-                <Info className="w-4 h-4 text-muted-foreground" />
-                <span>Details</span>
-              </button>
+                  <button
+                    className={contextMenuItemClassName}
+                    onClick={() => {
+                      closeContextMenu();
+                      handleContextDetails(contextTargetFile);
+                    }}
+                  >
+                    <Info className="w-4 h-4 text-muted-foreground" />
+                    <span>Details</span>
+                  </button>
+                </>
+              )}
             </>
           )}
         </div>

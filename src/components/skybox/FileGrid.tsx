@@ -7,6 +7,7 @@ import { resolveThumbnailSrc } from "@/lib/thumbnail-src";
 interface FileGridProps {
     files: FileItem[];
     selectedFile: FileItem | null;
+    selectedPaths?: Set<string>;
     onSelect: (file: FileItem) => void;
     onOpen: (file: FileItem) => void;
     onContextMenu: (e: React.MouseEvent, file: FileItem) => void;
@@ -23,6 +24,7 @@ interface FileGridProps {
 export function FileGrid({
     files,
     selectedFile,
+    selectedPaths,
     onSelect,
     onOpen,
     onContextMenu,
@@ -41,7 +43,7 @@ export function FileGrid({
                 <FileGridItem
                     key={file.path}
                     file={file}
-                    isSelected={selectedFile?.path === file.path}
+                    isSelected={selectedPaths ? selectedPaths.has(file.path) : selectedFile?.path === file.path}
                     onSelect={() => onSelect(file)}
                     onOpen={() => onOpen(file)}
                     onContextMenu={(e) => onContextMenu(e, file)}
@@ -126,6 +128,8 @@ function FileGridItem({
 
     return (
         <div
+            data-file-item="true"
+            data-file-path={file.path}
             onClick={onSelect}
             onDoubleClick={onOpen}
             onContextMenu={onContextMenu}

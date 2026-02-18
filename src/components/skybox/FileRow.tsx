@@ -185,6 +185,8 @@ export function FileRow({
 
   return (
     <div
+      data-file-item="true"
+      data-file-path={file.path}
       onClick={onSelect}
       onDoubleClick={onOpen}
       onContextMenu={onContextMenu}
