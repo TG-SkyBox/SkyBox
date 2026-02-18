@@ -2920,6 +2920,7 @@ pub async fn tg_download_saved_file_impl(
 }
 
 pub async fn tg_upload_file_to_saved_messages_impl(
+    app: AppHandle,
     db: Database,
     file_name: String,
     file_bytes: Vec<u8>,
@@ -2965,6 +2966,8 @@ pub async fn tg_upload_file_to_saved_messages_impl(
         }
     };
 
+    let total_upload_bytes_usize = file_bytes.len();
+    let total_upload_bytes = total_upload_bytes_usize as u64;
     let temp_path = build_temp_upload_path(&upload_file_name);
     fs::write(&temp_path, &file_bytes).map_err(|e| TelegramError {
         message: format!(
@@ -2974,40 +2977,123 @@ pub async fn tg_upload_file_to_saved_messages_impl(
         ),
     })?;
 
-    let upload_and_send_result = run_telegram_request(
-        "tg_upload_file_to_saved_messages_impl.upload_and_send",
-        || async {
-            let uploaded_file = client.upload_file(&temp_path).await.map_err(|error| TelegramError {
-                message: format!("Failed to upload file to Telegram: {}", error),
-            })?;
-
-            let input_message = match upload_media_kind {
-                UploadMediaKind::Photo => InputMessage::new().photo(uploaded_file),
-                UploadMediaKind::Video | UploadMediaKind::Audio => {
-                    let message = match upload_mime_type {
-                        Some(mime_type) => {
-                            InputMessage::new().mime_type(mime_type).document(uploaded_file)
-                        }
-                        None => InputMessage::new().document(uploaded_file),
-                    };
-
-                    message.attribute(Attribute::FileName(upload_file_name.clone()))
-                }
-                UploadMediaKind::Document => {
-                    let message = match upload_mime_type {
-                        Some(mime_type) => InputMessage::new().mime_type(mime_type).file(uploaded_file),
-                        None => InputMessage::new().file(uploaded_file),
-                    };
-
-                    message.attribute(Attribute::FileName(upload_file_name.clone()))
-                }
-            };
-
-            client.send_message(input_peer.clone(), input_message).await.map_err(|error| TelegramError {
-                message: format!("Failed to send uploaded file: {}", error),
-            })
+    emit_upload_progress(
+        &app,
+        UploadProgressPayload {
+            file_name: file_name.clone(),
+            stage: "uploading".to_string(),
+            progress: 0.0,
+            uploaded_bytes: 0,
+            total_bytes: Some(total_upload_bytes),
+            message: Some("Uploading file".to_string()),
         },
-    )
+    );
+
+    let upload_and_send_result: Result<Message, TelegramError> = async {
+        let temp_path_for_stream = temp_path.clone();
+        let upload_file_name_for_stream = upload_file_name.clone();
+        let ui_file_name_for_stream = file_name.clone();
+        let app_for_stream = app.clone();
+
+        let uploaded_file = run_telegram_request(
+            "tg_upload_file_to_saved_messages_impl.upload_stream",
+            || {
+                let temp_path_for_stream = temp_path_for_stream.clone();
+                let upload_file_name_for_stream = upload_file_name_for_stream.clone();
+                let ui_file_name_for_stream = ui_file_name_for_stream.clone();
+                let app_for_stream = app_for_stream.clone();
+                let client_for_stream = client.clone();
+
+                async move {
+                    emit_upload_progress(
+                        &app_for_stream,
+                        UploadProgressPayload {
+                            file_name: ui_file_name_for_stream.clone(),
+                            stage: "uploading".to_string(),
+                            progress: 0.0,
+                            uploaded_bytes: 0,
+                            total_bytes: Some(total_upload_bytes),
+                            message: None,
+                        },
+                    );
+
+                    let upload_file = tokio::fs::File::open(&temp_path_for_stream)
+                        .await
+                        .map_err(|error| TelegramError {
+                            message: format!(
+                                "Failed to open temporary upload file {}: {}",
+                                temp_path_for_stream.display(),
+                                error
+                            ),
+                        })?;
+
+                    let mut progress_reader = UploadProgressReader::new(
+                        upload_file,
+                        app_for_stream,
+                        ui_file_name_for_stream,
+                        total_upload_bytes,
+                    );
+
+                    client_for_stream
+                        .upload_stream(
+                            &mut progress_reader,
+                            total_upload_bytes_usize,
+                            upload_file_name_for_stream,
+                        )
+                        .await
+                        .map_err(|error| TelegramError {
+                            message: format!("Failed to upload file to Telegram: {}", error),
+                        })
+                }
+            },
+        )
+        .await?;
+
+        emit_upload_progress(
+            &app,
+            UploadProgressPayload {
+                file_name: file_name.clone(),
+                stage: "sending".to_string(),
+                progress: 100.0,
+                uploaded_bytes: total_upload_bytes,
+                total_bytes: Some(total_upload_bytes),
+                message: Some("Sending message".to_string()),
+            },
+        );
+
+        let input_message = match upload_media_kind {
+            UploadMediaKind::Photo => InputMessage::new().photo(uploaded_file),
+            UploadMediaKind::Video | UploadMediaKind::Audio => {
+                let message = match upload_mime_type {
+                    Some(mime_type) => InputMessage::new().mime_type(mime_type).document(uploaded_file),
+                    None => InputMessage::new().document(uploaded_file),
+                };
+
+                message.attribute(Attribute::FileName(upload_file_name.clone()))
+            }
+            UploadMediaKind::Document => {
+                let message = match upload_mime_type {
+                    Some(mime_type) => InputMessage::new().mime_type(mime_type).file(uploaded_file),
+                    None => InputMessage::new().file(uploaded_file),
+                };
+
+                message.attribute(Attribute::FileName(upload_file_name.clone()))
+            }
+        };
+
+        run_telegram_request(
+            "tg_upload_file_to_saved_messages_impl.send_message",
+            || async {
+                client
+                    .send_message(input_peer.clone(), input_message.clone())
+                    .await
+            },
+        )
+        .await
+        .map_err(|error| TelegramError {
+            message: format!("Failed to send uploaded file: {}", error),
+        })
+    }
     .await;
 
     if let Err(cleanup_error) = fs::remove_file(&temp_path) {
@@ -3018,7 +3104,38 @@ pub async fn tg_upload_file_to_saved_messages_impl(
         );
     }
 
-    let sent_message = upload_and_send_result?;
+    let sent_message = match upload_and_send_result {
+        Ok(message) => {
+            emit_upload_progress(
+                &app,
+                UploadProgressPayload {
+                    file_name: file_name.clone(),
+                    stage: "completed".to_string(),
+                    progress: 100.0,
+                    uploaded_bytes: total_upload_bytes,
+                    total_bytes: Some(total_upload_bytes),
+                    message: Some("Upload complete".to_string()),
+                },
+            );
+
+            message
+        }
+        Err(error) => {
+            emit_upload_progress(
+                &app,
+                UploadProgressPayload {
+                    file_name: file_name.clone(),
+                    stage: "failed".to_string(),
+                    progress: 0.0,
+                    uploaded_bytes: 0,
+                    total_bytes: Some(total_upload_bytes),
+                    message: Some(error.message.clone()),
+                },
+            );
+
+            return Err(error);
+        }
+    };
 
     let mut telegram_message = if let Some(message) = categorize_message(&sent_message, chat_id) {
         message
@@ -3072,8 +3189,6 @@ pub async fn tg_upload_file_to_saved_messages_impl(
 
     Ok(telegram_message)
 }
-
-
 fn estimate_photo_message_size(photo: &tl::types::Photo) -> Option<i64> {
     let mut max_size = 0_i64;
 

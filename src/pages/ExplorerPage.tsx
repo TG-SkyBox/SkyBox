@@ -139,6 +139,7 @@ interface TelegramIndexSavedMessagesResult {
 }
 
 type DownloadStage = "selecting" | "downloading" | "moving" | "completed" | "failed" | "cancelled";
+type UploadStage = "uploading" | "sending" | "completed" | "failed";
 
 interface DownloadProgressPayload {
   sourcePath: string;
@@ -151,11 +152,21 @@ interface DownloadProgressPayload {
   message?: string | null;
 }
 
+interface UploadProgressPayload {
+  fileName: string;
+  stage: UploadStage;
+  progress: number;
+  uploadedBytes: number;
+  totalBytes?: number | null;
+  message?: string | null;
+}
+
 interface UploadProgressState {
   totalFiles: number;
   uploadedFiles: number;
   failedFiles: number;
   activeFileProgress: number;
+  activeFileName: string | null;
 }
 
 interface SavedPathCacheEntry {
@@ -1328,13 +1339,16 @@ export default function ExplorerPage() {
   const uploadProcessedFiles = uploadProgress
     ? uploadProgress.uploadedFiles + uploadProgress.failedFiles
     : 0;
-  const uploadEffectiveProcessedFiles = uploadProgress
-    ? uploadProcessedFiles + Math.max(0, Math.min(0.95, uploadProgress.activeFileProgress))
+  const uploadActiveFileFraction = uploadProgress
+    ? Math.max(0, Math.min(1, uploadProgress.activeFileProgress))
     : 0;
   const isUploadInProgress =
     isUploadingFiles &&
     !!uploadProgress &&
     uploadProcessedFiles < uploadProgress.totalFiles;
+  const uploadEffectiveProcessedFiles = uploadProgress
+    ? uploadProcessedFiles + (isUploadInProgress ? uploadActiveFileFraction : 0)
+    : 0;
   const uploadProgressPercent = uploadProgress && uploadProgress.totalFiles > 0
     ? Math.min(100, Math.max(0, Math.round((uploadEffectiveProcessedFiles / uploadProgress.totalFiles) * 100)))
     : 0;
@@ -2539,30 +2553,51 @@ export default function ExplorerPage() {
       uploadedFiles: 0,
       failedFiles: 0,
       activeFileProgress: 0,
+      activeFileName: null,
     });
 
+    let unlistenUploadProgress: (() => void) | null = null;
+    let currentUploadingFileName: string | null = null;
+
     try {
+      unlistenUploadProgress = await listen<UploadProgressPayload>("tg-upload-progress", (event) => {
+        const payload = event.payload;
+        if (!payload) {
+          return;
+        }
+
+        const progressFraction = Math.max(0, Math.min(100, payload.progress)) / 100;
+
+        setUploadProgress((prev) => {
+          if (!prev) {
+            return prev;
+          }
+
+          if (currentUploadingFileName && payload.fileName !== currentUploadingFileName) {
+            return prev;
+          }
+
+          return {
+            ...prev,
+            activeFileName: payload.fileName,
+            activeFileProgress: progressFraction,
+          };
+        });
+      });
+
       let uploadedCount = 0;
       let failedCount = 0;
       const uploadedCategories = new Set<string>();
 
       for (const droppedFile of droppedFiles) {
-        let activeFileProgress = 0;
-        const progressTimer = window.setInterval(() => {
-          activeFileProgress = Math.min(0.92, activeFileProgress + 0.03);
-          setUploadProgress({
-            totalFiles: droppedFiles.length,
-            uploadedFiles: uploadedCount,
-            failedFiles: failedCount,
-            activeFileProgress,
-          });
-        }, 140);
+        currentUploadingFileName = droppedFile.name;
 
         setUploadProgress({
           totalFiles: droppedFiles.length,
           uploadedFiles: uploadedCount,
           failedFiles: failedCount,
-          activeFileProgress: 0.08,
+          activeFileProgress: 0,
+          activeFileName: currentUploadingFileName,
         });
 
         try {
@@ -2578,8 +2613,6 @@ export default function ExplorerPage() {
         } catch (error) {
           failedCount += 1;
           console.error("Failed to upload file:", droppedFile.name, error);
-        } finally {
-          window.clearInterval(progressTimer);
         }
 
         setUploadProgress({
@@ -2587,7 +2620,10 @@ export default function ExplorerPage() {
           uploadedFiles: uploadedCount,
           failedFiles: failedCount,
           activeFileProgress: 0,
+          activeFileName: null,
         });
+
+        currentUploadingFileName = null;
       }
 
       if (uploadedCount > 0) {
@@ -2612,6 +2648,11 @@ export default function ExplorerPage() {
         });
       }
     } finally {
+      currentUploadingFileName = null;
+      if (unlistenUploadProgress) {
+        unlistenUploadProgress();
+      }
+
       setIsUploadingFiles(false);
       setIsUploadProgressVisible(false);
       clearUploadProgressTimers();

@@ -503,12 +503,14 @@ pub async fn tg_prepare_saved_media_preview(
 
 #[tauri::command]
 pub async fn tg_upload_file_to_saved_messages(
+    app: tauri::AppHandle,
     db: State<'_, crate::db::Database>,
     file_name: String,
     file_bytes: Vec<u8>,
     file_path: Option<String>,
 ) -> Result<crate::db::TelegramMessage, TelegramError> {
-    tg_upload_file_to_saved_messages_impl(db.inner().clone(), file_name, file_bytes, file_path).await
+    tg_upload_file_to_saved_messages_impl(app, db.inner().clone(), file_name, file_bytes, file_path)
+        .await
 }
 
 // ===== Utility Functions =====
