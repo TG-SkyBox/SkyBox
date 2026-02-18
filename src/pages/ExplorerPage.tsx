@@ -186,6 +186,11 @@ interface SelectionBoxState {
   currentY: number;
 }
 
+interface PasteProgressState {
+  fileName: string;
+  destinationPath: string;
+}
+
 interface SavedPathCacheEntry {
   items: FileItem[];
   nextOffset: number;
@@ -492,6 +497,7 @@ export default function ExplorerPage() {
   const [isExternalDragging, setIsExternalDragging] = useState(false);
   const [selectedPaths, setSelectedPaths] = useState<string[]>([]);
   const [selectionBox, setSelectionBox] = useState<SelectionBoxState | null>(null);
+  const [activePaste, setActivePaste] = useState<PasteProgressState | null>(null);
   const [isUploadingFiles, setIsUploadingFiles] = useState(false);
   const [uploadProgress, setUploadProgress] = useState<UploadProgressState | null>(null);
   const [uploadQueueItems, setUploadQueueItems] = useState<UploadQueueItemState[]>([]);
