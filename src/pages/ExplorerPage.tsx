@@ -3931,10 +3931,10 @@ export default function ExplorerPage() {
                     <div className="space-y-2">
                       {Array.from({ length: 10 }).map((_, index) => (
                         <div key={`list-skeleton-${index}`} className="px-2 py-1">
-                          <div className="ml-auto max-w-[86%] rounded-2xl rounded-br-md border border-border/60 bg-secondary/25 px-3 py-2">
-                            <Skeleton className="skeleton-shimmer animate-none h-4 w-[72%] bg-secondary/50" />
-                            <Skeleton className="skeleton-shimmer animate-none h-4 w-[58%] mt-1.5 bg-secondary/45" />
-                            <Skeleton className="skeleton-shimmer animate-none h-3 w-14 mt-2 ml-auto bg-secondary/40" />
+                          <div className="ml-auto max-w-[86%] rounded-2xl rounded-br-md bg-primary/18 px-3 py-2">
+                            <Skeleton className="skeleton-shimmer animate-none h-4 w-[72%] bg-primary/32" />
+                            <Skeleton className="skeleton-shimmer animate-none h-4 w-[58%] mt-1.5 bg-primary/26" />
+                            <Skeleton className="skeleton-shimmer animate-none h-3 w-14 mt-2 ml-auto bg-primary/20" />
                           </div>
                         </div>
                       ))}
@@ -4010,10 +4010,10 @@ export default function ExplorerPage() {
                     {Array.from({ length: uploadSkeletonCount }).map((_, index) => (
                       isNotesFolderView ? (
                         <div key={`upload-list-skeleton-${index}`} className="px-2 py-1">
-                          <div className="ml-auto max-w-[86%] rounded-2xl rounded-br-md border border-border/60 bg-secondary/25 px-3 py-2">
-                            <Skeleton className="skeleton-shimmer h-4 w-[66%] bg-secondary/50" />
-                            <Skeleton className="skeleton-shimmer h-4 w-[42%] mt-1.5 bg-secondary/45" />
-                            <Skeleton className="skeleton-shimmer h-3 w-12 mt-2 ml-auto bg-secondary/40" />
+                          <div className="ml-auto max-w-[86%] rounded-2xl rounded-br-md bg-primary/18 px-3 py-2">
+                            <Skeleton className="skeleton-shimmer h-4 w-[66%] bg-primary/32" />
+                            <Skeleton className="skeleton-shimmer h-4 w-[42%] mt-1.5 bg-primary/26" />
+                            <Skeleton className="skeleton-shimmer h-3 w-12 mt-2 ml-auto bg-primary/20" />
                           </div>
                         </div>
                       ) : (
@@ -4032,10 +4032,10 @@ export default function ExplorerPage() {
                     {pasteSkeletonCount > 0 && (
                       isNotesFolderView ? (
                         <div key="paste-list-skeleton" className="px-2 py-1">
-                          <div className="ml-auto max-w-[86%] rounded-2xl rounded-br-md border border-border/60 bg-secondary/25 px-3 py-2">
-                            <Skeleton className="skeleton-shimmer h-4 w-[64%] bg-secondary/50" />
-                            <Skeleton className="skeleton-shimmer h-4 w-[50%] mt-1.5 bg-secondary/45" />
-                            <Skeleton className="skeleton-shimmer h-3 w-12 mt-2 ml-auto bg-secondary/40" />
+                          <div className="ml-auto max-w-[86%] rounded-2xl rounded-br-md bg-primary/18 px-3 py-2">
+                            <Skeleton className="skeleton-shimmer h-4 w-[64%] bg-primary/32" />
+                            <Skeleton className="skeleton-shimmer h-4 w-[50%] mt-1.5 bg-primary/26" />
+                            <Skeleton className="skeleton-shimmer h-3 w-12 mt-2 ml-auto bg-primary/20" />
                           </div>
                         </div>
                       ) : (
@@ -4106,8 +4106,8 @@ export default function ExplorerPage() {
             </div>
 
             {isNotesFolderView && (
-              <div className="shrink-0 border-t border-border bg-glass px-4 py-3">
-                <div className="flex items-center gap-2 rounded-xl border border-border/70 bg-secondary/15 px-3 py-2">
+              <div className="shrink-0 bg-glass px-4 py-3">
+                <div className="flex items-center gap-2 rounded-xl bg-primary/14 px-3 py-2">
                   <input
                     type="text"
                     value={noteComposerValue}
