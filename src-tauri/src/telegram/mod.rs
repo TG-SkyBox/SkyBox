@@ -321,6 +321,8 @@ use messages::{
     tg_delete_saved_item_permanently_impl,
     tg_move_saved_item_impl,
     tg_rename_saved_item_impl,
+    tg_send_saved_note_message_impl,
+    tg_edit_saved_note_message_impl,
     tg_get_message_thumbnail_impl,
     tg_prefetch_message_thumbnails_impl,
     tg_cancel_saved_file_download_impl,
@@ -469,6 +471,23 @@ pub async fn tg_rename_saved_item(
     new_name: String,
 ) -> Result<(), TelegramError> {
     tg_rename_saved_item_impl(db.inner().clone(), source_path, new_name).await
+}
+
+#[tauri::command]
+pub async fn tg_send_saved_note_message(
+    db: State<'_, crate::db::Database>,
+    text: String,
+) -> Result<crate::db::TelegramMessage, TelegramError> {
+    tg_send_saved_note_message_impl(db.inner().clone(), text).await
+}
+
+#[tauri::command]
+pub async fn tg_edit_saved_note_message(
+    db: State<'_, crate::db::Database>,
+    source_path: String,
+    text: String,
+) -> Result<(), TelegramError> {
+    tg_edit_saved_note_message_impl(db.inner().clone(), source_path, text).await
 }
 
 #[tauri::command]
