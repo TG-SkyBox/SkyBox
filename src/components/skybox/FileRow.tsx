@@ -204,7 +204,7 @@ export function FileRow({
         className={`px-2 py-1 rounded-lg cursor-pointer transition-all duration-150 ${isSelected ? "bg-sidebar-accent/55" : "hover:bg-sidebar-accent/35"
           } ${isDropTarget ? "ring-1 ring-primary/60 bg-primary/10" : ""} ${isCutItem ? "opacity-50 grayscale" : ""}`}
       >
-        <div className="ml-auto max-w-[86%] rounded-2xl rounded-br-md border border-primary/20 bg-primary/15 px-3 py-2 shadow-sm shadow-black/20">
+        <div className="ml-auto max-w-[86%] rounded-2xl rounded-br-md border border-border/70 bg-secondary/35 px-3 py-2 shadow-sm shadow-black/20">
           <p className="text-body text-foreground whitespace-pre-wrap break-words leading-5">
             {file.noteText || file.name}
           </p>
