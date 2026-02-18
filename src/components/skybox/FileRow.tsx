@@ -201,14 +201,14 @@ export function FileRow({
         onDragOver={onDragOver}
         onDragLeave={onDragLeave}
         onDrop={onDrop}
-        className={`px-2 py-1 rounded-lg cursor-pointer transition-all duration-150 ${isSelected ? "bg-sidebar-accent/70" : "hover:bg-sidebar-accent/40"
+        className={`px-2 py-1 rounded-lg cursor-pointer transition-all duration-150 ${isSelected ? "bg-sidebar-accent/55" : "hover:bg-sidebar-accent/35"
           } ${isDropTarget ? "ring-1 ring-primary/60 bg-primary/10" : ""} ${isCutItem ? "opacity-50 grayscale" : ""}`}
       >
-        <div className="max-w-[85%] rounded-2xl bg-secondary/45 px-3 py-2">
+        <div className="ml-auto max-w-[86%] rounded-2xl rounded-br-md border border-primary/20 bg-primary/15 px-3 py-2 shadow-sm shadow-black/20">
           <p className="text-body text-foreground whitespace-pre-wrap break-words leading-5">
             {file.noteText || file.name}
           </p>
-          <p className="mt-1 text-small text-muted-foreground text-right">
+          <p className="mt-1 text-small text-muted-foreground/90 text-right">
             {formatDate(file.modifiedAt)}
           </p>
         </div>

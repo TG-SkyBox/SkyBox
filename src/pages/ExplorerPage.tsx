@@ -3924,7 +3924,7 @@ export default function ExplorerPage() {
                 )}
               </div>
             ) : (
-              <div className={effectiveViewMode === "list" ? "space-y-0.5" : "p-1"}>
+              <div className={effectiveViewMode === "list" ? (isNotesFolderView ? "space-y-1.5" : "space-y-0.5") : "p-1"}>
                 {effectiveViewMode === "list" ? (
                   <>
                     {sortedFiles.map((file) => (
