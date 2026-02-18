@@ -3705,7 +3705,7 @@ export default function ExplorerPage() {
         {/* Toolbar */}
         <div className="h-12 bg-glass border-b border-border flex items-center justify-between px-4">
           <div className="flex items-center gap-2">
-            {!isRecycleBinView && (
+            {!isRecycleBinView && !isNotesFolderView && (
               <TelegramButton variant="secondary" size="sm" onClick={handleNewFolder}>
                 <FolderPlus className="w-4 h-4" />
                 New Folder
