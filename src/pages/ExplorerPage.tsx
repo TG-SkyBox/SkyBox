@@ -204,6 +204,7 @@ const SAVED_ITEMS_PAGE_SIZE = 50;
 const EXPLORER_VIEW_MODE_KEY = "explorer_view_mode";
 const RECYCLE_BIN_VIRTUAL_PATH = "tg://saved/Recycle Bin";
 const DETAILS_PANEL_ANIMATION_MS = 220;
+const UPLOAD_PROGRESS_ANIMATION_MS = 240;
 
 const IMAGE_EXTENSIONS = new Set(["jpg", "jpeg", "png", "gif", "webp", "bmp", "svg"]);
 const VIDEO_EXTENSIONS = new Set(["mp4", "mkv", "mov", "avi", "webm", "wmv", "m4v"]);
@@ -394,6 +395,8 @@ export default function ExplorerPage() {
   const [isExternalDragging, setIsExternalDragging] = useState(false);
   const [isUploadingFiles, setIsUploadingFiles] = useState(false);
   const [uploadProgress, setUploadProgress] = useState<UploadProgressState | null>(null);
+  const [isUploadProgressMounted, setIsUploadProgressMounted] = useState(false);
+  const [isUploadProgressVisible, setIsUploadProgressVisible] = useState(false);
   const [activeDownload, setActiveDownload] = useState<DownloadProgressPayload | null>(null);
   const [isMediaViewerOpen, setIsMediaViewerOpen] = useState(false);
   const [mediaViewerItems, setMediaViewerItems] = useState<FileItem[]>([]);
@@ -421,6 +424,8 @@ export default function ExplorerPage() {
   const contextMenuRef = useRef<HTMLDivElement | null>(null);
   const detailsPanelRef = useRef<HTMLDivElement | null>(null);
   const detailsPanelCloseTimerRef = useRef<number | null>(null);
+  const uploadProgressHideTimerRef = useRef<number | null>(null);
+  const uploadProgressEnterFrameRef = useRef<number | null>(null);
   const mediaViewerOpenedPathRef = useRef<string | null>(null);
   const navigationStateRef = useRef({
     backHistory: [] as string[],
@@ -433,6 +438,18 @@ export default function ExplorerPage() {
     if (detailsPanelCloseTimerRef.current !== null) {
       window.clearTimeout(detailsPanelCloseTimerRef.current);
       detailsPanelCloseTimerRef.current = null;
+    }
+  }, []);
+
+  const clearUploadProgressTimers = useCallback(() => {
+    if (uploadProgressHideTimerRef.current !== null) {
+      window.clearTimeout(uploadProgressHideTimerRef.current);
+      uploadProgressHideTimerRef.current = null;
+    }
+
+    if (uploadProgressEnterFrameRef.current !== null) {
+      window.cancelAnimationFrame(uploadProgressEnterFrameRef.current);
+      uploadProgressEnterFrameRef.current = null;
     }
   }, []);
 
@@ -461,8 +478,9 @@ export default function ExplorerPage() {
   useEffect(() => {
     return () => {
       clearDetailsPanelCloseTimer();
+      clearUploadProgressTimers();
     };
-  }, [clearDetailsPanelCloseTimer]);
+  }, [clearDetailsPanelCloseTimer, clearUploadProgressTimers]);
 
   // Initialize with home directory and user info
   useEffect(() => {
@@ -2508,6 +2526,14 @@ export default function ExplorerPage() {
     }
 
     setIsUploadingFiles(true);
+    clearUploadProgressTimers();
+    setIsUploadProgressMounted(true);
+    setIsUploadProgressVisible(false);
+    uploadProgressEnterFrameRef.current = window.requestAnimationFrame(() => {
+      setIsUploadProgressVisible(true);
+      uploadProgressEnterFrameRef.current = null;
+    });
+
     setUploadProgress({
       totalFiles: droppedFiles.length,
       uploadedFiles: 0,
@@ -2587,7 +2613,13 @@ export default function ExplorerPage() {
       }
     } finally {
       setIsUploadingFiles(false);
-      setUploadProgress(null);
+      setIsUploadProgressVisible(false);
+      clearUploadProgressTimers();
+      uploadProgressHideTimerRef.current = window.setTimeout(() => {
+        setIsUploadProgressMounted(false);
+        setUploadProgress(null);
+        uploadProgressHideTimerRef.current = null;
+      }, UPLOAD_PROGRESS_ANIMATION_MS);
     }
   };
 
@@ -2750,15 +2782,13 @@ export default function ExplorerPage() {
           </div>
 
           <div className="flex items-center gap-2 min-w-0">
-            <button className="flex items-center gap-1 px-2 py-1 rounded text-small text-muted-foreground hover:text-foreground hover:bg-secondary transition-colors">
-              <SortAsc className="w-3 h-3" />
-              Name
-            </button>
-            <span className="text-small text-muted-foreground">
-              {sortedFiles.length} {sortedFiles.length === 1 ? 'item' : 'items'}
-            </span>
-            {isUploadingFiles && uploadProgress && (
-              <div className="ml-1 flex items-center gap-2 min-w-[220px]">
+            {isUploadProgressMounted && uploadProgress && (
+              <div
+                className={`mr-1 flex items-center gap-2 min-w-[220px] transform-gpu transition-all duration-200 ease-out ${isUploadProgressVisible
+                  ? "translate-y-0 opacity-100"
+                  : "-translate-y-3 opacity-0"
+                  }`}
+              >
                 <span className="text-small text-muted-foreground whitespace-nowrap tabular-nums">
                   {uploadProgressLabel}
                 </span>
@@ -2772,6 +2802,13 @@ export default function ExplorerPage() {
                 </span>
               </div>
             )}
+            <button className="flex items-center gap-1 px-2 py-1 rounded text-small text-muted-foreground hover:text-foreground hover:bg-secondary transition-colors">
+              <SortAsc className="w-3 h-3" />
+              Name
+            </button>
+            <span className="text-small text-muted-foreground">
+              {sortedFiles.length} {sortedFiles.length === 1 ? 'item' : 'items'}
+            </span>
             {isLoadingSavedFiles ? (
               <span className="text-small text-muted-foreground inline-flex items-center gap-1">
                 <div className="animate-spin rounded-full h-3 w-3 border-b border-primary" />
