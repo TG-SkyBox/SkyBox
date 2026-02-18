@@ -3927,16 +3927,30 @@ export default function ExplorerPage() {
             ) : isDirectoryLoading ? (
               <div className="h-full">
                 {effectiveViewMode === "list" ? (
-                  <div className="space-y-1">
-                    {Array.from({ length: 10 }).map((_, index) => (
-                      <div key={`list-skeleton-${index}`} className="flex items-center gap-3 px-3 py-1 rounded-lg bg-secondary/20">
-                        <Skeleton className="skeleton-shimmer animate-none h-8 w-8 rounded-md bg-secondary/55" />
-                        <Skeleton className="skeleton-shimmer animate-none h-4 flex-1 max-w-[45%] bg-secondary/45" />
-                        <Skeleton className="skeleton-shimmer animate-none h-3 w-14 bg-secondary/40" />
-                        <Skeleton className="skeleton-shimmer animate-none h-3 w-16 bg-secondary/40" />
-                      </div>
-                    ))}
-                  </div>
+                  isNotesFolderView ? (
+                    <div className="space-y-2">
+                      {Array.from({ length: 10 }).map((_, index) => (
+                        <div key={`list-skeleton-${index}`} className="px-2 py-1">
+                          <div className="ml-auto max-w-[86%] rounded-2xl rounded-br-md border border-border/60 bg-secondary/25 px-3 py-2">
+                            <Skeleton className="skeleton-shimmer animate-none h-4 w-[72%] bg-secondary/50" />
+                            <Skeleton className="skeleton-shimmer animate-none h-4 w-[58%] mt-1.5 bg-secondary/45" />
+                            <Skeleton className="skeleton-shimmer animate-none h-3 w-14 mt-2 ml-auto bg-secondary/40" />
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  ) : (
+                    <div className="space-y-1">
+                      {Array.from({ length: 10 }).map((_, index) => (
+                        <div key={`list-skeleton-${index}`} className="flex items-center gap-3 px-3 py-1 rounded-lg bg-secondary/20">
+                          <Skeleton className="skeleton-shimmer animate-none h-8 w-8 rounded-md bg-secondary/55" />
+                          <Skeleton className="skeleton-shimmer animate-none h-4 flex-1 max-w-[45%] bg-secondary/45" />
+                          <Skeleton className="skeleton-shimmer animate-none h-3 w-14 bg-secondary/40" />
+                          <Skeleton className="skeleton-shimmer animate-none h-3 w-16 bg-secondary/40" />
+                        </div>
+                      ))}
+                    </div>
+                  )
                 ) : (
                   <div className="grid [grid-template-columns:repeat(auto-fill,minmax(8.75rem,8.75rem))] justify-start gap-3">
                     {Array.from({ length: 12 }).map((_, index) => (
