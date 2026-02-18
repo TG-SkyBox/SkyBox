@@ -28,6 +28,7 @@ export interface FileItem {
 interface FileRowProps {
   file: FileItem;
   isSelected?: boolean;
+  isCutItem?: boolean;
   onSelect?: () => void;
   onOpen?: () => void;
   onContextMenu?: (e: React.MouseEvent) => void;
@@ -136,6 +137,7 @@ const formatDate = (dateStr?: string): string => {
 export function FileRow({
   file,
   isSelected,
+  isCutItem,
   onSelect,
   onOpen,
   onContextMenu,
@@ -197,7 +199,7 @@ export function FileRow({
       onDragLeave={onDragLeave}
       onDrop={onDrop}
       className={`flex items-center gap-3 px-3 py-1 rounded-lg cursor-pointer transition-all duration-150 ${isSelected ? "bg-sidebar-accent text-foreground" : "hover:bg-sidebar-accent/50"
-        } ${isDropTarget ? "ring-1 ring-primary/60 bg-primary/10" : ""}`}
+        } ${isDropTarget ? "ring-1 ring-primary/60 bg-primary/10" : ""} ${isCutItem ? "opacity-50 grayscale" : ""}`}
     >
       <div className="w-8 h-8 flex-shrink-0 flex items-center justify-center rounded-md overflow-hidden bg-secondary/50">
         {thumbUrl ? (

@@ -8,6 +8,7 @@ interface FileGridProps {
     files: FileItem[];
     selectedFile: FileItem | null;
     selectedPaths?: Set<string>;
+    cutPaths?: Set<string>;
     onSelect: (file: FileItem) => void;
     onOpen: (file: FileItem) => void;
     onContextMenu: (e: React.MouseEvent, file: FileItem) => void;
@@ -25,6 +26,7 @@ export function FileGrid({
     files,
     selectedFile,
     selectedPaths,
+    cutPaths,
     onSelect,
     onOpen,
     onContextMenu,
@@ -44,6 +46,7 @@ export function FileGrid({
                     key={file.path}
                     file={file}
                     isSelected={selectedPaths ? selectedPaths.has(file.path) : selectedFile?.path === file.path}
+                    isCutItem={cutPaths ? cutPaths.has(file.path) : false}
                     onSelect={() => onSelect(file)}
                     onOpen={() => onOpen(file)}
                     onContextMenu={(e) => onContextMenu(e, file)}
@@ -64,6 +67,7 @@ export function FileGrid({
 interface FileGridItemProps {
     file: FileItem;
     isSelected: boolean;
+    isCutItem?: boolean;
     onSelect: () => void;
     onOpen: () => void;
     onContextMenu: (e: React.MouseEvent) => void;
@@ -79,6 +83,7 @@ interface FileGridItemProps {
 function FileGridItem({
     file,
     isSelected,
+    isCutItem,
     onSelect,
     onOpen,
     onContextMenu,
@@ -142,7 +147,7 @@ function FileGridItem({
             className={`group flex flex-col items-center p-2 rounded-xl cursor-pointer transition-all duration-200 border ${isSelected
                     ? "bg-sidebar-accent border-primary/30 shadow-lg shadow-primary/5"
                     : "hover:bg-sidebar-accent/50 border-transparent hover:border-border"
-                } ${isDropTarget ? "ring-1 ring-primary/60 bg-primary/10" : ""}`}
+                } ${isDropTarget ? "ring-1 ring-primary/60 bg-primary/10" : ""} ${isCutItem ? "opacity-50 grayscale" : ""}`}
         >
             <div className="w-full max-w-24 max-h-24 aspect-square mb-3 mx-auto flex items-center justify-center rounded-lg overflow-hidden bg-secondary/30 group-hover:bg-secondary/50 transition-colors relative">
                 {thumbUrl ? (

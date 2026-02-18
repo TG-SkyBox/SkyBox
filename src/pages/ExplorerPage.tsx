@@ -1128,6 +1128,78 @@ export default function ExplorerPage() {
         return;
       }
 
+      if (canNavigateByKeyboard && (e.ctrlKey || e.metaKey) && !e.altKey && e.key.toLowerCase() === "c") {
+        e.preventDefault();
+
+        const targetFile = selectedFile
+          ?? (selectedPaths.length > 0 ? filesRef.current.find((file) => file.path === selectedPaths[0]) || null : null);
+        if (!targetFile) {
+          return;
+        }
+
+        if (isRecycleBinPath(currentPath)) {
+          toast({
+            title: "Action unavailable",
+            description: "Cannot modify items inside Recycle Bin.",
+          });
+          return;
+        }
+
+        setClipboardItem({
+          path: targetFile.path,
+          name: targetFile.name,
+          isDirectory: targetFile.isDirectory,
+          mode: "copy",
+        });
+
+        toast({
+          title: "Ready to copy",
+          description: targetFile.name,
+        });
+        return;
+      }
+
+      if (canNavigateByKeyboard && (e.ctrlKey || e.metaKey) && !e.altKey && e.key.toLowerCase() === "x") {
+        e.preventDefault();
+
+        const targetFile = selectedFile
+          ?? (selectedPaths.length > 0 ? filesRef.current.find((file) => file.path === selectedPaths[0]) || null : null);
+        if (!targetFile) {
+          return;
+        }
+
+        if (isRecycleBinPath(currentPath)) {
+          toast({
+            title: "Action unavailable",
+            description: "Cannot modify items inside Recycle Bin.",
+          });
+          return;
+        }
+
+        setClipboardItem({
+          path: targetFile.path,
+          name: targetFile.name,
+          isDirectory: targetFile.isDirectory,
+          mode: "cut",
+        });
+
+        toast({
+          title: "Ready to move",
+          description: targetFile.name,
+        });
+        return;
+      }
+
+      if (canNavigateByKeyboard && (e.ctrlKey || e.metaKey) && !e.altKey && e.key.toLowerCase() === "v") {
+        if (!clipboardItem) {
+          return;
+        }
+
+        e.preventDefault();
+        void handlePaste();
+        return;
+      }
+
       // Escape to close details panel
       if (e.key === 'Escape' && showDetails) {
         closeDetailsPanel();
@@ -1143,7 +1215,7 @@ export default function ExplorerPage() {
     return () => {
       window.removeEventListener('keydown', handleKeyDown);
     };
-  }, [selectedFile, showDetails, backHistory, forwardHistory, currentPath, isLoading, markNavigationActivity, closeDetailsPanel, isMediaViewerOpen, search]);
+  }, [selectedFile, selectedPaths, clipboardItem, showDetails, backHistory, forwardHistory, currentPath, isLoading, markNavigationActivity, closeDetailsPanel, isMediaViewerOpen, search]);
 
   useEffect(() => {
     const suppressDefaultMouseNavigation = (event: MouseEvent) => {
@@ -1632,6 +1704,7 @@ export default function ExplorerPage() {
   const contextTargetFile = contextMenuState?.targetFile ?? null;
   const isMultiSelectionContextMenu = !!contextTargetFile && selectedPaths.length > 1 && selectedPathSet.has(contextTargetFile.path);
   const canPaste = !!clipboardItem;
+  const cutClipboardPath = clipboardItem?.mode === "cut" ? clipboardItem.path : null;
   const isRecycleBinView = isRecycleBinPath(currentPath);
   const currentMediaViewerFile = isMediaViewerOpen
     ? mediaViewerItems[mediaViewerIndex] ?? null
