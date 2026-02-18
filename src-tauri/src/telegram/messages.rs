@@ -2129,7 +2129,7 @@ pub async fn tg_send_saved_note_message_impl(
     let owner_id = me.raw.id().to_string();
     let chat_id = me.raw.id();
 
-    let input_peer = match &me.raw {
+    let input_peer: tl::enums::InputPeer = match &me.raw {
         tl::enums::User::User(user) => tl::types::InputPeerUser {
             user_id: user.id,
             access_hash: user.access_hash.unwrap_or(0),
@@ -2228,7 +2228,7 @@ pub async fn tg_edit_saved_note_message_impl(
         });
     }
 
-    let input_peer = match &me.raw {
+    let input_peer: tl::enums::InputPeer = match &me.raw {
         tl::enums::User::User(user) => tl::types::InputPeerUser {
             user_id: user.id,
             access_hash: user.access_hash.unwrap_or(0),
