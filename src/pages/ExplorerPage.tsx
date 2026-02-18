@@ -1143,25 +1143,7 @@ export default function ExplorerPage() {
           return;
         }
 
-        if (isRecycleBinPath(currentPath)) {
-          toast({
-            title: "Action unavailable",
-            description: "Cannot modify items inside Recycle Bin.",
-          });
-          return;
-        }
-
-        setClipboardItem({
-          path: targetFile.path,
-          name: targetFile.name,
-          isDirectory: targetFile.isDirectory,
-          mode: "copy",
-        });
-
-        toast({
-          title: "Ready to copy",
-          description: targetFile.name,
-        });
+        handleStageClipboardItem("copy", targetFile);
         return;
       }
 
@@ -1174,25 +1156,7 @@ export default function ExplorerPage() {
           return;
         }
 
-        if (isRecycleBinPath(currentPath)) {
-          toast({
-            title: "Action unavailable",
-            description: "Cannot modify items inside Recycle Bin.",
-          });
-          return;
-        }
-
-        setClipboardItem({
-          path: targetFile.path,
-          name: targetFile.name,
-          isDirectory: targetFile.isDirectory,
-          mode: "cut",
-        });
-
-        toast({
-          title: "Ready to move",
-          description: targetFile.name,
-        });
+        handleStageClipboardItem("cut", targetFile);
         return;
       }
 
@@ -1703,7 +1667,10 @@ export default function ExplorerPage() {
     }
     : null;
   const uploadSkeletonCount = isUploadInProgress ? 1 : 0;
-  const hasVisibleItems = sortedFiles.length > 0 || uploadSkeletonCount > 0;
+  const pasteSkeletonCount = activePaste && normalizePath(activePaste.destinationPath) === normalizePath(currentPath)
+    ? 1
+    : 0;
+  const hasVisibleItems = sortedFiles.length > 0 || uploadSkeletonCount > 0 || pasteSkeletonCount > 0;
   const contextMenuItemClassName = "w-full flex items-center gap-2 rounded-lg px-3 py-2 text-left text-body text-foreground transition-colors hover:bg-primary/15 outline-none focus-visible:outline-none";
   const contextMenuDisabledItemClassName = "w-full flex items-center gap-2 rounded-lg px-3 py-2 text-left text-body text-muted-foreground/60 pointer-events-none outline-none focus-visible:outline-none";
   const contextMenuDangerItemClassName = "w-full flex items-center gap-2 rounded-lg px-3 py-2 text-left text-body text-destructive transition-colors hover:bg-destructive/10 outline-none focus-visible:outline-none";
@@ -2498,11 +2465,6 @@ export default function ExplorerPage() {
       isDirectory: file.isDirectory,
       mode,
     });
-
-    toast({
-      title: mode === "cut" ? "Ready to move" : "Ready to copy",
-      description: file.name,
-    });
   };
 
   const resolvePasteDestinationPath = (): string => {
@@ -2512,6 +2474,62 @@ export default function ExplorerPage() {
     }
 
     return currentPath;
+  };
+
+  const removeItemFromCurrentView = (path: string) => {
+    const normalizedPath = normalizePath(path);
+    const currentItems = filesRef.current;
+    const nextItems = currentItems.filter((item) => normalizePath(item.path) !== normalizedPath);
+
+    if (nextItems.length === currentItems.length) {
+      return;
+    }
+
+    setFiles(nextItems);
+    setSelectedPaths((prev) => prev.filter((selectedPath) => normalizePath(selectedPath) !== normalizedPath));
+
+    if (selectedFile && normalizePath(selectedFile.path) === normalizedPath) {
+      setSelectedFile(null);
+      closeDetailsPanel();
+    }
+
+    if (currentPathRef.current.startsWith("tg://saved")) {
+      setSavedItemsOffset((prev) => Math.max(0, prev - 1));
+      const cacheEntry = savedPathCacheRef.current[currentPathRef.current];
+      if (cacheEntry) {
+        savedPathCacheRef.current[currentPathRef.current] = {
+          ...cacheEntry,
+          items: nextItems,
+          nextOffset: Math.max(0, cacheEntry.nextOffset - 1),
+        };
+      }
+    }
+  };
+
+  const appendItemToCurrentView = (destinationFolderPath: string, item: FileItem) => {
+    if (normalizePath(currentPathRef.current) !== normalizePath(destinationFolderPath)) {
+      return;
+    }
+
+    const currentItems = filesRef.current;
+    const nextItems = mergeFileItemsByIdentity(currentItems, [item]);
+    if (nextItems.length === currentItems.length) {
+      return;
+    }
+
+    setFiles(nextItems);
+
+    if (currentPathRef.current.startsWith("tg://saved")) {
+      setSavedItemsOffset((prev) => prev + 1);
+      const cacheEntry = savedPathCacheRef.current[currentPathRef.current];
+      if (cacheEntry) {
+        savedPathCacheRef.current[currentPathRef.current] = {
+          ...cacheEntry,
+          items: nextItems,
+          nextOffset: cacheEntry.nextOffset + 1,
+        };
+      }
+    }
   };
 
   const handlePaste = async () => {
@@ -2550,18 +2568,43 @@ export default function ExplorerPage() {
           return;
         }
 
+        setActivePaste({
+          fileName: sourceName,
+          destinationPath: destinationFolderPath,
+        });
+
         await invoke("tg_move_saved_item", {
           sourcePath,
           destinationPath: destinationFolderPath,
         });
 
+        const sourceIsVisible = filesRef.current.some((file) => normalizePath(file.path) === normalizePath(sourcePath));
+        const destinationIsCurrent = normalizePath(destinationFolderPath) === normalizePath(currentPathRef.current);
+
+        if (sourceIsVisible && !destinationIsCurrent) {
+          removeItemFromCurrentView(sourcePath);
+        }
+
+        if (destinationIsCurrent) {
+          const sourceItem = filesRef.current.find((file) => normalizePath(file.path) === normalizePath(sourcePath));
+          const optimisticPath = isSavedVirtualFilePath(sourcePath)
+            ? sourcePath
+            : `${destinationFolderPath}/${sourceName}`.replace("//", "/");
+
+          const optimisticItem: FileItem = sourceItem
+            ? { ...sourceItem, name: sourceName, path: optimisticPath }
+            : {
+              name: sourceName,
+              path: optimisticPath,
+              isDirectory: clipboardItem.isDirectory,
+              extension: clipboardItem.isDirectory ? undefined : extensionFromFileName(sourceName),
+              modifiedAt: new Date().toISOString(),
+            };
+
+          appendItemToCurrentView(destinationFolderPath, optimisticItem);
+        }
+
         setClipboardItem(null);
-        savedPathCacheRef.current = {};
-        await loadDirectory(currentPath, { force: true });
-        toast({
-          title: "Pasted",
-          description: `${sourceName} moved successfully`,
-        });
         return;
       }
 
@@ -2576,10 +2619,6 @@ export default function ExplorerPage() {
 
       const destinationPath = joinPath(destinationFolderPath, sourceName);
       if (normalizePath(sourcePath) === normalizePath(destinationPath)) {
-        toast({
-          title: "Paste skipped",
-          description: "Source and destination are the same.",
-        });
         return;
       }
 
@@ -2593,34 +2632,51 @@ export default function ExplorerPage() {
           return;
         }
 
+        setActivePaste({
+          fileName: sourceName,
+          destinationPath: destinationFolderPath,
+        });
+
         await invoke("copy_file", {
           source: sourcePath,
           destination: destinationPath,
         });
 
-        toast({
-          title: "Copied",
-          description: `${sourceName} copied successfully`,
+        appendItemToCurrentView(destinationFolderPath, {
+          name: sourceName,
+          path: destinationPath,
+          isDirectory: clipboardItem.isDirectory,
+          extension: clipboardItem.isDirectory ? undefined : extensionFromFileName(sourceName),
+          modifiedAt: new Date().toISOString(),
         });
       } else {
+        setActivePaste({
+          fileName: sourceName,
+          destinationPath: destinationFolderPath,
+        });
+
         await invoke("move_file", {
           source: sourcePath,
           destination: destinationPath,
         });
 
         setClipboardItem(null);
-        if (selectedFile?.path === sourcePath) {
-          setSelectedFile(null);
-          closeDetailsPanel();
+
+        const sourceIsVisible = filesRef.current.some((file) => normalizePath(file.path) === normalizePath(sourcePath));
+        const destinationIsCurrent = normalizePath(destinationFolderPath) === normalizePath(currentPathRef.current);
+
+        if (sourceIsVisible && !destinationIsCurrent) {
+          removeItemFromCurrentView(sourcePath);
         }
 
-        toast({
-          title: "Moved",
-          description: `${sourceName} moved successfully`,
+        appendItemToCurrentView(destinationFolderPath, {
+          name: sourceName,
+          path: destinationPath,
+          isDirectory: clipboardItem.isDirectory,
+          extension: clipboardItem.isDirectory ? undefined : extensionFromFileName(sourceName),
+          modifiedAt: new Date().toISOString(),
         });
       }
-
-      await loadDirectory(currentPath, { force: true });
     } catch (error) {
       const typedError = error as FsError | TelegramError;
       toast({
@@ -2628,6 +2684,8 @@ export default function ExplorerPage() {
         description: typedError.message || "An unknown error occurred",
         variant: "destructive",
       });
+    } finally {
+      setActivePaste(null);
     }
   };
 
