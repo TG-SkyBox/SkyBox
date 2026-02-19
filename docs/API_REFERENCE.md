@@ -150,6 +150,14 @@ Uploads a dropped file to Telegram Saved Messages and stores its indexed metadat
 
 **Returns:** `Result<TelegramMessage, TelegramError>`
 
+### `tg_cancel_saved_file_upload(file_name: String)`
+Requests cancellation for an in-progress Saved Messages upload.
+
+**Parameters:**
+- `file_name`: Upload file name currently being streamed to Telegram
+
+**Returns:** `Result<bool, TelegramError>`
+
 ### `tg_download_saved_file(source_path: String)`
 Opens a native Save dialog, downloads the Saved Messages file to `AppData\\Local\\Skybox\\Downloads`, then moves it to the user-selected destination path.
 
