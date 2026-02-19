@@ -246,6 +246,7 @@ const SAVED_PROTECTED_FOLDER_PATHS = new Set([
 ]);
 const DETAILS_PANEL_ANIMATION_MS = 220;
 const UPLOAD_PROGRESS_ANIMATION_MS = 240;
+const TRANSFER_SPEED_UPDATE_INTERVAL_MS = 500;
 const UPLOAD_CANCELLED_MARKER = "__SKYBOX_UPLOAD_CANCELLED__";
 
 const IMAGE_EXTENSIONS = new Set(["jpg", "jpeg", "png", "gif", "webp", "bmp", "svg"]);
@@ -293,6 +294,24 @@ const getUploadQueueStatusLabel = (status: UploadQueueStatus): string => {
 const isUploadQueueItemInProgress = (status: UploadQueueStatus): boolean => (
   status === "uploading" || status === "sending"
 );
+
+const formatTransferSpeed = (bytesPerSecond: number): string => {
+  if (!Number.isFinite(bytesPerSecond) || bytesPerSecond <= 0) {
+    return "0 B/s";
+  }
+
+  const units = ["B/s", "KB/s", "MB/s", "GB/s"];
+  let value = bytesPerSecond;
+  let unitIndex = 0;
+
+  while (value >= 1024 && unitIndex < units.length - 1) {
+    value /= 1024;
+    unitIndex += 1;
+  }
+
+  const decimals = value >= 100 || unitIndex === 0 ? 0 : value >= 10 ? 1 : 2;
+  return `${value.toFixed(decimals)} ${units[unitIndex]}`;
+};
 
 const isVirtualPath = (path: string): boolean => path.startsWith("tg://");
 const isSavedVirtualFolderPath = (path: string): boolean => path === "tg://saved" || path.startsWith("tg://saved/");
