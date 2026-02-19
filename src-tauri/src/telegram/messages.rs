@@ -96,6 +96,7 @@ struct DownloadProgressPayload {
     stage: String,
     progress: f64,
     downloaded_bytes: u64,
+    bytes_per_second: Option<f64>,
     total_bytes: Option<u64>,
     destination_path: Option<String>,
     message: Option<String>,
@@ -175,6 +176,7 @@ struct UploadProgressPayload {
     stage: String,
     progress: f64,
     uploaded_bytes: u64,
+    bytes_per_second: Option<f64>,
     total_bytes: Option<u64>,
     message: Option<String>,
 }
@@ -201,6 +203,27 @@ fn download_progress_percent(downloaded_bytes: u64, total_bytes: Option<u64>) ->
     }
 }
 
+fn sample_transfer_speed_bytes_per_second(
+    latest_bytes: u64,
+    last_sample_bytes: u64,
+    last_sample_at: Instant,
+) -> (Option<f64>, u64, Instant) {
+    let now = Instant::now();
+    let elapsed = now.saturating_duration_since(last_sample_at);
+    let delta_bytes = latest_bytes.saturating_sub(last_sample_bytes);
+
+    if delta_bytes == 0 || elapsed.is_zero() {
+        return (None, latest_bytes, now);
+    }
+
+    let bytes_per_second = delta_bytes as f64 / elapsed.as_secs_f64();
+    if bytes_per_second.is_finite() && bytes_per_second > 0.0 {
+        (Some(bytes_per_second), latest_bytes, now)
+    } else {
+        (None, latest_bytes, now)
+    }
+}
+
 struct UploadProgressReader<R> {
     inner: R,
     app: AppHandle,
@@ -208,6 +231,8 @@ struct UploadProgressReader<R> {
     total_bytes: u64,
     uploaded_bytes: u64,
     last_emit_at: Instant,
+    last_speed_sample_bytes: u64,
+    last_speed_sample_at: Instant,
 }
 
 impl<R: AsyncRead + Unpin> UploadProgressReader<R> {
@@ -219,10 +244,12 @@ impl<R: AsyncRead + Unpin> UploadProgressReader<R> {
             total_bytes,
             uploaded_bytes: 0,
             last_emit_at: Instant::now(),
+            last_speed_sample_bytes: 0,
+            last_speed_sample_at: Instant::now(),
         }
     }
 
-    fn emit_progress(&self, stage: &str, message: Option<String>) {
+    fn emit_progress(&self, stage: &str, message: Option<String>, bytes_per_second: Option<f64>) {
         emit_upload_progress(
             &self.app,
             UploadProgressPayload {
@@ -230,6 +257,7 @@ impl<R: AsyncRead + Unpin> UploadProgressReader<R> {
                 stage: stage.to_string(),
                 progress: download_progress_percent(self.uploaded_bytes, Some(self.total_bytes)),
                 uploaded_bytes: self.uploaded_bytes,
+                bytes_per_second,
                 total_bytes: Some(self.total_bytes),
                 message,
             },
@@ -263,7 +291,15 @@ impl<R: AsyncRead + Unpin> AsyncRead for UploadProgressReader<R> {
                 if self.last_emit_at.elapsed() >= Duration::from_millis(120)
                     || self.uploaded_bytes >= self.total_bytes
                 {
-                    self.emit_progress("uploading", None);
+                    let (bytes_per_second, sampled_bytes, sampled_at) =
+                        sample_transfer_speed_bytes_per_second(
+                        self.uploaded_bytes,
+                        self.last_speed_sample_bytes,
+                        self.last_speed_sample_at,
+                    );
+                    self.last_speed_sample_bytes = sampled_bytes;
+                    self.last_speed_sample_at = sampled_at;
+                    self.emit_progress("uploading", None, bytes_per_second);
                     self.last_emit_at = Instant::now();
                 }
             }
@@ -2673,6 +2709,8 @@ async fn download_saved_media_with_progress(
     let mut download = client.iter_download(&media);
     let mut downloaded_bytes = 0_u64;
     let mut last_emit_at = Instant::now();
+    let mut last_speed_sample_bytes = 0_u64;
+    let mut last_speed_sample_at = Instant::now();
 
     emit_download_progress(
         app,
@@ -2682,6 +2720,7 @@ async fn download_saved_media_with_progress(
             stage: "downloading".to_string(),
             progress: 0.0,
             downloaded_bytes,
+            bytes_per_second: None,
             total_bytes,
             destination_path: None,
             message: None,
@@ -2698,6 +2737,7 @@ async fn download_saved_media_with_progress(
                     stage: "cancelled".to_string(),
                     progress: download_progress_percent(downloaded_bytes, total_bytes),
                     downloaded_bytes,
+                    bytes_per_second: None,
                     total_bytes,
                     destination_path: None,
                     message: Some("Download cancelled".to_string()),
@@ -2727,6 +2767,15 @@ async fn download_saved_media_with_progress(
         downloaded_bytes += chunk.len() as u64;
 
         if last_emit_at.elapsed() >= Duration::from_millis(120) {
+            let (bytes_per_second, sampled_bytes, sampled_at) =
+                sample_transfer_speed_bytes_per_second(
+                downloaded_bytes,
+                last_speed_sample_bytes,
+                last_speed_sample_at,
+            );
+            last_speed_sample_bytes = sampled_bytes;
+            last_speed_sample_at = sampled_at;
+
             emit_download_progress(
                 app,
                 DownloadProgressPayload {
@@ -2735,6 +2784,7 @@ async fn download_saved_media_with_progress(
                     stage: "downloading".to_string(),
                     progress: download_progress_percent(downloaded_bytes, total_bytes),
                     downloaded_bytes,
+                    bytes_per_second,
                     total_bytes,
                     destination_path: None,
                     message: None,
@@ -2749,6 +2799,12 @@ async fn download_saved_media_with_progress(
         message: format!("Failed to flush staged download file: {}", e),
     })?;
 
+    let (final_bytes_per_second, _, _) = sample_transfer_speed_bytes_per_second(
+        downloaded_bytes,
+        last_speed_sample_bytes,
+        last_speed_sample_at,
+    );
+
     emit_download_progress(
         app,
         DownloadProgressPayload {
@@ -2757,6 +2813,7 @@ async fn download_saved_media_with_progress(
             stage: "downloading".to_string(),
             progress: download_progress_percent(downloaded_bytes, total_bytes),
             downloaded_bytes,
+            bytes_per_second: final_bytes_per_second,
             total_bytes,
             destination_path: None,
             message: None,
@@ -3043,6 +3100,7 @@ pub async fn tg_download_saved_file_impl(
             stage: "selecting".to_string(),
             progress: 0.0,
             downloaded_bytes: 0,
+            bytes_per_second: None,
             total_bytes: total_bytes_hint,
             destination_path: None,
             message: Some("Choose where to save the file".to_string()),
@@ -3068,6 +3126,7 @@ pub async fn tg_download_saved_file_impl(
                 stage: "cancelled".to_string(),
                 progress: 0.0,
                 downloaded_bytes: 0,
+                bytes_per_second: None,
                 total_bytes: total_bytes_hint,
                 destination_path: None,
                 message: Some("Download cancelled".to_string()),
@@ -3129,6 +3188,7 @@ pub async fn tg_download_saved_file_impl(
                     stage: "failed".to_string(),
                     progress: 0.0,
                     downloaded_bytes: 0,
+                    bytes_per_second: None,
                     total_bytes: total_bytes_hint,
                     destination_path: None,
                     message: Some(error.message.clone()),
@@ -3158,6 +3218,7 @@ pub async fn tg_download_saved_file_impl(
                 stage: "failed".to_string(),
                 progress: 0.0,
                 downloaded_bytes: 0,
+                bytes_per_second: None,
                 total_bytes,
                 destination_path: None,
                 message: Some(error.message.clone()),
@@ -3178,6 +3239,7 @@ pub async fn tg_download_saved_file_impl(
             stage: "moving".to_string(),
             progress: moving_progress,
             downloaded_bytes,
+            bytes_per_second: None,
             total_bytes,
             destination_path: Some(destination_file_path.to_string_lossy().replace('\\', "/")),
             message: Some("Moving file to your selected location".to_string()),
@@ -3195,6 +3257,7 @@ pub async fn tg_download_saved_file_impl(
                 stage: "failed".to_string(),
                 progress: moving_progress,
                 downloaded_bytes,
+                bytes_per_second: None,
                 total_bytes,
                 destination_path: Some(destination_file_path.to_string_lossy().replace('\\', "/")),
                 message: Some(error.message.clone()),
@@ -3216,6 +3279,7 @@ pub async fn tg_download_saved_file_impl(
             stage: "completed".to_string(),
             progress: 100.0,
             downloaded_bytes,
+            bytes_per_second: None,
             total_bytes,
             destination_path: Some(destination_path_string.clone()),
             message: Some("Download complete".to_string()),
@@ -3292,6 +3356,7 @@ pub async fn tg_upload_file_to_saved_messages_impl(
             stage: "uploading".to_string(),
             progress: 0.0,
             uploaded_bytes: 0,
+            bytes_per_second: None,
             total_bytes: Some(total_upload_bytes),
             message: Some("Uploading file".to_string()),
         },
@@ -3320,6 +3385,7 @@ pub async fn tg_upload_file_to_saved_messages_impl(
                             stage: "uploading".to_string(),
                             progress: 0.0,
                             uploaded_bytes: 0,
+                            bytes_per_second: None,
                             total_bytes: Some(total_upload_bytes),
                             message: None,
                         },
@@ -3377,6 +3443,7 @@ pub async fn tg_upload_file_to_saved_messages_impl(
                 stage: "sending".to_string(),
                 progress: 100.0,
                 uploaded_bytes: total_upload_bytes,
+                bytes_per_second: None,
                 total_bytes: Some(total_upload_bytes),
                 message: Some("Sending message".to_string()),
             },
@@ -3434,6 +3501,7 @@ pub async fn tg_upload_file_to_saved_messages_impl(
                     stage: "completed".to_string(),
                     progress: 100.0,
                     uploaded_bytes: total_upload_bytes,
+                    bytes_per_second: None,
                     total_bytes: Some(total_upload_bytes),
                     message: Some("Upload complete".to_string()),
                 },
@@ -3453,6 +3521,7 @@ pub async fn tg_upload_file_to_saved_messages_impl(
                     stage: "failed".to_string(),
                     progress: 0.0,
                     uploaded_bytes: 0,
+                    bytes_per_second: None,
                     total_bytes: Some(total_upload_bytes),
                     message: Some(error.message.clone()),
                 },
