@@ -246,6 +246,7 @@ const SAVED_PROTECTED_FOLDER_PATHS = new Set([
 ]);
 const DETAILS_PANEL_ANIMATION_MS = 220;
 const UPLOAD_PROGRESS_ANIMATION_MS = 240;
+const UPLOAD_CANCELLED_MARKER = "__SKYBOX_UPLOAD_CANCELLED__";
 
 const IMAGE_EXTENSIONS = new Set(["jpg", "jpeg", "png", "gif", "webp", "bmp", "svg"]);
 const VIDEO_EXTENSIONS = new Set(["mp4", "mkv", "mov", "avi", "webm", "wmv", "m4v"]);
@@ -3343,18 +3344,35 @@ export default function ExplorerPage() {
               : item
           )));
         } catch (error) {
-          failedCount += 1;
-          console.error("Failed to upload file:", droppedFile.name, error);
-          setUploadQueueItems((prev) => prev.map((item, itemIndex) => (
-            itemIndex === index
-              ? {
-                ...item,
-                status: "failed",
-                progress: 0,
-                message: (error as TelegramError)?.message || "Upload failed",
-              }
-              : item
-          )));
+          const typedError = error as TelegramError;
+          const isCancelledUpload = typedError?.message === UPLOAD_CANCELLED_MARKER || uploadCancelRequestedRef.current;
+
+          if (isCancelledUpload) {
+            cancelledCount += 1;
+            setUploadQueueItems((prev) => prev.map((item, itemIndex) => (
+              itemIndex === index
+                ? {
+                  ...item,
+                  status: "cancelled",
+                  progress: 0,
+                  message: "Cancelled",
+                }
+                : item
+            )));
+          } else {
+            failedCount += 1;
+            console.error("Failed to upload file:", droppedFile.name, error);
+            setUploadQueueItems((prev) => prev.map((item, itemIndex) => (
+              itemIndex === index
+                ? {
+                  ...item,
+                  status: "failed",
+                  progress: 0,
+                  message: typedError?.message || "Upload failed",
+                }
+                : item
+            )));
+          }
         }
 
         setUploadProgress({
@@ -3432,7 +3450,7 @@ export default function ExplorerPage() {
     setIsTransferMenuOpen((prev) => !prev);
   };
 
-  const handleCancelUploadQueue = () => {
+  const handleCancelUploadQueue = async () => {
     if (!isUploadingFiles) {
       return;
     }
@@ -3440,6 +3458,9 @@ export default function ExplorerPage() {
     uploadCancelRequestedRef.current = true;
 
     const currentIndex = currentUploadQueueIndexRef.current;
+    const activeUploadItem = currentIndex !== null
+      ? uploadQueueItems[currentIndex]
+      : null;
     setUploadQueueItems((prev) => prev.map((item, index) => {
       if (item.status !== "queued") {
         return item;
@@ -3455,6 +3476,21 @@ export default function ExplorerPage() {
         message: "Cancelled",
       };
     }));
+
+    if (activeUploadItem && isUploadQueueItemInProgress(activeUploadItem.status)) {
+      try {
+        await invoke("tg_cancel_saved_file_upload", {
+          fileName: activeUploadItem.fileName,
+        });
+      } catch (error) {
+        const typedError = error as TelegramError;
+        toast({
+          title: "Cancel failed",
+          description: typedError.message || "Unable to cancel active upload",
+          variant: "destructive",
+        });
+      }
+    }
   };
 
   const handleCancelActiveDownload = async () => {
