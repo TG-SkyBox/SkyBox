@@ -2948,10 +2948,6 @@ async fn download_saved_media_with_progress(
         }
     }
 
-    staged_file.flush().await.map_err(|e| TelegramError {
-        message: format!("Failed to flush staged download file: {}", e),
-    })?;
-
     let download_finished_at = Instant::now();
     let mut final_bytes_per_second = if let Some(sampled_at) = last_speed_sample_at {
         let elapsed = download_finished_at.saturating_duration_since(sampled_at);
@@ -2989,6 +2985,10 @@ async fn download_saved_media_with_progress(
             message: None,
         },
     );
+
+    staged_file.flush().await.map_err(|e| TelegramError {
+        message: format!("Failed to flush staged download file: {}", e),
+    })?;
 
     Ok((downloaded_bytes, total_bytes))
 }
