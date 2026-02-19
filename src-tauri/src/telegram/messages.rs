@@ -24,6 +24,8 @@ const RECYCLE_BIN_SAVED_PATH: &str = "/Home/Recycle Bin";
 const TELEGRAM_DELETE_BATCH_SIZE: usize = 100;
 const PHOTO_SIZE_REPAIR_LIMIT: i64 = 200;
 const THUMBNAIL_PREFETCH_DELAY_MS: u64 = 90;
+const DOWNLOAD_SPEED_SAMPLE_INTERVAL_MS: u64 = 300;
+const DOWNLOAD_SPEED_FAST_TRANSFER_THRESHOLD_MS: u64 = 300;
 
 static THUMBNAIL_FLOOD_WAIT_UNTIL: LazyLock<StdMutex<Option<Instant>>> =
     LazyLock::new(|| StdMutex::new(None));
@@ -221,6 +223,19 @@ fn sample_transfer_speed_bytes_per_second(
         (Some(bytes_per_second), latest_bytes, now)
     } else {
         (None, latest_bytes, now)
+    }
+}
+
+fn calculate_bytes_per_second(delta_bytes: u64, elapsed: Duration) -> Option<f64> {
+    if delta_bytes == 0 || elapsed.is_zero() {
+        return None;
+    }
+
+    let bytes_per_second = delta_bytes as f64 / elapsed.as_secs_f64();
+    if bytes_per_second.is_finite() && bytes_per_second > 0.0 {
+        Some(bytes_per_second)
+    } else {
+        None
     }
 }
 
@@ -2830,9 +2845,11 @@ async fn download_saved_media_with_progress(
 
     let mut download = client.iter_download(&media);
     let mut downloaded_bytes = 0_u64;
-    let mut last_emit_at = Instant::now();
+    let download_started_at = Instant::now();
+    let mut last_emit_at = download_started_at;
     let mut last_speed_sample_bytes = 0_u64;
-    let mut last_speed_sample_at = Instant::now();
+    let mut last_speed_sample_at: Option<Instant> = None;
+    let mut emitted_non_zero_speed = false;
 
     emit_download_progress(
         app,
@@ -2888,15 +2905,27 @@ async fn download_saved_media_with_progress(
 
         downloaded_bytes += chunk.len() as u64;
 
-        if last_emit_at.elapsed() >= Duration::from_millis(120) {
-            let (bytes_per_second, sampled_bytes, sampled_at) =
-                sample_transfer_speed_bytes_per_second(
-                    downloaded_bytes,
-                    last_speed_sample_bytes,
-                    last_speed_sample_at,
-                );
-            last_speed_sample_bytes = sampled_bytes;
-            last_speed_sample_at = sampled_at;
+        let now = Instant::now();
+
+        if last_speed_sample_at.is_none() {
+            last_speed_sample_at = Some(now);
+            last_speed_sample_bytes = downloaded_bytes;
+            last_emit_at = now;
+        }
+
+        if now.saturating_duration_since(last_emit_at)
+            >= Duration::from_millis(DOWNLOAD_SPEED_SAMPLE_INTERVAL_MS)
+        {
+            let mut bytes_per_second = None;
+
+            if let Some(sampled_at) = last_speed_sample_at {
+                let elapsed = now.saturating_duration_since(sampled_at);
+                let delta_bytes = downloaded_bytes.saturating_sub(last_speed_sample_bytes);
+                bytes_per_second = calculate_bytes_per_second(delta_bytes, elapsed);
+                if bytes_per_second.is_some() {
+                    emitted_non_zero_speed = true;
+                }
+            }
 
             emit_download_progress(
                 app,
@@ -2913,7 +2942,9 @@ async fn download_saved_media_with_progress(
                 },
             );
 
-            last_emit_at = Instant::now();
+            last_speed_sample_bytes = downloaded_bytes;
+            last_speed_sample_at = Some(now);
+            last_emit_at = now;
         }
     }
 
@@ -2921,11 +2952,30 @@ async fn download_saved_media_with_progress(
         message: format!("Failed to flush staged download file: {}", e),
     })?;
 
-    let (final_bytes_per_second, _, _) = sample_transfer_speed_bytes_per_second(
-        downloaded_bytes,
-        last_speed_sample_bytes,
-        last_speed_sample_at,
-    );
+    let download_finished_at = Instant::now();
+    let mut final_bytes_per_second = if let Some(sampled_at) = last_speed_sample_at {
+        let elapsed = download_finished_at.saturating_duration_since(sampled_at);
+        let delta_bytes = downloaded_bytes.saturating_sub(last_speed_sample_bytes);
+        calculate_bytes_per_second(delta_bytes, elapsed)
+    } else {
+        None
+    };
+
+    if final_bytes_per_second.is_some() {
+        emitted_non_zero_speed = true;
+    }
+
+    let total_elapsed = download_finished_at.saturating_duration_since(download_started_at);
+    if final_bytes_per_second.is_none()
+        && !emitted_non_zero_speed
+        && downloaded_bytes > 0
+        && !total_elapsed.is_zero()
+        && total_elapsed
+            <= Duration::from_millis(DOWNLOAD_SPEED_FAST_TRANSFER_THRESHOLD_MS)
+    {
+        final_bytes_per_second =
+            calculate_bytes_per_second(downloaded_bytes, total_elapsed);
+    }
 
     emit_download_progress(
         app,

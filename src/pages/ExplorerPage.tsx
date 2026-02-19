@@ -613,11 +613,6 @@ export default function ExplorerPage() {
     latestBytes: 0,
     latestAt: 0,
   });
-  const downloadSpeedSampleRef = useRef({
-    sourcePath: null as string | null,
-    latestBytes: 0,
-    latestAt: 0,
-  });
   const mediaViewerOpenedPathRef = useRef<string | null>(null);
   const navigationStateRef = useRef({
     backHistory: [] as string[],
@@ -655,11 +650,6 @@ export default function ExplorerPage() {
   }, []);
 
   const resetDownloadSpeedTracking = useCallback(() => {
-    downloadSpeedSampleRef.current = {
-      sourcePath: null,
-      latestBytes: 0,
-      latestAt: 0,
-    };
     setDownloadSpeedBytesPerSecond(0);
   }, []);
 
@@ -707,37 +697,18 @@ export default function ExplorerPage() {
   }, []);
 
   const trackDownloadSpeedSample = useCallback((payload: DownloadProgressPayload) => {
-    const now = Date.now();
-    const sample = downloadSpeedSampleRef.current;
-
-    if (
-      sample.sourcePath !== payload.sourcePath
-      || payload.downloadedBytes < sample.latestBytes
-      || sample.latestAt <= 0
-    ) {
-      sample.sourcePath = payload.sourcePath;
-      sample.latestBytes = payload.downloadedBytes;
-      sample.latestAt = now;
+    if (payload.stage === "completed" || payload.stage === "failed" || payload.stage === "cancelled") {
       setDownloadSpeedBytesPerSecond(0);
       return;
     }
-
-    const deltaBytes = payload.downloadedBytes - sample.latestBytes;
-    const deltaMs = now - sample.latestAt;
-
-    sample.latestBytes = payload.downloadedBytes;
-    sample.latestAt = now;
 
     if (payload.stage !== "downloading") {
-      setDownloadSpeedBytesPerSecond(0);
       return;
     }
 
-    if (deltaBytes > 0 && deltaMs > 0) {
-      const instantSpeed = (deltaBytes * 1000) / deltaMs;
-      setDownloadSpeedBytesPerSecond((prev) => (
-        prev > 0 ? (prev * 0.25) + (instantSpeed * 0.75) : instantSpeed
-      ));
+    const payloadSpeed = Number(payload.bytesPerSecond);
+    if (Number.isFinite(payloadSpeed) && payloadSpeed > 0) {
+      setDownloadSpeedBytesPerSecond(payloadSpeed);
     }
   }, []);
 
@@ -765,31 +736,6 @@ export default function ExplorerPage() {
       window.clearInterval(interval);
     };
   }, [isUploadingFiles]);
-
-  useEffect(() => {
-    if (!activeDownload || activeDownload.stage !== "downloading") {
-      setDownloadSpeedBytesPerSecond(0);
-      return;
-    }
-
-    const interval = window.setInterval(() => {
-      const sample = downloadSpeedSampleRef.current;
-      const now = Date.now();
-
-      if (sample.latestAt <= 0) {
-        setDownloadSpeedBytesPerSecond(0);
-        return;
-      }
-
-      if (now - sample.latestAt >= TRANSFER_SPEED_STALE_MS) {
-        setDownloadSpeedBytesPerSecond(0);
-      }
-    }, TRANSFER_SPEED_UPDATE_INTERVAL_MS);
-
-    return () => {
-      window.clearInterval(interval);
-    };
-  }, [activeDownload?.sourcePath, activeDownload?.stage]);
 
   const openDetailsPanel = useCallback(() => {
     clearDetailsPanelCloseTimer();
