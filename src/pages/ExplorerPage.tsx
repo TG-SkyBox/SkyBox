@@ -148,6 +148,7 @@ interface DownloadProgressPayload {
   stage: DownloadStage;
   progress: number;
   downloadedBytes: number;
+  bytesPerSecond?: number | null;
   totalBytes?: number | null;
   destinationPath?: string | null;
   message?: string | null;
@@ -158,6 +159,7 @@ interface UploadProgressPayload {
   stage: UploadStage;
   progress: number;
   uploadedBytes: number;
+  bytesPerSecond?: number | null;
   totalBytes?: number | null;
   message?: string | null;
 }
@@ -688,10 +690,18 @@ export default function ExplorerPage() {
       return;
     }
 
+    const payloadSpeed = Number(payload.bytesPerSecond);
+    if (Number.isFinite(payloadSpeed) && payloadSpeed > 0) {
+      setUploadSpeedBytesPerSecond((prev) => (
+        prev > 0 ? (prev * 0.25) + (payloadSpeed * 0.75) : payloadSpeed
+      ));
+      return;
+    }
+
     if (deltaBytes > 0 && deltaMs > 0) {
       const instantSpeed = (deltaBytes * 1000) / deltaMs;
       setUploadSpeedBytesPerSecond((prev) => (
-        prev > 0 ? (prev * 0.35) + (instantSpeed * 0.65) : instantSpeed
+        prev > 0 ? (prev * 0.25) + (instantSpeed * 0.75) : instantSpeed
       ));
     }
   }, []);
@@ -723,10 +733,18 @@ export default function ExplorerPage() {
       return;
     }
 
+    const payloadSpeed = Number(payload.bytesPerSecond);
+    if (Number.isFinite(payloadSpeed) && payloadSpeed > 0) {
+      setDownloadSpeedBytesPerSecond((prev) => (
+        prev > 0 ? (prev * 0.25) + (payloadSpeed * 0.75) : payloadSpeed
+      ));
+      return;
+    }
+
     if (deltaBytes > 0 && deltaMs > 0) {
       const instantSpeed = (deltaBytes * 1000) / deltaMs;
       setDownloadSpeedBytesPerSecond((prev) => (
-        prev > 0 ? (prev * 0.35) + (instantSpeed * 0.65) : instantSpeed
+        prev > 0 ? (prev * 0.25) + (instantSpeed * 0.75) : instantSpeed
       ));
     }
   }, []);
@@ -987,14 +1005,30 @@ export default function ExplorerPage() {
       return;
     }
 
+    const handleWindowClick = (event: MouseEvent) => {
+      const target = event.target as Node | null;
+
+      if (transferMenuRef.current && target && transferMenuRef.current.contains(target)) {
+        return;
+      }
+
+      if (transferMenuTriggerRef.current && target && transferMenuTriggerRef.current.contains(target)) {
+        return;
+      }
+
+      setIsTransferMenuOpen(false);
+    };
+
     const handleEscape = (event: KeyboardEvent) => {
       if (event.key === "Escape") {
         setIsTransferMenuOpen(false);
       }
     };
 
+    window.addEventListener("click", handleWindowClick);
     window.addEventListener("keydown", handleEscape);
     return () => {
+      window.removeEventListener("click", handleWindowClick);
       window.removeEventListener("keydown", handleEscape);
     };
   }, [isTransferMenuOpen]);
@@ -3638,6 +3672,7 @@ export default function ExplorerPage() {
     const activeUploadItem = currentIndex !== null
       ? uploadQueueItems[currentIndex]
       : null;
+    const activeUploadFileName = activeUploadItem?.fileName || uploadProgress?.activeFileName || null;
     setUploadQueueItems((prev) => prev.map((item, index) => {
       if (currentIndex !== null && index === currentIndex && isUploadQueueItemInProgress(item.status)) {
         return {
@@ -3661,11 +3696,10 @@ export default function ExplorerPage() {
       };
     }));
 
-    if (activeUploadItem && isUploadQueueItemInProgress(activeUploadItem.status)) {
+    if (activeUploadFileName) {
       try {
         await invoke("tg_cancel_saved_file_upload", {
-          fileName: activeUploadItem.fileName,
-          file_name: activeUploadItem.fileName,
+          fileName: activeUploadFileName,
         });
       } catch (error) {
         const typedError = error as TelegramError;
@@ -3697,7 +3731,6 @@ export default function ExplorerPage() {
     try {
       await invoke("tg_cancel_saved_file_download", {
         sourcePath: activeDownload.sourcePath,
-        source_path: activeDownload.sourcePath,
       });
     } catch (error) {
       const typedError = error as TelegramError;
@@ -4058,104 +4091,113 @@ export default function ExplorerPage() {
             </span>
 
             {isTransferMenuOpen && hasTransferEntries && (
-              <>
-                <div
-                  className="fixed inset-0 z-[94]"
-                  onMouseDown={() => {
-                    setIsTransferMenuOpen(false);
-                  }}
-                />
-                <div
-                  ref={transferMenuRef}
-                  className="absolute right-0 top-[calc(100%+8px)] z-[95] w-[360px] rounded-xl bg-glass shadow-2xl shadow-black/50 backdrop-saturate-150 p-1"
-                  onMouseDown={(event) => event.stopPropagation()}
-                  onClick={(event) => event.stopPropagation()}
-                >
-                  {activeDownload && (
-                    <div className="rounded-lg px-3 py-2">
-                      <div className="flex items-start justify-between gap-2">
-                        <div className="min-w-0">
-                          <p className="text-body font-medium text-foreground truncate" title={activeDownload.fileName}>
-                            {activeDownload.fileName}
+              <div
+                ref={transferMenuRef}
+                className="absolute right-0 top-[calc(100%+8px)] z-[95] w-[360px] rounded-xl bg-glass shadow-2xl shadow-black/50 backdrop-saturate-150 p-1"
+                onMouseDown={(event) => event.stopPropagation()}
+                onClick={(event) => event.stopPropagation()}
+              >
+                {activeDownload && (
+                  <div className="rounded-lg px-3 py-2">
+                    <div className="flex items-start justify-between gap-2">
+                      <div className="min-w-0">
+                        <p className="text-body font-medium text-foreground truncate" title={activeDownload.fileName}>
+                          {activeDownload.fileName}
+                        </p>
+                        <p className="text-small text-muted-foreground">
+                          {downloadToolbarLabel}
+                        </p>
+                        {downloadDetailMessage && downloadDetailMessage !== downloadProgressLabel && (
+                          <p className="text-small text-muted-foreground/80">
+                            {downloadDetailMessage}
                           </p>
-                          <p className="text-small text-muted-foreground">
-                            {downloadToolbarLabel}
-                          </p>
-                          {downloadDetailMessage && downloadDetailMessage !== downloadProgressLabel && (
-                            <p className="text-small text-muted-foreground/80">
-                              {downloadDetailMessage}
-                            </p>
+                        )}
+                      </div>
+                      {canCancelDownload && (
+                        <button
+                          type="button"
+                          onMouseDown={(event) => {
+                            event.preventDefault();
+                            event.stopPropagation();
+                            void handleCancelActiveDownload();
+                          }}
+                          onClick={(event) => {
+                            event.preventDefault();
+                            event.stopPropagation();
+                          }}
+                          className="cursor-pointer rounded-md px-2 py-1 text-small text-muted-foreground transition-colors hover:bg-primary/15 hover:text-foreground"
+                        >
+                          Cancel
+                        </button>
+                      )}
+                    </div>
+                    <Progress
+                      value={downloadProgressPercent}
+                      className="mt-2 h-1.5 bg-secondary/60"
+                    />
+                  </div>
+                )}
+
+                {activeDownload && uploadQueueItems.length > 0 && <div className="my-1 h-px bg-border/70" />}
+
+                {uploadQueueItems.length > 0 && (
+                  <div className="rounded-lg px-3 py-2">
+                    <div className="mb-2 flex items-center justify-between gap-2">
+                      <div>
+                        <p className="text-body font-medium text-foreground">Uploads</p>
+                        <p className="text-small text-muted-foreground tabular-nums">{uploadToolbarLabel}</p>
+                      </div>
+                      {canCancelUploads && (
+                        <button
+                          type="button"
+                          onMouseDown={(event) => {
+                            event.preventDefault();
+                            event.stopPropagation();
+                            void handleCancelUploadQueue();
+                          }}
+                          onClick={(event) => {
+                            event.preventDefault();
+                            event.stopPropagation();
+                          }}
+                          className="cursor-pointer rounded-md px-2 py-1 text-small text-muted-foreground transition-colors hover:bg-primary/15 hover:text-foreground"
+                        >
+                          Cancel remaining
+                        </button>
+                      )}
+                    </div>
+
+                    <div className="max-h-52 space-y-1.5 overflow-y-auto pr-1">
+                      {uploadQueueItems.map((item) => (
+                        <div key={item.id} className="rounded-lg bg-secondary/15 px-3 py-2">
+                          <div className="flex items-start justify-between gap-2">
+                            <div className="min-w-0">
+                              <p className="text-body font-medium text-foreground truncate" title={item.fileName}>
+                                {item.fileName}
+                              </p>
+                              <p className="text-small text-muted-foreground">
+                                {getUploadQueueStatusLabel(item.status)}
+                              </p>
+                              {item.message && (
+                                <p className="text-small text-muted-foreground/80 truncate" title={item.message}>
+                                  {item.message}
+                                </p>
+                              )}
+                            </div>
+                            <span className="text-small text-muted-foreground tabular-nums">
+                              {isUploadQueueItemInProgress(item.status)
+                                ? `${Math.round(item.progress)}%`
+                                : getUploadQueueStatusLabel(item.status)}
+                            </span>
+                          </div>
+                          {isUploadQueueItemInProgress(item.status) && (
+                            <Progress value={item.progress} className="mt-2 h-1.5 bg-secondary/60" />
                           )}
                         </div>
-                        {canCancelDownload && (
-                          <button
-                            type="button"
-                            onClick={() => {
-                              void handleCancelActiveDownload();
-                            }}
-                            className="cursor-pointer rounded-md px-2 py-1 text-small text-muted-foreground transition-colors hover:bg-primary/15 hover:text-foreground"
-                          >
-                            Cancel
-                          </button>
-                        )}
-                      </div>
-                      <Progress
-                        value={downloadProgressPercent}
-                        className="mt-2 h-1.5 bg-secondary/60"
-                      />
+                      ))}
                     </div>
-                  )}
-
-                  {activeDownload && uploadQueueItems.length > 0 && <div className="my-1 h-px bg-border/70" />}
-
-                  {uploadQueueItems.length > 0 && (
-                    <div className="rounded-lg px-3 py-2">
-                      <div className="mb-2 flex items-center justify-between gap-2">
-                        <div>
-                          <p className="text-body font-medium text-foreground">Uploads</p>
-                          <p className="text-small text-muted-foreground tabular-nums">{uploadToolbarLabel}</p>
-                        </div>
-                        {canCancelUploads && (
-                          <button
-                            type="button"
-                            onClick={() => {
-                              void handleCancelUploadQueue();
-                            }}
-                            className="cursor-pointer rounded-md px-2 py-1 text-small text-muted-foreground transition-colors hover:bg-primary/15 hover:text-foreground"
-                          >
-                            Cancel remaining
-                          </button>
-                        )}
-                      </div>
-
-                      <div className="max-h-52 space-y-1.5 overflow-y-auto pr-1">
-                        {uploadQueueItems.map((item) => (
-                          <div key={item.id} className="rounded-md px-2 py-1.5 transition-colors hover:bg-primary/10">
-                            <div className="flex items-center justify-between gap-2">
-                              <span className="truncate text-small text-foreground" title={item.fileName}>
-                                {item.fileName}
-                              </span>
-                              <span className="text-small text-muted-foreground tabular-nums">
-                                {isUploadQueueItemInProgress(item.status)
-                                  ? `${Math.round(item.progress)}%`
-                                  : getUploadQueueStatusLabel(item.status)}
-                              </span>
-                            </div>
-                            {isUploadQueueItemInProgress(item.status) && (
-                              <Progress value={item.progress} className="mt-1.5 h-1.5 bg-secondary/60" />
-                            )}
-                            {item.message && (
-                              <p className="mt-1 text-[11px] text-muted-foreground/80 truncate" title={item.message}>
-                                {item.message}
-                              </p>
-                            )}
-                          </div>
-                        ))}
-                      </div>
-                    </div>
-                  )}
-                </div>
-              </>
+                  </div>
+                )}
+              </div>
             )}
           </div>
         </div>
