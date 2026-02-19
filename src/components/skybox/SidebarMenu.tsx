@@ -1,6 +1,5 @@
 import { useState } from "react";
 import {
-    Bookmark,
     User,
     Users,
     Megaphone,
@@ -77,7 +76,7 @@ export function SidebarMenu({
     };
 
     const mainMenuItems = [
-        { icon: Bookmark, label: "Files" },
+        { icon: Folder, label: "Files" },
         { icon: User, label: "My Profile" },
         { separator: true },
         { icon: Users, label: "New Group" },
