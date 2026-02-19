@@ -76,11 +76,7 @@ export function SidebarMenu({
     };
 
     const mainMenuItems = [
-<<<<<<< HEAD
         { icon: Folder, label: "Files" },
-=======
-        { icon: Bookmark, label: "Files" },
->>>>>>> origin/main
         { icon: User, label: "My Profile" },
         { separator: true },
         { icon: Users, label: "New Group" },
