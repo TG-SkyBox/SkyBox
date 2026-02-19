@@ -30,12 +30,6 @@ If rules conflict, apply the stricter requirement.
 - Database domain logic: `src-tauri/src/db/`
 - API documentation: `docs/API_REFERENCE.md`
 
-## Toolchain Baseline
-- Node.js 20 (CI baseline)
-- Rust stable with MSRV `1.77.2`
-- Frontend test runner: Vitest
-- Frontend linter: ESLint (`eslint.config.js`)
-
 ## Build, Lint, and Test Commands (Reference)
 Use these as reference commands. Prefer CI for final verification.
 
@@ -49,9 +43,7 @@ Frontend single-test workflows:
 - Single test file: `npm run test -- src/pages/ExplorerPage.test.tsx`
 - By test name: `npm run test -- -t "uploads files"`
 - File + name in watch mode: `npm run test:watch -- src/pages/ExplorerPage.test.tsx -t "uploads files"`
-
-Lint single file:
-- `npx eslint src/pages/ExplorerPage.tsx`
+- Lint one file: `npx eslint src/pages/ExplorerPage.tsx`
 
 Rust (`src-tauri/`):
 - Format: `cargo fmt`
@@ -135,13 +127,6 @@ Rust single-test workflows:
 - Use `log::debug!`, `log::info!`, `log::warn!`, and `log::error!` appropriately.
 - Guard platform-specific code with `#[cfg(...)]`.
 - Never log secrets or sensitive user data.
-
-## Agent Workflow Expectations
-- Read nearby code before editing; follow local patterns.
-- Keep changes narrow and task-focused.
-- Avoid broad refactors unless requested.
-- Update related types/interfaces when changing payloads or events.
-- Update docs when API behavior changes.
 
 ## API, Versioning, and Release Notes
 - Update `docs/API_REFERENCE.md` when command/payload/event behavior changes.
