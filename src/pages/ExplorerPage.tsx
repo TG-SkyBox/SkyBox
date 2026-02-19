@@ -568,7 +568,9 @@ export default function ExplorerPage() {
   const [uploadQueueItems, setUploadQueueItems] = useState<UploadQueueItemState[]>([]);
   const [isUploadProgressMounted, setIsUploadProgressMounted] = useState(false);
   const [isUploadProgressVisible, setIsUploadProgressVisible] = useState(false);
+  const [uploadSpeedBytesPerSecond, setUploadSpeedBytesPerSecond] = useState(0);
   const [activeDownload, setActiveDownload] = useState<DownloadProgressPayload | null>(null);
+  const [downloadSpeedBytesPerSecond, setDownloadSpeedBytesPerSecond] = useState(0);
   const [isTransferMenuOpen, setIsTransferMenuOpen] = useState(false);
   const [isMediaViewerOpen, setIsMediaViewerOpen] = useState(false);
   const [mediaViewerItems, setMediaViewerItems] = useState<FileItem[]>([]);
@@ -603,6 +605,20 @@ export default function ExplorerPage() {
   const uploadProgressEnterFrameRef = useRef<number | null>(null);
   const uploadCancelRequestedRef = useRef(false);
   const currentUploadQueueIndexRef = useRef<number | null>(null);
+  const uploadSpeedSampleRef = useRef({
+    fileName: null as string | null,
+    sampleBytes: 0,
+    sampleAt: 0,
+    latestBytes: 0,
+    latestAt: 0,
+  });
+  const downloadSpeedSampleRef = useRef({
+    sourcePath: null as string | null,
+    sampleBytes: 0,
+    sampleAt: 0,
+    latestBytes: 0,
+    latestAt: 0,
+  });
   const mediaViewerOpenedPathRef = useRef<string | null>(null);
   const navigationStateRef = useRef({
     backHistory: [] as string[],
