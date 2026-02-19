@@ -646,6 +646,28 @@ export default function ExplorerPage() {
     }
   }, []);
 
+  const resetUploadSpeedTracking = useCallback(() => {
+    uploadSpeedSampleRef.current = {
+      fileName: null,
+      sampleBytes: 0,
+      sampleAt: 0,
+      latestBytes: 0,
+      latestAt: 0,
+    };
+    setUploadSpeedBytesPerSecond(0);
+  }, []);
+
+  const resetDownloadSpeedTracking = useCallback(() => {
+    downloadSpeedSampleRef.current = {
+      sourcePath: null,
+      sampleBytes: 0,
+      sampleAt: 0,
+      latestBytes: 0,
+      latestAt: 0,
+    };
+    setDownloadSpeedBytesPerSecond(0);
+  }, []);
+
   const openDetailsPanel = useCallback(() => {
     clearDetailsPanelCloseTimer();
     setShowDetails(true);
