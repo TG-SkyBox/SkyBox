@@ -289,6 +289,10 @@ const getUploadQueueStatusLabel = (status: UploadQueueStatus): string => {
   }
 };
 
+const isUploadQueueItemInProgress = (status: UploadQueueStatus): boolean => (
+  status === "uploading" || status === "sending"
+);
+
 const isVirtualPath = (path: string): boolean => path.startsWith("tg://");
 const isSavedVirtualFolderPath = (path: string): boolean => path === "tg://saved" || path.startsWith("tg://saved/");
 const isSavedVirtualFilePath = (path: string): boolean => path.startsWith("tg://msg/");
@@ -1678,22 +1682,39 @@ export default function ExplorerPage() {
   const uploadProcessedFiles = uploadProgress
     ? uploadProgress.uploadedFiles + uploadProgress.failedFiles + uploadProgress.cancelledFiles
     : 0;
-  const uploadActiveFileFraction = uploadProgress
-    ? Math.max(0, Math.min(1, uploadProgress.activeFileProgress))
+  const uploadToolbarItem = useMemo(() => {
+    if (!uploadQueueItems.length) {
+      return null;
+    }
+
+    const inProgressItem = uploadQueueItems.find((item) => isUploadQueueItemInProgress(item.status));
+    if (inProgressItem) {
+      return inProgressItem;
+    }
+
+    const queuedItem = uploadQueueItems.find((item) => item.status === "queued");
+    if (queuedItem) {
+      return queuedItem;
+    }
+
+    for (let index = uploadQueueItems.length - 1; index >= 0; index -= 1) {
+      const item = uploadQueueItems[index];
+      if (item.status !== "queued") {
+        return item;
+      }
+    }
+
+    return uploadQueueItems[0];
+  }, [uploadQueueItems]);
+  const uploadToolbarPercent = uploadToolbarItem
+    ? Math.min(100, Math.max(0, Math.round(uploadToolbarItem.progress)))
     : 0;
+  const uploadToolbarTitle = uploadToolbarItem
+    ? `${uploadToolbarItem.fileName} - ${getUploadQueueStatusLabel(uploadToolbarItem.status)}${uploadProgress ? ` (${uploadProcessedFiles}/${uploadProgress.totalFiles} files)` : ""}`
+    : "";
   const isUploadInProgress =
     isUploadingFiles &&
-    !!uploadProgress &&
-    uploadProcessedFiles < uploadProgress.totalFiles;
-  const uploadEffectiveProcessedFiles = uploadProgress
-    ? uploadProcessedFiles + (isUploadInProgress ? uploadActiveFileFraction : 0)
-    : 0;
-  const uploadProgressPercent = uploadProgress && uploadProgress.totalFiles > 0
-    ? Math.min(100, Math.max(0, Math.round((uploadEffectiveProcessedFiles / uploadProgress.totalFiles) * 100)))
-    : 0;
-  const uploadProgressLabel = uploadProgress
-    ? `${uploadProcessedFiles}/${uploadProgress.totalFiles} files`
-    : "";
+    uploadQueueItems.some((item) => isUploadQueueItemInProgress(item.status));
   const downloadProgressPercent = activeDownload
     ? Math.min(100, Math.max(0, Math.round(activeDownload.progress)))
     : 0;
@@ -1703,7 +1724,7 @@ export default function ExplorerPage() {
   const hasTransferEntries = !!activeDownload || uploadQueueItems.length > 0;
   const canCancelDownload = !!activeDownload && !["completed", "failed", "cancelled"].includes(activeDownload.stage);
   const canCancelUploads = isUploadingFiles && uploadQueueItems.some((item) => (
-    item.status === "queued" || item.status === "uploading" || item.status === "sending"
+    item.status === "queued" || isUploadQueueItemInProgress(item.status)
   ));
   const selectedPathSet = useMemo(() => new Set(selectedPaths), [selectedPaths]);
   const selectionBoxStyle = selectionBox
@@ -3769,7 +3790,7 @@ export default function ExplorerPage() {
                   </span>
                 </button>
               )}
-              {isUploadProgressMounted && uploadProgress && (
+              {isUploadProgressMounted && uploadToolbarItem && (
                 <button
                   type="button"
                   onClick={handleToggleTransferMenu}
@@ -3778,16 +3799,19 @@ export default function ExplorerPage() {
                     : "-translate-y-3 opacity-0"
                     }`}
                 >
-                  <span className="text-small text-muted-foreground whitespace-nowrap tabular-nums">
-                    {uploadProgressLabel}
+                  <span
+                    className="max-w-[130px] truncate text-small text-muted-foreground"
+                    title={uploadToolbarTitle}
+                  >
+                    {uploadToolbarItem.fileName}
                   </span>
                   <Progress
-                    value={uploadProgressPercent}
+                    value={uploadToolbarPercent}
                     className="h-1.5 w-24 bg-secondary/60"
-                    aria-label="Upload progress"
+                    aria-label={`Upload progress for ${uploadToolbarItem.fileName}`}
                   />
                   <span className="w-9 text-right text-small text-muted-foreground tabular-nums">
-                    {uploadProgressPercent}%
+                    {uploadToolbarPercent}%
                   </span>
                 </button>
               )}
@@ -3867,12 +3891,12 @@ export default function ExplorerPage() {
                               {item.fileName}
                             </span>
                             <span className="text-small text-muted-foreground tabular-nums">
-                              {item.status === "uploading" || item.status === "sending"
+                              {isUploadQueueItemInProgress(item.status)
                                 ? `${Math.round(item.progress)}%`
                                 : getUploadQueueStatusLabel(item.status)}
                             </span>
                           </div>
-                          {(item.status === "uploading" || item.status === "sending") && (
+                          {isUploadQueueItemInProgress(item.status) && (
                             <Progress value={item.progress} className="mt-1.5 h-1.5 bg-secondary/60" />
                           )}
                         </div>
