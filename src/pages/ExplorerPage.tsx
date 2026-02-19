@@ -733,14 +733,6 @@ export default function ExplorerPage() {
       return;
     }
 
-    const payloadSpeed = Number(payload.bytesPerSecond);
-    if (Number.isFinite(payloadSpeed) && payloadSpeed > 0) {
-      setDownloadSpeedBytesPerSecond((prev) => (
-        prev > 0 ? (prev * 0.25) + (payloadSpeed * 0.75) : payloadSpeed
-      ));
-      return;
-    }
-
     if (deltaBytes > 0 && deltaMs > 0) {
       const instantSpeed = (deltaBytes * 1000) / deltaMs;
       setDownloadSpeedBytesPerSecond((prev) => (
