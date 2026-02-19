@@ -1,169 +1,152 @@
 # SkyBox Agent Guide
-Operational guide for agentic coding tools working in this repository.
+Operational rules for coding agents working in this repository.
 
 ## Rule Priority
 1. `.qoder/rules/DontBuidl.md` (mandatory)
 2. `AGENTS.md` (this file)
-3. Existing local conventions in touched files
-If guidance conflicts, follow the stricter rule.
+3. Existing conventions in touched files
+If rules conflict, apply the stricter requirement.
 
 ## Cursor and Copilot Rules
-- Cursor rules: not found (`.cursor/rules/`, `.cursorrules` are missing)
-- Copilot rules: not found (`.github/copilot-instructions.md` is missing)
-- If any of these files appear later, read them first and merge their requirements into your plan.
+- Cursor rules: not found (`.cursor/rules/`, `.cursorrules` missing)
+- Copilot rules: not found (`.github/copilot-instructions.md` missing)
+- If these files appear later, read and follow them before coding.
 
 ## Hard Constraints
 - Do not run local app/dev commands (`npm run dev`, `npm run tauri:dev`, `cargo run`).
 - Do not run local build/package commands (`npm run build`, `npm run tauri:build`, `cargo build`).
-- CI is the source of truth for full validation.
-- Never commit secrets (tokens, keys, session files, credentials, private IDs).
+- Treat CI as the source of truth for full validation.
+- Never commit secrets (API keys, tokens, credentials, session blobs).
 - Avoid destructive git operations unless explicitly requested.
 
 ## Repository Map
 - Frontend app: `src/`
-- Main page and workflow hub: `src/pages/ExplorerPage.tsx`
+- Main explorer workflow: `src/pages/ExplorerPage.tsx`
 - Shared UI components: `src/components/`
-- Tailwind/theme tokens: `src/index.css`
+- Theme and utility styles: `src/index.css`
 - Tauri backend: `src-tauri/src/`
-- Tauri command registration: `src-tauri/src/lib.rs`
-- Telegram logic: `src-tauri/src/telegram/`
-- Database logic: `src-tauri/src/db/`
-- API docs: `docs/API_REFERENCE.md`
+- Command registry: `src-tauri/src/lib.rs`
+- Telegram domain logic: `src-tauri/src/telegram/`
+- Database domain logic: `src-tauri/src/db/`
+- API documentation: `docs/API_REFERENCE.md`
 
 ## Toolchain Baseline
-- Node.js: 20 (CI baseline)
-- Rust: stable, MSRV `1.77.2` (`src-tauri/Cargo.toml`)
+- Node.js 20 (CI baseline)
+- Rust stable with MSRV `1.77.2`
 - Frontend test runner: Vitest
-- Frontend linting: ESLint (`eslint.config.js`)
+- Frontend linter: ESLint (`eslint.config.js`)
 
 ## Build, Lint, and Test Commands (Reference)
-Use these as documented commands. Prefer CI for final verification.
+Use these as reference commands. Prefer CI for final verification.
 
-Frontend commands (run from repo root):
-```bash
-npm install
-npm run lint
-npm run test
-npm run test:watch
-```
+Frontend (repo root):
+- Install dependencies: `npm install`
+- Lint all frontend files: `npm run lint`
+- Run all frontend tests: `npm run test`
+- Run tests in watch mode: `npm run test:watch`
 
-Run a single frontend test file:
-```bash
-npm run test -- src/pages/ExplorerPage.test.tsx
-```
+Frontend single-test workflows:
+- Single test file: `npm run test -- src/pages/ExplorerPage.test.tsx`
+- By test name: `npm run test -- -t "uploads files"`
+- File + name in watch mode: `npm run test:watch -- src/pages/ExplorerPage.test.tsx -t "uploads files"`
 
-Run frontend tests filtered by test name:
-```bash
-npm run test -- -t "uploads files"
-```
+Lint single file:
+- `npx eslint src/pages/ExplorerPage.tsx`
 
-Run single file + test name in watch mode:
-```bash
-npm run test:watch -- src/pages/ExplorerPage.test.tsx -t "uploads files"
-```
+Rust (`src-tauri/`):
+- Format: `cargo fmt`
+- Lint: `cargo clippy`
+- Run full Rust tests: `cargo test`
 
-Lint examples:
-```bash
-npm run lint
-npx eslint src/pages/ExplorerPage.tsx
-```
+Rust single-test workflows:
+- By test name substring: `cargo test test_name_substring`
+- Show stdout/stderr for one test: `cargo test test_name_substring -- --nocapture`
 
-Rust commands (run from `src-tauri/`):
-```bash
-cargo fmt
-cargo clippy
-cargo test
-```
-
-Run a single Rust test (name filter):
-```bash
-cargo test test_name_substring
-```
-
-Run Rust test with output shown:
-```bash
-cargo test test_name_substring -- --nocapture
-```
-
-## TypeScript and React Conventions
+## TypeScript and React Style
 ### Formatting
-- Use 2-space indentation.
-- Use semicolons.
-- Use double quotes.
-- Match surrounding style when touching legacy blocks.
-- Avoid unrelated reformatting churn.
+- 2-space indentation.
+- Semicolons required.
+- Double quotes preferred.
+- Match nearby style when editing legacy code.
+- Avoid unrelated formatting churn.
 
 ### Imports
 - Prefer `@/*` aliases for app modules.
 - Use `import type` for type-only imports.
-- Keep import groups stable and readable:
+- Group imports in this order:
   1) React/framework
   2) third-party packages
-  3) `@/` aliases
+  3) `@/` alias imports
   4) relative imports
 
 ### Types
-- Project TS config is permissive (`noImplicitAny: false`, `strictNullChecks: false`), but do not add new `any` without reason.
+- TS config is permissive (`noImplicitAny: false`, `strictNullChecks: false`), but avoid introducing new `any`.
 - Prefer `unknown` at boundaries and narrow safely.
-- Define explicit payload/result interfaces for `invoke` and event listeners.
-- Guard optional/null values before use.
+- Keep `invoke` payload/response interfaces explicit.
+- Guard optional and nullable fields before use.
 
 ### Naming
-- Components, interfaces, and types: `PascalCase`
+- Components/interfaces/types: `PascalCase`
 - Variables/functions/hooks: `camelCase` (`useXxx` for hooks)
 - Constants: `SCREAMING_SNAKE_CASE`
 - UI primitive files in `src/components/ui/`: kebab-case
 
 ### React Patterns
 - Keep effects focused and deterministic.
-- Do not ignore cleanup for timers/listeners.
-- Prefer derived state via `useMemo` over duplicate state.
-- Keep handlers side-effect aware and resilient to stale closures.
+- Always clean up timers, subscriptions, and event listeners.
+- Prefer derived values with `useMemo` instead of duplicated state.
+- Keep event handlers resilient to stale closure issues.
 
 ### Error Handling
 - Treat caught errors as `unknown` at boundaries.
-- Convert to user-safe messages; never leak secrets.
-- Use `toast()` for user-visible failures and key status updates.
-- Provide actionable fallback messages.
-- Do not swallow failures silently.
+- Convert failures into safe, actionable messages.
+- Use `toast()` for user-visible failures and status updates.
+- Do not silently swallow errors.
 
 ## UI and Styling Rules
-- Use Tailwind utilities and shared tokens defined in `src/index.css`.
-- Prefer semantic theme tokens (`bg-secondary`, `text-muted-foreground`, `border-border`, `bg-glass`).
-- Use `cn()` from `src/lib/utils.ts` for conditional class composition.
-- Keep visual language consistent with existing SkyBox glass theme.
-- Do not introduce white borders or off-theme color accents unless explicitly requested.
-- Always use colors that match the active theme and nearby UI context.
-- Preserve existing right-click context menu style unless user explicitly asks to redesign it.
-- For transfer/status popups near context menu UX, match context-menu visual treatment.
+- Use Tailwind utilities and shared tokens from `src/index.css`.
+- Prefer semantic theme classes (`bg-secondary`, `text-muted-foreground`, `border-border`, `bg-glass`).
+- Use `cn()` from `src/lib/utils.ts` for conditional classes.
+- Keep UI consistent with the existing SkyBox glass theme.
+- Do not add white borders or off-theme accents unless explicitly requested.
+- Always use colors that match the active theme and neighboring components.
+- Preserve right-click context menu styles unless explicitly asked to change them.
+- For transfer/status popups near context menu UX, match that same visual language.
 
-## Rust and Tauri Conventions
+## Rust and Tauri Style
 ### General
 - Keep code `rustfmt` clean.
 - Prefer `Result`-based error handling over panics.
-- Avoid new `unwrap()`/`expect()` in runtime paths.
+- Avoid adding new `unwrap()`/`expect()` in runtime paths.
 
 ### Command Boundary
-- Register new commands in `src-tauri/src/lib.rs`.
-- Keep TS `invoke` names aligned with Rust command names.
-- Keep payload key naming consistent across boundary (`camelCase` in TS, serde mapping in Rust).
-- Return serializable errors with clear `message` text.
+- Register commands in `src-tauri/src/lib.rs`.
+- Keep TS `invoke` names and Rust command names aligned.
+- Keep payload key naming consistent across the boundary.
+- Return serializable errors with clear `message` values.
 
 ### Async and Concurrency
 - Do not hold mutex guards across `.await`.
-- Clone required state, drop lock, then await.
-- Use async-safe patterns for cancellation and progress reporting.
-- Use `spawn_blocking` for blocking-heavy work when needed.
+- Clone needed state, release lock, then await.
+- Use async-safe cancellation/progress patterns.
+- Use `spawn_blocking` for blocking-heavy tasks when needed.
 
 ### Logging and Safety
-- Use `log::debug!`, `log::info!`, `log::warn!`, `log::error!` appropriately.
-- Guard platform-specific behavior with `#[cfg(...)]`.
+- Use `log::debug!`, `log::info!`, `log::warn!`, and `log::error!` appropriately.
+- Guard platform-specific code with `#[cfg(...)]`.
 - Never log secrets or sensitive user data.
 
-## API, Versioning, and Docs
+## Agent Workflow Expectations
+- Read nearby code before editing; follow local patterns.
+- Keep changes narrow and task-focused.
+- Avoid broad refactors unless requested.
+- Update related types/interfaces when changing payloads or events.
+- Update docs when API behavior changes.
+
+## API, Versioning, and Release Notes
 - Update `docs/API_REFERENCE.md` when command/payload/event behavior changes.
-- Keep TypeScript interfaces and Rust serialized structs aligned.
-- Keep version values synchronized in:
+- Keep TS and Rust API contracts aligned.
+- Keep versions synchronized in:
   - `VERSION`
   - `package.json`
   - `src-tauri/tauri.conf.json`
@@ -171,14 +154,14 @@ cargo test test_name_substring -- --nocapture
 - Release automation expects commit messages containing `new release`.
 
 ## Commit and PR Guidance
-- Use conventional commit prefixes: `feat:`, `fix:`, `refactor:`, `chore:`, `docs:`.
-- Prefer scoped messages when possible (example: `fix(explorer): correct upload speed sampling`).
-- Keep commits focused; do not mix unrelated refactors.
-- Document API/workflow impacts clearly in PR descriptions.
+- Use conventional prefixes: `feat:`, `fix:`, `refactor:`, `chore:`, `docs:`.
+- Prefer scoped commits when useful (example: `fix(explorer): improve transfer speed sampling`).
+- Keep commits focused and reviewable.
+- Call out API/workflow impact clearly in PR descriptions.
 
 ## Definition of Done
-- Changes follow repository architecture and local style.
-- User-visible errors have clear messaging.
-- Lint/test impact is considered and compatible with CI expectations.
+- Changes follow local architecture and style.
+- Error paths produce clear user-facing messages.
+- Lint/test impact is considered and CI-compatible.
 - No secrets or machine-specific assumptions are introduced.
-- Related docs are updated when behavior or API contracts change.
+- Related docs are updated when behavior/API changes.
