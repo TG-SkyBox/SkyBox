@@ -2970,11 +2970,9 @@ async fn download_saved_media_with_progress(
         && !emitted_non_zero_speed
         && downloaded_bytes > 0
         && !total_elapsed.is_zero()
-        && total_elapsed
-            <= Duration::from_millis(DOWNLOAD_SPEED_FAST_TRANSFER_THRESHOLD_MS)
+        && total_elapsed <= Duration::from_millis(DOWNLOAD_SPEED_FAST_TRANSFER_THRESHOLD_MS)
     {
-        final_bytes_per_second =
-            calculate_bytes_per_second(downloaded_bytes, total_elapsed);
+        final_bytes_per_second = calculate_bytes_per_second(downloaded_bytes, total_elapsed);
     }
 
     emit_download_progress(
