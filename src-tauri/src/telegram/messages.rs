@@ -29,8 +29,11 @@ static THUMBNAIL_FLOOD_WAIT_UNTIL: LazyLock<StdMutex<Option<Instant>>> =
     LazyLock::new(|| StdMutex::new(None));
 static DOWNLOAD_CANCEL_REQUESTS: LazyLock<StdMutex<HashSet<String>>> =
     LazyLock::new(|| StdMutex::new(HashSet::new()));
+static UPLOAD_CANCEL_REQUESTS: LazyLock<StdMutex<HashSet<String>>> =
+    LazyLock::new(|| StdMutex::new(HashSet::new()));
 
 const DOWNLOAD_CANCELLED_MARKER: &str = "__SKYBOX_DOWNLOAD_CANCELLED__";
+const UPLOAD_CANCELLED_MARKER: &str = "__SKYBOX_UPLOAD_CANCELLED__";
 
 fn parse_flood_wait_seconds(message: &str) -> Option<u64> {
     let upper = message.to_uppercase();
@@ -104,9 +107,21 @@ fn request_download_cancel(source_path: &str) {
     }
 }
 
+fn request_upload_cancel(file_name: &str) {
+    if let Ok(mut guard) = UPLOAD_CANCEL_REQUESTS.lock() {
+        guard.insert(file_name.to_string());
+    }
+}
+
 fn clear_download_cancel(source_path: &str) {
     if let Ok(mut guard) = DOWNLOAD_CANCEL_REQUESTS.lock() {
         guard.remove(source_path);
+    }
+}
+
+fn clear_upload_cancel(file_name: &str) {
+    if let Ok(mut guard) = UPLOAD_CANCEL_REQUESTS.lock() {
+        guard.remove(file_name);
     }
 }
 
@@ -118,8 +133,20 @@ fn is_download_cancel_requested(source_path: &str) -> bool {
     }
 }
 
+fn is_upload_cancel_requested(file_name: &str) -> bool {
+    if let Ok(guard) = UPLOAD_CANCEL_REQUESTS.lock() {
+        guard.contains(file_name)
+    } else {
+        false
+    }
+}
+
 fn is_download_cancel_error(error: &TelegramError) -> bool {
     error.message == DOWNLOAD_CANCELLED_MARKER
+}
+
+fn is_upload_cancel_error(error: &TelegramError) -> bool {
+    error.message == UPLOAD_CANCELLED_MARKER
 }
 
 #[derive(serde::Serialize, Clone)]
@@ -197,6 +224,13 @@ impl<R: AsyncRead + Unpin> AsyncRead for UploadProgressReader<R> {
         cx: &mut Context<'_>,
         buf: &mut ReadBuf<'_>,
     ) -> Poll<std::io::Result<()>> {
+        if is_upload_cancel_requested(&self.file_name) {
+            return Poll::Ready(Err(std::io::Error::new(
+                std::io::ErrorKind::Interrupted,
+                UPLOAD_CANCELLED_MARKER,
+            )));
+        }
+
         let filled_before = buf.filled().len();
         let poll = Pin::new(&mut self.inner).poll_read(cx, buf);
 
