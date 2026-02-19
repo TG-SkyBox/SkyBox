@@ -800,15 +800,8 @@ export default function ExplorerPage() {
     return () => {
       clearDetailsPanelCloseTimer();
       clearUploadProgressTimers();
-      resetUploadSpeedTracking();
-      resetDownloadSpeedTracking();
     };
-  }, [
-    clearDetailsPanelCloseTimer,
-    clearUploadProgressTimers,
-    resetUploadSpeedTracking,
-    resetDownloadSpeedTracking,
-  ]);
+  }, [clearDetailsPanelCloseTimer, clearUploadProgressTimers]);
 
   // Initialize with home directory and user info
   useEffect(() => {
@@ -1883,16 +1876,16 @@ export default function ExplorerPage() {
   const uploadToolbarProgressLabel = uploadProgress
     ? `${uploadProcessedFiles}/${uploadProgress.totalFiles} files`
     : "";
+  const isUploadInProgress =
+    isUploadingFiles &&
+    uploadQueueItems.some((item) => isUploadQueueItemInProgress(item.status));
   const uploadSpeedLabel = formatTransferSpeed(uploadSpeedBytesPerSecond);
   const uploadToolbarLabel = uploadToolbarProgressLabel
-    ? `${uploadSpeedLabel} | ${uploadToolbarProgressLabel}`
+    ? `${isUploadInProgress ? `${uploadSpeedLabel} | ` : ""}${uploadToolbarProgressLabel}`
     : uploadSpeedLabel;
   const uploadToolbarTitle = uploadToolbarItem
     ? `${uploadToolbarItem.fileName} - ${getUploadQueueStatusLabel(uploadToolbarItem.status)}${uploadToolbarProgressLabel ? ` (${uploadToolbarProgressLabel})` : ""}`
     : "";
-  const isUploadInProgress =
-    isUploadingFiles &&
-    uploadQueueItems.some((item) => isUploadQueueItemInProgress(item.status));
   const downloadProgressPercent = activeDownload
     ? Math.min(100, Math.max(0, Math.round(activeDownload.progress)))
     : 0;
@@ -1901,7 +1894,9 @@ export default function ExplorerPage() {
     : "";
   const downloadSpeedLabel = formatTransferSpeed(downloadSpeedBytesPerSecond);
   const downloadToolbarLabel = activeDownload
-    ? `${downloadSpeedLabel} | ${downloadProgressLabel}`
+    ? activeDownload.stage === "downloading"
+      ? `${downloadSpeedLabel} | ${downloadProgressLabel}`
+      : downloadProgressLabel
     : "";
   const hasTransferEntries = !!activeDownload || uploadQueueItems.length > 0;
   const canCancelDownload = !!activeDownload && !["completed", "failed", "cancelled"].includes(activeDownload.stage);
@@ -4001,9 +3996,9 @@ export default function ExplorerPage() {
                 >
                   <span
                     className="max-w-[130px] truncate text-small text-muted-foreground"
-                    title={`${activeDownload.fileName} - ${downloadProgressLabel}`}
+                    title={`${activeDownload.fileName} - ${downloadToolbarLabel}`}
                   >
-                    {downloadProgressLabel}
+                    {downloadToolbarLabel}
                   </span>
                   <Progress
                     value={downloadProgressPercent}
@@ -4028,7 +4023,7 @@ export default function ExplorerPage() {
                     className="max-w-[130px] truncate text-small text-muted-foreground"
                     title={uploadToolbarTitle}
                   >
-                    {uploadToolbarItem.fileName}
+                    {uploadToolbarLabel}
                   </span>
                   <Progress
                     value={uploadToolbarPercent}
@@ -4041,13 +4036,6 @@ export default function ExplorerPage() {
                 </button>
               )}
             </div>
-            <button className="flex items-center gap-1 px-2 py-1 rounded text-small text-muted-foreground hover:text-foreground hover:bg-secondary transition-colors">
-              <SortAsc className="w-3 h-3" />
-              Name
-            </button>
-            <span className="text-small text-muted-foreground">
-              {sortedFiles.length} {sortedFiles.length === 1 ? 'item' : 'items'}
-            </span>
             {isLoadingSavedFiles ? (
               <span className="text-small text-muted-foreground inline-flex items-center gap-1">
                 <div className="animate-spin rounded-full h-3 w-3 border-b border-primary" />
@@ -4059,6 +4047,13 @@ export default function ExplorerPage() {
                 Syncing... {syncProgressLabel}
               </span>
             )}
+            <button className="flex items-center gap-1 px-2 py-1 rounded text-small text-muted-foreground hover:text-foreground hover:bg-secondary transition-colors">
+              <SortAsc className="w-3 h-3" />
+              Name
+            </button>
+            <span className="text-small text-muted-foreground">
+              {sortedFiles.length} {sortedFiles.length === 1 ? 'item' : 'items'}
+            </span>
 
             {isTransferMenuOpen && hasTransferEntries && (
               <div
@@ -4073,7 +4068,7 @@ export default function ExplorerPage() {
                           {activeDownload.fileName}
                         </p>
                         <p className="text-small text-muted-foreground">
-                          {downloadProgressLabel}
+                          {downloadToolbarLabel}
                         </p>
                       </div>
                       {canCancelDownload && (
@@ -4096,7 +4091,10 @@ export default function ExplorerPage() {
                 {uploadQueueItems.length > 0 && (
                   <div className="rounded-lg border border-border/60 bg-secondary/10 px-3 py-2">
                     <div className="mb-2 flex items-center justify-between gap-2">
-                      <p className="text-body font-medium text-foreground">Uploads</p>
+                      <div>
+                        <p className="text-body font-medium text-foreground">Uploads</p>
+                        <p className="text-small text-muted-foreground tabular-nums">{uploadToolbarLabel}</p>
+                      </div>
                       {canCancelUploads && (
                         <TelegramButton
                           variant="secondary"
