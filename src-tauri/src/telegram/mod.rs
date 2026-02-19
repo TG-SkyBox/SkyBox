@@ -326,6 +326,7 @@ use messages::{
     tg_get_message_thumbnail_impl,
     tg_prefetch_message_thumbnails_impl,
     tg_cancel_saved_file_download_impl,
+    tg_cancel_saved_file_upload_impl,
     tg_prepare_saved_media_preview_impl,
     tg_download_saved_file_impl,
     tg_upload_file_to_saved_messages_impl,
@@ -515,6 +516,11 @@ pub async fn tg_download_saved_file(
 #[tauri::command]
 pub async fn tg_cancel_saved_file_download(source_path: String) -> Result<bool, TelegramError> {
     tg_cancel_saved_file_download_impl(source_path)
+}
+
+#[tauri::command]
+pub async fn tg_cancel_saved_file_upload(file_name: String) -> Result<bool, TelegramError> {
+    tg_cancel_saved_file_upload_impl(file_name)
 }
 
 #[tauri::command]

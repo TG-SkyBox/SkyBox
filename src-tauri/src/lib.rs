@@ -86,6 +86,7 @@ pub fn run() {
             telegram::tg_prefetch_message_thumbnails,
             telegram::tg_download_saved_file,
             telegram::tg_cancel_saved_file_download,
+            telegram::tg_cancel_saved_file_upload,
             telegram::tg_prepare_saved_media_preview,
             telegram::tg_upload_file_to_saved_messages,
 

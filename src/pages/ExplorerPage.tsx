@@ -246,6 +246,8 @@ const SAVED_PROTECTED_FOLDER_PATHS = new Set([
 ]);
 const DETAILS_PANEL_ANIMATION_MS = 220;
 const UPLOAD_PROGRESS_ANIMATION_MS = 240;
+const TRANSFER_SPEED_UPDATE_INTERVAL_MS = 500;
+const UPLOAD_CANCELLED_MARKER = "__SKYBOX_UPLOAD_CANCELLED__";
 
 const IMAGE_EXTENSIONS = new Set(["jpg", "jpeg", "png", "gif", "webp", "bmp", "svg"]);
 const VIDEO_EXTENSIONS = new Set(["mp4", "mkv", "mov", "avi", "webm", "wmv", "m4v"]);
@@ -287,6 +289,28 @@ const getUploadQueueStatusLabel = (status: UploadQueueStatus): string => {
     default:
       return "Queued";
   }
+};
+
+const isUploadQueueItemInProgress = (status: UploadQueueStatus): boolean => (
+  status === "uploading" || status === "sending"
+);
+
+const formatTransferSpeed = (bytesPerSecond: number): string => {
+  if (!Number.isFinite(bytesPerSecond) || bytesPerSecond <= 0) {
+    return "0 B/s";
+  }
+
+  const units = ["B/s", "KB/s", "MB/s", "GB/s"];
+  let value = bytesPerSecond;
+  let unitIndex = 0;
+
+  while (value >= 1024 && unitIndex < units.length - 1) {
+    value /= 1024;
+    unitIndex += 1;
+  }
+
+  const decimals = value >= 100 || unitIndex === 0 ? 0 : value >= 10 ? 1 : 2;
+  return `${value.toFixed(decimals)} ${units[unitIndex]}`;
 };
 
 const isVirtualPath = (path: string): boolean => path.startsWith("tg://");
@@ -544,7 +568,9 @@ export default function ExplorerPage() {
   const [uploadQueueItems, setUploadQueueItems] = useState<UploadQueueItemState[]>([]);
   const [isUploadProgressMounted, setIsUploadProgressMounted] = useState(false);
   const [isUploadProgressVisible, setIsUploadProgressVisible] = useState(false);
+  const [uploadSpeedBytesPerSecond, setUploadSpeedBytesPerSecond] = useState(0);
   const [activeDownload, setActiveDownload] = useState<DownloadProgressPayload | null>(null);
+  const [downloadSpeedBytesPerSecond, setDownloadSpeedBytesPerSecond] = useState(0);
   const [isTransferMenuOpen, setIsTransferMenuOpen] = useState(false);
   const [isMediaViewerOpen, setIsMediaViewerOpen] = useState(false);
   const [mediaViewerItems, setMediaViewerItems] = useState<FileItem[]>([]);
@@ -579,6 +605,20 @@ export default function ExplorerPage() {
   const uploadProgressEnterFrameRef = useRef<number | null>(null);
   const uploadCancelRequestedRef = useRef(false);
   const currentUploadQueueIndexRef = useRef<number | null>(null);
+  const uploadSpeedSampleRef = useRef({
+    fileName: null as string | null,
+    sampleBytes: 0,
+    sampleAt: 0,
+    latestBytes: 0,
+    latestAt: 0,
+  });
+  const downloadSpeedSampleRef = useRef({
+    sourcePath: null as string | null,
+    sampleBytes: 0,
+    sampleAt: 0,
+    latestBytes: 0,
+    latestAt: 0,
+  });
   const mediaViewerOpenedPathRef = useRef<string | null>(null);
   const navigationStateRef = useRef({
     backHistory: [] as string[],
@@ -605,6 +645,134 @@ export default function ExplorerPage() {
       uploadProgressEnterFrameRef.current = null;
     }
   }, []);
+
+  const resetUploadSpeedTracking = useCallback(() => {
+    uploadSpeedSampleRef.current = {
+      fileName: null,
+      sampleBytes: 0,
+      sampleAt: 0,
+      latestBytes: 0,
+      latestAt: 0,
+    };
+    setUploadSpeedBytesPerSecond(0);
+  }, []);
+
+  const resetDownloadSpeedTracking = useCallback(() => {
+    downloadSpeedSampleRef.current = {
+      sourcePath: null,
+      sampleBytes: 0,
+      sampleAt: 0,
+      latestBytes: 0,
+      latestAt: 0,
+    };
+    setDownloadSpeedBytesPerSecond(0);
+  }, []);
+
+  const trackUploadSpeedSample = useCallback((payload: UploadProgressPayload) => {
+    const now = Date.now();
+    const sample = uploadSpeedSampleRef.current;
+
+    if (sample.fileName !== payload.fileName) {
+      sample.fileName = payload.fileName;
+      sample.sampleBytes = payload.uploadedBytes;
+      sample.sampleAt = now;
+      sample.latestBytes = payload.uploadedBytes;
+      sample.latestAt = now;
+      setUploadSpeedBytesPerSecond(0);
+      return;
+    }
+
+    if (sample.sampleAt <= 0) {
+      sample.sampleBytes = payload.uploadedBytes;
+      sample.sampleAt = now;
+    }
+
+    sample.latestBytes = payload.uploadedBytes;
+    sample.latestAt = now;
+
+    if (payload.stage !== "uploading") {
+      setUploadSpeedBytesPerSecond(0);
+    }
+  }, []);
+
+  const trackDownloadSpeedSample = useCallback((payload: DownloadProgressPayload) => {
+    const now = Date.now();
+    const sample = downloadSpeedSampleRef.current;
+
+    if (sample.sourcePath !== payload.sourcePath) {
+      sample.sourcePath = payload.sourcePath;
+      sample.sampleBytes = payload.downloadedBytes;
+      sample.sampleAt = now;
+      sample.latestBytes = payload.downloadedBytes;
+      sample.latestAt = now;
+      setDownloadSpeedBytesPerSecond(0);
+      return;
+    }
+
+    if (sample.sampleAt <= 0) {
+      sample.sampleBytes = payload.downloadedBytes;
+      sample.sampleAt = now;
+    }
+
+    sample.latestBytes = payload.downloadedBytes;
+    sample.latestAt = now;
+
+    if (payload.stage !== "downloading") {
+      setDownloadSpeedBytesPerSecond(0);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (!isUploadingFiles) {
+      setUploadSpeedBytesPerSecond(0);
+      return;
+    }
+
+    const interval = window.setInterval(() => {
+      const sample = uploadSpeedSampleRef.current;
+      const elapsedMs = sample.latestAt - sample.sampleAt;
+      const deltaBytes = sample.latestBytes - sample.sampleBytes;
+
+      if (sample.sampleAt <= 0 || sample.latestAt <= 0 || elapsedMs <= 0 || deltaBytes <= 0) {
+        setUploadSpeedBytesPerSecond(0);
+      } else {
+        setUploadSpeedBytesPerSecond((deltaBytes * 1000) / elapsedMs);
+      }
+
+      sample.sampleBytes = sample.latestBytes;
+      sample.sampleAt = sample.latestAt;
+    }, TRANSFER_SPEED_UPDATE_INTERVAL_MS);
+
+    return () => {
+      window.clearInterval(interval);
+    };
+  }, [isUploadingFiles]);
+
+  useEffect(() => {
+    if (!activeDownload || activeDownload.stage !== "downloading") {
+      setDownloadSpeedBytesPerSecond(0);
+      return;
+    }
+
+    const interval = window.setInterval(() => {
+      const sample = downloadSpeedSampleRef.current;
+      const elapsedMs = sample.latestAt - sample.sampleAt;
+      const deltaBytes = sample.latestBytes - sample.sampleBytes;
+
+      if (sample.sampleAt <= 0 || sample.latestAt <= 0 || elapsedMs <= 0 || deltaBytes <= 0) {
+        setDownloadSpeedBytesPerSecond(0);
+      } else {
+        setDownloadSpeedBytesPerSecond((deltaBytes * 1000) / elapsedMs);
+      }
+
+      sample.sampleBytes = sample.latestBytes;
+      sample.sampleAt = sample.latestAt;
+    }, TRANSFER_SPEED_UPDATE_INTERVAL_MS);
+
+    return () => {
+      window.clearInterval(interval);
+    };
+  }, [activeDownload?.sourcePath, activeDownload?.stage]);
 
   const openDetailsPanel = useCallback(() => {
     clearDetailsPanelCloseTimer();
@@ -1678,21 +1846,45 @@ export default function ExplorerPage() {
   const uploadProcessedFiles = uploadProgress
     ? uploadProgress.uploadedFiles + uploadProgress.failedFiles + uploadProgress.cancelledFiles
     : 0;
-  const uploadActiveFileFraction = uploadProgress
-    ? Math.max(0, Math.min(1, uploadProgress.activeFileProgress))
+  const uploadToolbarItem = useMemo(() => {
+    if (!uploadQueueItems.length) {
+      return null;
+    }
+
+    const inProgressItem = uploadQueueItems.find((item) => isUploadQueueItemInProgress(item.status));
+    if (inProgressItem) {
+      return inProgressItem;
+    }
+
+    const queuedItem = uploadQueueItems.find((item) => item.status === "queued");
+    if (queuedItem) {
+      return queuedItem;
+    }
+
+    for (let index = uploadQueueItems.length - 1; index >= 0; index -= 1) {
+      const item = uploadQueueItems[index];
+      if (item.status !== "queued") {
+        return item;
+      }
+    }
+
+    return uploadQueueItems[0];
+  }, [uploadQueueItems]);
+  const uploadToolbarPercent = uploadToolbarItem
+    ? Math.min(100, Math.max(0, Math.round(uploadToolbarItem.progress)))
     : 0;
+  const uploadToolbarProgressLabel = uploadProgress
+    ? `${uploadProcessedFiles}/${uploadProgress.totalFiles} files`
+    : "";
   const isUploadInProgress =
     isUploadingFiles &&
-    !!uploadProgress &&
-    uploadProcessedFiles < uploadProgress.totalFiles;
-  const uploadEffectiveProcessedFiles = uploadProgress
-    ? uploadProcessedFiles + (isUploadInProgress ? uploadActiveFileFraction : 0)
-    : 0;
-  const uploadProgressPercent = uploadProgress && uploadProgress.totalFiles > 0
-    ? Math.min(100, Math.max(0, Math.round((uploadEffectiveProcessedFiles / uploadProgress.totalFiles) * 100)))
-    : 0;
-  const uploadProgressLabel = uploadProgress
-    ? `${uploadProcessedFiles}/${uploadProgress.totalFiles} files`
+    uploadQueueItems.some((item) => isUploadQueueItemInProgress(item.status));
+  const uploadSpeedLabel = formatTransferSpeed(uploadSpeedBytesPerSecond);
+  const uploadToolbarLabel = uploadToolbarProgressLabel
+    ? `${isUploadInProgress ? `${uploadSpeedLabel} | ` : ""}${uploadToolbarProgressLabel}`
+    : uploadSpeedLabel;
+  const uploadToolbarTitle = uploadToolbarItem
+    ? `${uploadToolbarItem.fileName} - ${getUploadQueueStatusLabel(uploadToolbarItem.status)}${uploadToolbarProgressLabel ? ` (${uploadToolbarProgressLabel})` : ""}`
     : "";
   const downloadProgressPercent = activeDownload
     ? Math.min(100, Math.max(0, Math.round(activeDownload.progress)))
@@ -1700,10 +1892,16 @@ export default function ExplorerPage() {
   const downloadProgressLabel = activeDownload
     ? getDownloadStageLabel(activeDownload.stage)
     : "";
+  const downloadSpeedLabel = formatTransferSpeed(downloadSpeedBytesPerSecond);
+  const downloadToolbarLabel = activeDownload
+    ? activeDownload.stage === "downloading"
+      ? `${downloadSpeedLabel} | ${downloadProgressLabel}`
+      : downloadProgressLabel
+    : "";
   const hasTransferEntries = !!activeDownload || uploadQueueItems.length > 0;
   const canCancelDownload = !!activeDownload && !["completed", "failed", "cancelled"].includes(activeDownload.stage);
   const canCancelUploads = isUploadingFiles && uploadQueueItems.some((item) => (
-    item.status === "queued" || item.status === "uploading" || item.status === "sending"
+    item.status === "queued" || isUploadQueueItemInProgress(item.status)
   ));
   const selectedPathSet = useMemo(() => new Set(selectedPaths), [selectedPaths]);
   const selectionBoxStyle = selectionBox
@@ -2009,6 +2207,8 @@ export default function ExplorerPage() {
       return;
     }
 
+    resetDownloadSpeedTracking();
+
     setActiveDownload({
       sourcePath: file.path,
       fileName: file.name,
@@ -2023,6 +2223,7 @@ export default function ExplorerPage() {
         return;
       }
 
+      trackDownloadSpeedSample(payload);
       setActiveDownload(payload);
     });
 
@@ -2032,6 +2233,8 @@ export default function ExplorerPage() {
       });
 
       if (!destinationPath) {
+        resetDownloadSpeedTracking();
+        setActiveDownload(null);
         return;
       }
 
@@ -3180,6 +3383,7 @@ export default function ExplorerPage() {
     const uploadTargetPath = currentPath;
     uploadCancelRequestedRef.current = false;
     currentUploadQueueIndexRef.current = null;
+    resetUploadSpeedTracking();
     setUploadQueueItems(
       droppedFiles.map((file, index) => ({
         id: `${Date.now()}-${index}-${file.name}`,
@@ -3216,6 +3420,8 @@ export default function ExplorerPage() {
         if (!payload) {
           return;
         }
+
+        trackUploadSpeedSample(payload);
 
         const progressFraction = Math.max(0, Math.min(100, payload.progress)) / 100;
         const progressPercent = Math.max(0, Math.min(100, payload.progress));
@@ -3322,18 +3528,35 @@ export default function ExplorerPage() {
               : item
           )));
         } catch (error) {
-          failedCount += 1;
-          console.error("Failed to upload file:", droppedFile.name, error);
-          setUploadQueueItems((prev) => prev.map((item, itemIndex) => (
-            itemIndex === index
-              ? {
-                ...item,
-                status: "failed",
-                progress: 0,
-                message: (error as TelegramError)?.message || "Upload failed",
-              }
-              : item
-          )));
+          const typedError = error as TelegramError;
+          const isCancelledUpload = typedError?.message === UPLOAD_CANCELLED_MARKER || uploadCancelRequestedRef.current;
+
+          if (isCancelledUpload) {
+            cancelledCount += 1;
+            setUploadQueueItems((prev) => prev.map((item, itemIndex) => (
+              itemIndex === index
+                ? {
+                  ...item,
+                  status: "cancelled",
+                  progress: 0,
+                  message: "Cancelled",
+                }
+                : item
+            )));
+          } else {
+            failedCount += 1;
+            console.error("Failed to upload file:", droppedFile.name, error);
+            setUploadQueueItems((prev) => prev.map((item, itemIndex) => (
+              itemIndex === index
+                ? {
+                  ...item,
+                  status: "failed",
+                  progress: 0,
+                  message: typedError?.message || "Upload failed",
+                }
+                : item
+            )));
+          }
         }
 
         setUploadProgress({
@@ -3411,7 +3634,7 @@ export default function ExplorerPage() {
     setIsTransferMenuOpen((prev) => !prev);
   };
 
-  const handleCancelUploadQueue = () => {
+  const handleCancelUploadQueue = async () => {
     if (!isUploadingFiles) {
       return;
     }
@@ -3419,6 +3642,9 @@ export default function ExplorerPage() {
     uploadCancelRequestedRef.current = true;
 
     const currentIndex = currentUploadQueueIndexRef.current;
+    const activeUploadItem = currentIndex !== null
+      ? uploadQueueItems[currentIndex]
+      : null;
     setUploadQueueItems((prev) => prev.map((item, index) => {
       if (item.status !== "queued") {
         return item;
@@ -3434,6 +3660,21 @@ export default function ExplorerPage() {
         message: "Cancelled",
       };
     }));
+
+    if (activeUploadItem && isUploadQueueItemInProgress(activeUploadItem.status)) {
+      try {
+        await invoke("tg_cancel_saved_file_upload", {
+          fileName: activeUploadItem.fileName,
+        });
+      } catch (error) {
+        const typedError = error as TelegramError;
+        toast({
+          title: "Cancel failed",
+          description: typedError.message || "Unable to cancel active upload",
+          variant: "destructive",
+        });
+      }
+    }
   };
 
   const handleCancelActiveDownload = async () => {
@@ -3755,9 +3996,9 @@ export default function ExplorerPage() {
                 >
                   <span
                     className="max-w-[130px] truncate text-small text-muted-foreground"
-                    title={`${activeDownload.fileName} - ${downloadProgressLabel}`}
+                    title={`${activeDownload.fileName} - ${downloadToolbarLabel}`}
                   >
-                    {downloadProgressLabel}
+                    {downloadToolbarLabel}
                   </span>
                   <Progress
                     value={downloadProgressPercent}
@@ -3769,7 +4010,7 @@ export default function ExplorerPage() {
                   </span>
                 </button>
               )}
-              {isUploadProgressMounted && uploadProgress && (
+              {isUploadProgressMounted && uploadToolbarItem && (
                 <button
                   type="button"
                   onClick={handleToggleTransferMenu}
@@ -3778,27 +4019,23 @@ export default function ExplorerPage() {
                     : "-translate-y-3 opacity-0"
                     }`}
                 >
-                  <span className="text-small text-muted-foreground whitespace-nowrap tabular-nums">
-                    {uploadProgressLabel}
+                  <span
+                    className="max-w-[130px] truncate text-small text-muted-foreground"
+                    title={uploadToolbarTitle}
+                  >
+                    {uploadToolbarLabel}
                   </span>
                   <Progress
-                    value={uploadProgressPercent}
+                    value={uploadToolbarPercent}
                     className="h-1.5 w-24 bg-secondary/60"
-                    aria-label="Upload progress"
+                    aria-label={`Upload progress for ${uploadToolbarItem.fileName}`}
                   />
                   <span className="w-9 text-right text-small text-muted-foreground tabular-nums">
-                    {uploadProgressPercent}%
+                    {uploadToolbarPercent}%
                   </span>
                 </button>
               )}
             </div>
-            <button className="flex items-center gap-1 px-2 py-1 rounded text-small text-muted-foreground hover:text-foreground hover:bg-secondary transition-colors">
-              <SortAsc className="w-3 h-3" />
-              Name
-            </button>
-            <span className="text-small text-muted-foreground">
-              {sortedFiles.length} {sortedFiles.length === 1 ? 'item' : 'items'}
-            </span>
             {isLoadingSavedFiles ? (
               <span className="text-small text-muted-foreground inline-flex items-center gap-1">
                 <div className="animate-spin rounded-full h-3 w-3 border-b border-primary" />
@@ -3810,6 +4047,13 @@ export default function ExplorerPage() {
                 Syncing... {syncProgressLabel}
               </span>
             )}
+            <button className="flex items-center gap-1 px-2 py-1 rounded text-small text-muted-foreground hover:text-foreground hover:bg-secondary transition-colors">
+              <SortAsc className="w-3 h-3" />
+              Name
+            </button>
+            <span className="text-small text-muted-foreground">
+              {sortedFiles.length} {sortedFiles.length === 1 ? 'item' : 'items'}
+            </span>
 
             {isTransferMenuOpen && hasTransferEntries && (
               <div
@@ -3824,7 +4068,7 @@ export default function ExplorerPage() {
                           {activeDownload.fileName}
                         </p>
                         <p className="text-small text-muted-foreground">
-                          {downloadProgressLabel}
+                          {downloadToolbarLabel}
                         </p>
                       </div>
                       {canCancelDownload && (
@@ -3847,7 +4091,10 @@ export default function ExplorerPage() {
                 {uploadQueueItems.length > 0 && (
                   <div className="rounded-lg border border-border/60 bg-secondary/10 px-3 py-2">
                     <div className="mb-2 flex items-center justify-between gap-2">
-                      <p className="text-body font-medium text-foreground">Uploads</p>
+                      <div>
+                        <p className="text-body font-medium text-foreground">Uploads</p>
+                        <p className="text-small text-muted-foreground tabular-nums">{uploadToolbarLabel}</p>
+                      </div>
                       {canCancelUploads && (
                         <TelegramButton
                           variant="secondary"
@@ -3867,12 +4114,12 @@ export default function ExplorerPage() {
                               {item.fileName}
                             </span>
                             <span className="text-small text-muted-foreground tabular-nums">
-                              {item.status === "uploading" || item.status === "sending"
+                              {isUploadQueueItemInProgress(item.status)
                                 ? `${Math.round(item.progress)}%`
                                 : getUploadQueueStatusLabel(item.status)}
                             </span>
                           </div>
-                          {(item.status === "uploading" || item.status === "sending") && (
+                          {isUploadQueueItemInProgress(item.status) && (
                             <Progress value={item.progress} className="mt-1.5 h-1.5 bg-secondary/60" />
                           )}
                         </div>
