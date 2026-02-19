@@ -77,7 +77,7 @@ export function SidebarMenu({
     };
 
     const mainMenuItems = [
-        { icon: Bookmark, label: "Saved Messages" },
+        { icon: Bookmark, label: "Files" },
         { icon: User, label: "My Profile" },
         { separator: true },
         { icon: Users, label: "New Group" },
