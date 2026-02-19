@@ -668,6 +668,112 @@ export default function ExplorerPage() {
     setDownloadSpeedBytesPerSecond(0);
   }, []);
 
+  const trackUploadSpeedSample = useCallback((payload: UploadProgressPayload) => {
+    const now = Date.now();
+    const sample = uploadSpeedSampleRef.current;
+
+    if (sample.fileName !== payload.fileName) {
+      sample.fileName = payload.fileName;
+      sample.sampleBytes = payload.uploadedBytes;
+      sample.sampleAt = now;
+      sample.latestBytes = payload.uploadedBytes;
+      sample.latestAt = now;
+      setUploadSpeedBytesPerSecond(0);
+      return;
+    }
+
+    if (sample.sampleAt <= 0) {
+      sample.sampleBytes = payload.uploadedBytes;
+      sample.sampleAt = now;
+    }
+
+    sample.latestBytes = payload.uploadedBytes;
+    sample.latestAt = now;
+
+    if (payload.stage !== "uploading") {
+      setUploadSpeedBytesPerSecond(0);
+    }
+  }, []);
+
+  const trackDownloadSpeedSample = useCallback((payload: DownloadProgressPayload) => {
+    const now = Date.now();
+    const sample = downloadSpeedSampleRef.current;
+
+    if (sample.sourcePath !== payload.sourcePath) {
+      sample.sourcePath = payload.sourcePath;
+      sample.sampleBytes = payload.downloadedBytes;
+      sample.sampleAt = now;
+      sample.latestBytes = payload.downloadedBytes;
+      sample.latestAt = now;
+      setDownloadSpeedBytesPerSecond(0);
+      return;
+    }
+
+    if (sample.sampleAt <= 0) {
+      sample.sampleBytes = payload.downloadedBytes;
+      sample.sampleAt = now;
+    }
+
+    sample.latestBytes = payload.downloadedBytes;
+    sample.latestAt = now;
+
+    if (payload.stage !== "downloading") {
+      setDownloadSpeedBytesPerSecond(0);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (!isUploadingFiles) {
+      setUploadSpeedBytesPerSecond(0);
+      return;
+    }
+
+    const interval = window.setInterval(() => {
+      const sample = uploadSpeedSampleRef.current;
+      const elapsedMs = sample.latestAt - sample.sampleAt;
+      const deltaBytes = sample.latestBytes - sample.sampleBytes;
+
+      if (sample.sampleAt <= 0 || sample.latestAt <= 0 || elapsedMs <= 0 || deltaBytes <= 0) {
+        setUploadSpeedBytesPerSecond(0);
+      } else {
+        setUploadSpeedBytesPerSecond((deltaBytes * 1000) / elapsedMs);
+      }
+
+      sample.sampleBytes = sample.latestBytes;
+      sample.sampleAt = sample.latestAt;
+    }, TRANSFER_SPEED_UPDATE_INTERVAL_MS);
+
+    return () => {
+      window.clearInterval(interval);
+    };
+  }, [isUploadingFiles]);
+
+  useEffect(() => {
+    if (!activeDownload || activeDownload.stage !== "downloading") {
+      setDownloadSpeedBytesPerSecond(0);
+      return;
+    }
+
+    const interval = window.setInterval(() => {
+      const sample = downloadSpeedSampleRef.current;
+      const elapsedMs = sample.latestAt - sample.sampleAt;
+      const deltaBytes = sample.latestBytes - sample.sampleBytes;
+
+      if (sample.sampleAt <= 0 || sample.latestAt <= 0 || elapsedMs <= 0 || deltaBytes <= 0) {
+        setDownloadSpeedBytesPerSecond(0);
+      } else {
+        setDownloadSpeedBytesPerSecond((deltaBytes * 1000) / elapsedMs);
+      }
+
+      sample.sampleBytes = sample.latestBytes;
+      sample.sampleAt = sample.latestAt;
+    }, TRANSFER_SPEED_UPDATE_INTERVAL_MS);
+
+    return () => {
+      window.clearInterval(interval);
+    };
+  }, [activeDownload?.sourcePath, activeDownload?.stage]);
+
   const openDetailsPanel = useCallback(() => {
     clearDetailsPanelCloseTimer();
     setShowDetails(true);
@@ -694,8 +800,15 @@ export default function ExplorerPage() {
     return () => {
       clearDetailsPanelCloseTimer();
       clearUploadProgressTimers();
+      resetUploadSpeedTracking();
+      resetDownloadSpeedTracking();
     };
-  }, [clearDetailsPanelCloseTimer, clearUploadProgressTimers]);
+  }, [
+    clearDetailsPanelCloseTimer,
+    clearUploadProgressTimers,
+    resetUploadSpeedTracking,
+    resetDownloadSpeedTracking,
+  ]);
 
   // Initialize with home directory and user info
   useEffect(() => {
@@ -1767,8 +1880,15 @@ export default function ExplorerPage() {
   const uploadToolbarPercent = uploadToolbarItem
     ? Math.min(100, Math.max(0, Math.round(uploadToolbarItem.progress)))
     : 0;
+  const uploadToolbarProgressLabel = uploadProgress
+    ? `${uploadProcessedFiles}/${uploadProgress.totalFiles} files`
+    : "";
+  const uploadSpeedLabel = formatTransferSpeed(uploadSpeedBytesPerSecond);
+  const uploadToolbarLabel = uploadToolbarProgressLabel
+    ? `${uploadSpeedLabel} | ${uploadToolbarProgressLabel}`
+    : uploadSpeedLabel;
   const uploadToolbarTitle = uploadToolbarItem
-    ? `${uploadToolbarItem.fileName} - ${getUploadQueueStatusLabel(uploadToolbarItem.status)}${uploadProgress ? ` (${uploadProcessedFiles}/${uploadProgress.totalFiles} files)` : ""}`
+    ? `${uploadToolbarItem.fileName} - ${getUploadQueueStatusLabel(uploadToolbarItem.status)}${uploadToolbarProgressLabel ? ` (${uploadToolbarProgressLabel})` : ""}`
     : "";
   const isUploadInProgress =
     isUploadingFiles &&
@@ -1778,6 +1898,10 @@ export default function ExplorerPage() {
     : 0;
   const downloadProgressLabel = activeDownload
     ? getDownloadStageLabel(activeDownload.stage)
+    : "";
+  const downloadSpeedLabel = formatTransferSpeed(downloadSpeedBytesPerSecond);
+  const downloadToolbarLabel = activeDownload
+    ? `${downloadSpeedLabel} | ${downloadProgressLabel}`
     : "";
   const hasTransferEntries = !!activeDownload || uploadQueueItems.length > 0;
   const canCancelDownload = !!activeDownload && !["completed", "failed", "cancelled"].includes(activeDownload.stage);
@@ -2088,6 +2212,8 @@ export default function ExplorerPage() {
       return;
     }
 
+    resetDownloadSpeedTracking();
+
     setActiveDownload({
       sourcePath: file.path,
       fileName: file.name,
@@ -2102,6 +2228,7 @@ export default function ExplorerPage() {
         return;
       }
 
+      trackDownloadSpeedSample(payload);
       setActiveDownload(payload);
     });
 
@@ -2111,6 +2238,8 @@ export default function ExplorerPage() {
       });
 
       if (!destinationPath) {
+        resetDownloadSpeedTracking();
+        setActiveDownload(null);
         return;
       }
 
@@ -3259,6 +3388,7 @@ export default function ExplorerPage() {
     const uploadTargetPath = currentPath;
     uploadCancelRequestedRef.current = false;
     currentUploadQueueIndexRef.current = null;
+    resetUploadSpeedTracking();
     setUploadQueueItems(
       droppedFiles.map((file, index) => ({
         id: `${Date.now()}-${index}-${file.name}`,
@@ -3295,6 +3425,8 @@ export default function ExplorerPage() {
         if (!payload) {
           return;
         }
+
+        trackUploadSpeedSample(payload);
 
         const progressFraction = Math.max(0, Math.min(100, payload.progress)) / 100;
         const progressPercent = Math.max(0, Math.min(100, payload.progress));
