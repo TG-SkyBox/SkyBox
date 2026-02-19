@@ -14,7 +14,7 @@ interface SidebarItem {
 }
 
 const mainItems: SidebarItem[] = [
-  { id: "saved", label: "Saved Messages", icon: Clock, path: "tg://saved" },
+  { id: "saved", label: "Files", icon: Clock, path: "tg://saved" },
 ];
 
 const savedSubItems: SidebarItem[] = [
