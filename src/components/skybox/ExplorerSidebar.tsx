@@ -1,4 +1,4 @@
-import { Home, Star, Clock, FolderOpen, ChevronRight, Settings, LogOut, Trash2 } from "lucide-react";
+import { Home, Star, FolderOpen, ChevronRight, Settings, LogOut, Trash2 } from "lucide-react";
 import { NavLink, useLocation } from "react-router-dom";
 import { useEffect, useState, useRef } from "react";
 import { TelegramButton } from "@/components/skybox/TelegramButton";
@@ -14,7 +14,7 @@ interface SidebarItem {
 }
 
 const mainItems: SidebarItem[] = [
-  { id: "saved", label: "Files", icon: Clock, path: "tg://saved" },
+  { id: "saved", label: "Files", icon: FolderOpen, path: "tg://saved" },
 ];
 
 const savedSubItems: SidebarItem[] = [
