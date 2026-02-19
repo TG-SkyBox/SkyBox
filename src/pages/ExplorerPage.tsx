@@ -4058,10 +4058,10 @@ export default function ExplorerPage() {
             {isTransferMenuOpen && hasTransferEntries && (
               <div
                 ref={transferMenuRef}
-                className="absolute right-0 top-[calc(100%+8px)] z-[95] w-[360px] rounded-xl border border-border/60 bg-glass shadow-2xl shadow-black/50 backdrop-saturate-150 p-2"
+                className="absolute right-0 top-[calc(100%+8px)] z-[95] w-[360px] rounded-xl border bg-accent/5 backdrop-blur-sm shadow-2xl shadow-black/50 p-2"
               >
                 {activeDownload && (
-                  <div className="rounded-lg border border-border/60 bg-secondary/10 px-3 py-2 mb-2">
+                  <div className="rounded-lg border bg-secondary/10 px-3 py-2 mb-2">
                     <div className="flex items-start justify-between gap-2">
                       <div className="min-w-0">
                         <p className="text-body font-medium text-foreground truncate" title={activeDownload.fileName}>
