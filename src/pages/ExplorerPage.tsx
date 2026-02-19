@@ -247,6 +247,7 @@ const SAVED_PROTECTED_FOLDER_PATHS = new Set([
 const DETAILS_PANEL_ANIMATION_MS = 220;
 const UPLOAD_PROGRESS_ANIMATION_MS = 240;
 const TRANSFER_SPEED_UPDATE_INTERVAL_MS = 500;
+const TRANSFER_SPEED_STALE_MS = 1500;
 const UPLOAD_CANCELLED_MARKER = "__SKYBOX_UPLOAD_CANCELLED__";
 
 const IMAGE_EXTENSIONS = new Set(["jpg", "jpeg", "png", "gif", "webp", "bmp", "svg"]);
@@ -607,15 +608,11 @@ export default function ExplorerPage() {
   const currentUploadQueueIndexRef = useRef<number | null>(null);
   const uploadSpeedSampleRef = useRef({
     fileName: null as string | null,
-    sampleBytes: 0,
-    sampleAt: 0,
     latestBytes: 0,
     latestAt: 0,
   });
   const downloadSpeedSampleRef = useRef({
     sourcePath: null as string | null,
-    sampleBytes: 0,
-    sampleAt: 0,
     latestBytes: 0,
     latestAt: 0,
   });
@@ -649,8 +646,6 @@ export default function ExplorerPage() {
   const resetUploadSpeedTracking = useCallback(() => {
     uploadSpeedSampleRef.current = {
       fileName: null,
-      sampleBytes: 0,
-      sampleAt: 0,
       latestBytes: 0,
       latestAt: 0,
     };
@@ -660,8 +655,6 @@ export default function ExplorerPage() {
   const resetDownloadSpeedTracking = useCallback(() => {
     downloadSpeedSampleRef.current = {
       sourcePath: null,
-      sampleBytes: 0,
-      sampleAt: 0,
       latestBytes: 0,
       latestAt: 0,
     };
@@ -672,26 +665,34 @@ export default function ExplorerPage() {
     const now = Date.now();
     const sample = uploadSpeedSampleRef.current;
 
-    if (sample.fileName !== payload.fileName) {
+    if (
+      sample.fileName !== payload.fileName
+      || payload.uploadedBytes < sample.latestBytes
+      || sample.latestAt <= 0
+    ) {
       sample.fileName = payload.fileName;
-      sample.sampleBytes = payload.uploadedBytes;
-      sample.sampleAt = now;
       sample.latestBytes = payload.uploadedBytes;
       sample.latestAt = now;
       setUploadSpeedBytesPerSecond(0);
       return;
     }
 
-    if (sample.sampleAt <= 0) {
-      sample.sampleBytes = payload.uploadedBytes;
-      sample.sampleAt = now;
-    }
+    const deltaBytes = payload.uploadedBytes - sample.latestBytes;
+    const deltaMs = now - sample.latestAt;
 
     sample.latestBytes = payload.uploadedBytes;
     sample.latestAt = now;
 
     if (payload.stage !== "uploading") {
       setUploadSpeedBytesPerSecond(0);
+      return;
+    }
+
+    if (deltaBytes > 0 && deltaMs > 0) {
+      const instantSpeed = (deltaBytes * 1000) / deltaMs;
+      setUploadSpeedBytesPerSecond((prev) => (
+        prev > 0 ? (prev * 0.35) + (instantSpeed * 0.65) : instantSpeed
+      ));
     }
   }, []);
 
@@ -699,26 +700,34 @@ export default function ExplorerPage() {
     const now = Date.now();
     const sample = downloadSpeedSampleRef.current;
 
-    if (sample.sourcePath !== payload.sourcePath) {
+    if (
+      sample.sourcePath !== payload.sourcePath
+      || payload.downloadedBytes < sample.latestBytes
+      || sample.latestAt <= 0
+    ) {
       sample.sourcePath = payload.sourcePath;
-      sample.sampleBytes = payload.downloadedBytes;
-      sample.sampleAt = now;
       sample.latestBytes = payload.downloadedBytes;
       sample.latestAt = now;
       setDownloadSpeedBytesPerSecond(0);
       return;
     }
 
-    if (sample.sampleAt <= 0) {
-      sample.sampleBytes = payload.downloadedBytes;
-      sample.sampleAt = now;
-    }
+    const deltaBytes = payload.downloadedBytes - sample.latestBytes;
+    const deltaMs = now - sample.latestAt;
 
     sample.latestBytes = payload.downloadedBytes;
     sample.latestAt = now;
 
     if (payload.stage !== "downloading") {
       setDownloadSpeedBytesPerSecond(0);
+      return;
+    }
+
+    if (deltaBytes > 0 && deltaMs > 0) {
+      const instantSpeed = (deltaBytes * 1000) / deltaMs;
+      setDownloadSpeedBytesPerSecond((prev) => (
+        prev > 0 ? (prev * 0.35) + (instantSpeed * 0.65) : instantSpeed
+      ));
     }
   }, []);
 
@@ -730,17 +739,16 @@ export default function ExplorerPage() {
 
     const interval = window.setInterval(() => {
       const sample = uploadSpeedSampleRef.current;
-      const elapsedMs = sample.latestAt - sample.sampleAt;
-      const deltaBytes = sample.latestBytes - sample.sampleBytes;
+      const now = Date.now();
 
-      if (sample.sampleAt <= 0 || sample.latestAt <= 0 || elapsedMs <= 0 || deltaBytes <= 0) {
+      if (sample.latestAt <= 0) {
         setUploadSpeedBytesPerSecond(0);
-      } else {
-        setUploadSpeedBytesPerSecond((deltaBytes * 1000) / elapsedMs);
+        return;
       }
 
-      sample.sampleBytes = sample.latestBytes;
-      sample.sampleAt = sample.latestAt;
+      if (now - sample.latestAt >= TRANSFER_SPEED_STALE_MS) {
+        setUploadSpeedBytesPerSecond(0);
+      }
     }, TRANSFER_SPEED_UPDATE_INTERVAL_MS);
 
     return () => {
@@ -756,17 +764,16 @@ export default function ExplorerPage() {
 
     const interval = window.setInterval(() => {
       const sample = downloadSpeedSampleRef.current;
-      const elapsedMs = sample.latestAt - sample.sampleAt;
-      const deltaBytes = sample.latestBytes - sample.sampleBytes;
+      const now = Date.now();
 
-      if (sample.sampleAt <= 0 || sample.latestAt <= 0 || elapsedMs <= 0 || deltaBytes <= 0) {
+      if (sample.latestAt <= 0) {
         setDownloadSpeedBytesPerSecond(0);
-      } else {
-        setDownloadSpeedBytesPerSecond((deltaBytes * 1000) / elapsedMs);
+        return;
       }
 
-      sample.sampleBytes = sample.latestBytes;
-      sample.sampleAt = sample.latestAt;
+      if (now - sample.latestAt >= TRANSFER_SPEED_STALE_MS) {
+        setDownloadSpeedBytesPerSecond(0);
+      }
     }, TRANSFER_SPEED_UPDATE_INTERVAL_MS);
 
     return () => {
@@ -980,29 +987,14 @@ export default function ExplorerPage() {
       return;
     }
 
-    const handlePointerDown = (event: MouseEvent) => {
-      const target = event.target as Node | null;
-      if (transferMenuRef.current && target && transferMenuRef.current.contains(target)) {
-        return;
-      }
-
-      if (transferMenuTriggerRef.current && target && transferMenuTriggerRef.current.contains(target)) {
-        return;
-      }
-
-      setIsTransferMenuOpen(false);
-    };
-
     const handleEscape = (event: KeyboardEvent) => {
       if (event.key === "Escape") {
         setIsTransferMenuOpen(false);
       }
     };
 
-    window.addEventListener("mousedown", handlePointerDown, true);
     window.addEventListener("keydown", handleEscape);
     return () => {
-      window.removeEventListener("mousedown", handlePointerDown, true);
       window.removeEventListener("keydown", handleEscape);
     };
   }, [isTransferMenuOpen]);
@@ -1892,6 +1884,7 @@ export default function ExplorerPage() {
   const downloadProgressLabel = activeDownload
     ? getDownloadStageLabel(activeDownload.stage)
     : "";
+  const downloadDetailMessage = activeDownload?.message?.trim();
   const downloadSpeedLabel = formatTransferSpeed(downloadSpeedBytesPerSecond);
   const downloadToolbarLabel = activeDownload
     ? activeDownload.stage === "downloading"
@@ -3646,6 +3639,13 @@ export default function ExplorerPage() {
       ? uploadQueueItems[currentIndex]
       : null;
     setUploadQueueItems((prev) => prev.map((item, index) => {
+      if (currentIndex !== null && index === currentIndex && isUploadQueueItemInProgress(item.status)) {
+        return {
+          ...item,
+          message: "Cancelling...",
+        };
+      }
+
       if (item.status !== "queued") {
         return item;
       }
@@ -3665,6 +3665,7 @@ export default function ExplorerPage() {
       try {
         await invoke("tg_cancel_saved_file_upload", {
           fileName: activeUploadItem.fileName,
+          file_name: activeUploadItem.fileName,
         });
       } catch (error) {
         const typedError = error as TelegramError;
@@ -3696,6 +3697,7 @@ export default function ExplorerPage() {
     try {
       await invoke("tg_cancel_saved_file_download", {
         sourcePath: activeDownload.sourcePath,
+        source_path: activeDownload.sourcePath,
       });
     } catch (error) {
       const typedError = error as TelegramError;
@@ -4056,78 +4058,104 @@ export default function ExplorerPage() {
             </span>
 
             {isTransferMenuOpen && hasTransferEntries && (
-              <div
-                ref={transferMenuRef}
-                className="absolute right-0 top-[calc(100%+8px)] z-[95] w-[360px] rounded-xl border bg-accent/5 backdrop-blur-sm shadow-2xl shadow-black/50 p-2"
-              >
-                {activeDownload && (
-                  <div className="rounded-lg border bg-secondary/10 px-3 py-2 mb-2">
-                    <div className="flex items-start justify-between gap-2">
-                      <div className="min-w-0">
-                        <p className="text-body font-medium text-foreground truncate" title={activeDownload.fileName}>
-                          {activeDownload.fileName}
-                        </p>
-                        <p className="text-small text-muted-foreground">
-                          {downloadToolbarLabel}
-                        </p>
-                      </div>
-                      {canCancelDownload && (
-                        <TelegramButton
-                          variant="secondary"
-                          size="sm"
-                          onClick={handleCancelActiveDownload}
-                        >
-                          Cancel
-                        </TelegramButton>
-                      )}
-                    </div>
-                    <Progress
-                      value={downloadProgressPercent}
-                      className="mt-2 h-1.5 bg-secondary/60"
-                    />
-                  </div>
-                )}
-
-                {uploadQueueItems.length > 0 && (
-                  <div className="rounded-lg border border-border/60 bg-secondary/10 px-3 py-2">
-                    <div className="mb-2 flex items-center justify-between gap-2">
-                      <div>
-                        <p className="text-body font-medium text-foreground">Uploads</p>
-                        <p className="text-small text-muted-foreground tabular-nums">{uploadToolbarLabel}</p>
-                      </div>
-                      {canCancelUploads && (
-                        <TelegramButton
-                          variant="secondary"
-                          size="sm"
-                          onClick={handleCancelUploadQueue}
-                        >
-                          Cancel remaining
-                        </TelegramButton>
-                      )}
-                    </div>
-
-                    <div className="max-h-52 space-y-1.5 overflow-y-auto pr-1">
-                      {uploadQueueItems.map((item) => (
-                        <div key={item.id} className="rounded-md bg-secondary/20 px-2 py-1.5">
-                          <div className="flex items-center justify-between gap-2">
-                            <span className="truncate text-small text-foreground" title={item.fileName}>
-                              {item.fileName}
-                            </span>
-                            <span className="text-small text-muted-foreground tabular-nums">
-                              {isUploadQueueItemInProgress(item.status)
-                                ? `${Math.round(item.progress)}%`
-                                : getUploadQueueStatusLabel(item.status)}
-                            </span>
-                          </div>
-                          {isUploadQueueItemInProgress(item.status) && (
-                            <Progress value={item.progress} className="mt-1.5 h-1.5 bg-secondary/60" />
+              <>
+                <div
+                  className="fixed inset-0 z-[94]"
+                  onMouseDown={() => {
+                    setIsTransferMenuOpen(false);
+                  }}
+                />
+                <div
+                  ref={transferMenuRef}
+                  className="absolute right-0 top-[calc(100%+8px)] z-[95] w-[360px] rounded-xl bg-glass shadow-2xl shadow-black/50 backdrop-saturate-150 p-1"
+                  onMouseDown={(event) => event.stopPropagation()}
+                  onClick={(event) => event.stopPropagation()}
+                >
+                  {activeDownload && (
+                    <div className="rounded-lg px-3 py-2">
+                      <div className="flex items-start justify-between gap-2">
+                        <div className="min-w-0">
+                          <p className="text-body font-medium text-foreground truncate" title={activeDownload.fileName}>
+                            {activeDownload.fileName}
+                          </p>
+                          <p className="text-small text-muted-foreground">
+                            {downloadToolbarLabel}
+                          </p>
+                          {downloadDetailMessage && downloadDetailMessage !== downloadProgressLabel && (
+                            <p className="text-small text-muted-foreground/80">
+                              {downloadDetailMessage}
+                            </p>
                           )}
                         </div>
-                      ))}
+                        {canCancelDownload && (
+                          <button
+                            type="button"
+                            onClick={() => {
+                              void handleCancelActiveDownload();
+                            }}
+                            className="cursor-pointer rounded-md px-2 py-1 text-small text-muted-foreground transition-colors hover:bg-primary/15 hover:text-foreground"
+                          >
+                            Cancel
+                          </button>
+                        )}
+                      </div>
+                      <Progress
+                        value={downloadProgressPercent}
+                        className="mt-2 h-1.5 bg-secondary/60"
+                      />
                     </div>
-                  </div>
-                )}
-              </div>
+                  )}
+
+                  {activeDownload && uploadQueueItems.length > 0 && <div className="my-1 h-px bg-border/70" />}
+
+                  {uploadQueueItems.length > 0 && (
+                    <div className="rounded-lg px-3 py-2">
+                      <div className="mb-2 flex items-center justify-between gap-2">
+                        <div>
+                          <p className="text-body font-medium text-foreground">Uploads</p>
+                          <p className="text-small text-muted-foreground tabular-nums">{uploadToolbarLabel}</p>
+                        </div>
+                        {canCancelUploads && (
+                          <button
+                            type="button"
+                            onClick={() => {
+                              void handleCancelUploadQueue();
+                            }}
+                            className="cursor-pointer rounded-md px-2 py-1 text-small text-muted-foreground transition-colors hover:bg-primary/15 hover:text-foreground"
+                          >
+                            Cancel remaining
+                          </button>
+                        )}
+                      </div>
+
+                      <div className="max-h-52 space-y-1.5 overflow-y-auto pr-1">
+                        {uploadQueueItems.map((item) => (
+                          <div key={item.id} className="rounded-md px-2 py-1.5 transition-colors hover:bg-primary/10">
+                            <div className="flex items-center justify-between gap-2">
+                              <span className="truncate text-small text-foreground" title={item.fileName}>
+                                {item.fileName}
+                              </span>
+                              <span className="text-small text-muted-foreground tabular-nums">
+                                {isUploadQueueItemInProgress(item.status)
+                                  ? `${Math.round(item.progress)}%`
+                                  : getUploadQueueStatusLabel(item.status)}
+                              </span>
+                            </div>
+                            {isUploadQueueItemInProgress(item.status) && (
+                              <Progress value={item.progress} className="mt-1.5 h-1.5 bg-secondary/60" />
+                            )}
+                            {item.message && (
+                              <p className="mt-1 text-[11px] text-muted-foreground/80 truncate" title={item.message}>
+                                {item.message}
+                              </p>
+                            )}
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              </>
             )}
           </div>
         </div>
