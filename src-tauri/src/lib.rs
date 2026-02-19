@@ -1,21 +1,21 @@
 // Prevents additional console window on Windows in release, DO NOT REMOVE!!
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
-use tauri::Manager;
-use std::sync::Arc;
 use once_cell::sync::Lazy;
-use tokio::sync::Mutex;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
+use tauri::Manager;
+use tokio::sync::Mutex;
 
-mod fs;
 mod db;
+mod fs;
 mod telegram;
 mod utils;
 
 use db::Database;
 
 // Global state for the Telegram client during authentication
-static TG_CLIENT_STATE: Lazy<Arc<Mutex<Option<grammers_client::Client>>>> = 
+static TG_CLIENT_STATE: Lazy<Arc<Mutex<Option<grammers_client::Client>>>> =
     Lazy::new(|| Arc::new(Mutex::new(None)));
 
 // Track if disconnect is already in progress
@@ -26,7 +26,7 @@ pub fn run() {
     // Load environment variables from .env file (if it exists)
     // This will not override real environment variables
     dotenv::dotenv().ok();
-    
+
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_fs::init())
@@ -44,7 +44,6 @@ pub fn run() {
             fs::move_file,
             fs::get_file_info,
             fs::search_files,
-
             // DB Commands
             db::db_get_setting,
             db::db_set_setting,
@@ -58,7 +57,6 @@ pub fn run() {
             db::db_update_session_profile_photo,
             db::db_update_session_user_info,
             db::db_clear_session,
-
             // Telegram Commands
             telegram::tg_request_auth_code,
             telegram::tg_sign_in_with_code,
@@ -89,7 +87,6 @@ pub fn run() {
             telegram::tg_cancel_saved_file_upload,
             telegram::tg_prepare_saved_media_preview,
             telegram::tg_upload_file_to_saved_messages,
-
             // Logger Commands
             utils::logger::log_debug,
             utils::logger::log_info,
@@ -110,12 +107,15 @@ pub fn run() {
             match event {
                 tauri::WindowEvent::CloseRequested { .. } => {
                     // Check if disconnect is already in progress
-                    if DISCONNECT_IN_PROGRESS.compare_exchange(false, true, Ordering::Acquire, Ordering::Relaxed).is_ok() {
+                    if DISCONNECT_IN_PROGRESS
+                        .compare_exchange(false, true, Ordering::Acquire, Ordering::Relaxed)
+                        .is_ok()
+                    {
                         // Disconnect Telegram client in background without preventing window close
                         tauri::async_runtime::spawn(async move {
                             // Disconnect the Telegram client connection gracefully
                             telegram::disconnect_client().await;
-                            
+
                             // Reset the disconnect flag
                             DISCONNECT_IN_PROGRESS.store(false, Ordering::Release);
                         });

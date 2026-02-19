@@ -150,6 +150,10 @@ Uploads a dropped file to Telegram Saved Messages and stores its indexed metadat
 
 **Returns:** `Result<TelegramMessage, TelegramError>`
 
+Progress events are emitted on `tg-upload-progress`.
+
+Each payload includes `fileName`, `stage`, `progress`, `uploadedBytes`, optional `bytesPerSecond`, optional `totalBytes`, and optional `message`.
+
 ### `tg_cancel_saved_file_upload(file_name: String)`
 Requests cancellation for an in-progress Saved Messages upload.
 
@@ -162,6 +166,8 @@ Requests cancellation for an in-progress Saved Messages upload.
 Opens a native Save dialog, downloads the Saved Messages file to `AppData\\Local\\Skybox\\Downloads`, then moves it to the user-selected destination path.
 
 Progress events are emitted on `tg-download-progress` during select/download/move/complete stages.
+
+Each payload includes `sourcePath`, `fileName`, `stage`, `progress`, `downloadedBytes`, optional `bytesPerSecond`, optional `totalBytes`, optional `destinationPath`, and optional `message`.
 
 **Parameters:**
 - `source_path`: Source virtual file path (`tg://msg/<id>`)

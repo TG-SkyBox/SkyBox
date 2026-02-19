@@ -1,20 +1,20 @@
-use serde::{Deserialize, Serialize};
-use grammers_client::{Client, SignInError};
 use grammers_client::types::{LoginToken, PasswordToken};
+use grammers_client::{Client, SignInError};
+use grammers_mtsender::SenderPoolHandle;
 #[allow(deprecated)]
 use grammers_session::storages::TlSession;
-use grammers_mtsender::SenderPoolHandle;
-use tokio::task::JoinHandle;
-use tokio::sync::{Mutex, mpsc::UnboundedReceiver};
-use once_cell::sync::Lazy;
-use std::sync::Arc;
-use std::sync::atomic::AtomicU64;
-use std::future::Future;
-use std::time::{Duration, Instant};
 use log;
+use once_cell::sync::Lazy;
 use once_cell::sync::OnceCell;
+use serde::{Deserialize, Serialize};
 use std::env;
+use std::future::Future;
+use std::sync::atomic::AtomicU64;
+use std::sync::Arc;
+use std::time::{Duration, Instant};
 use tauri::State;
+use tokio::sync::{mpsc::UnboundedReceiver, Mutex};
+use tokio::task::JoinHandle;
 
 // Global mutex to ensure single-flight QR polling
 pub(crate) static QR_POLL_LOCK: Lazy<Mutex<()>> = Lazy::new(|| Mutex::new(()));
@@ -106,7 +106,6 @@ pub struct QrState {
 
 // ===== Global auth state =====
 
-
 pub(crate) struct AuthState {
     pub client: Client,
     #[allow(deprecated)]
@@ -121,7 +120,7 @@ pub(crate) struct AuthState {
     // NEW: add flow tracking
     pub phone_number: Option<String>,
     pub flow_id: u64,
-    
+
     // QR Login state
     pub qr_state: Option<QrState>,
     // Migration state to prevent concurrent migrations
@@ -129,7 +128,6 @@ pub(crate) struct AuthState {
     // Current DC ID for this session
     pub current_dc_id: Option<i32>,
 }
-
 
 pub(crate) static AUTH_STATE: Lazy<Mutex<Option<AuthState>>> = Lazy::new(|| Mutex::const_new(None));
 static TELEGRAM_LAST_REQUEST_AT: Lazy<Mutex<Option<Instant>>> = Lazy::new(|| Mutex::new(None));
@@ -240,13 +238,14 @@ fn load_api_credentials() -> (i32, String) {
     // Only for dev builds: load .env if present
     let _ = dotenv::dotenv();
 
-    let api_id_str = env::var("TELEGRAM_API_ID")
-        .expect("TELEGRAM_API_ID is required in dev (.env)");
-    let api_id = api_id_str.parse::<i32>()
+    let api_id_str =
+        env::var("TELEGRAM_API_ID").expect("TELEGRAM_API_ID is required in dev (.env)");
+    let api_id = api_id_str
+        .parse::<i32>()
         .expect("TELEGRAM_API_ID must be an integer");
 
-    let api_hash = env::var("TELEGRAM_API_HASH")
-        .expect("TELEGRAM_API_HASH is required in dev (.env)");
+    let api_hash =
+        env::var("TELEGRAM_API_HASH").expect("TELEGRAM_API_HASH is required in dev (.env)");
 
     if api_hash.is_empty() {
         panic!("TELEGRAM_API_HASH cannot be empty");
@@ -262,7 +261,8 @@ fn load_api_credentials() -> (i32, String) {
     const API_ID_STR: &str = env!("TELEGRAM_API_ID");
     const API_HASH_STR: &str = env!("TELEGRAM_API_HASH");
 
-    let api_id = API_ID_STR.parse::<i32>()
+    let api_id = API_ID_STR
+        .parse::<i32>()
         .expect("Invalid TELEGRAM_API_ID in build env (must be integer)");
 
     if API_HASH_STR.is_empty() {
@@ -278,64 +278,47 @@ pub fn get_api_id() -> i32 {
 }
 
 pub fn get_api_hash() -> &'static str {
-    API_HASH_CELL.get_or_init(|| load_api_credentials().1).as_str()
+    API_HASH_CELL
+        .get_or_init(|| load_api_credentials().1)
+        .as_str()
 }
 // ===== Modules =====
 
-pub mod utils;
 mod login;
-mod session;
-mod photo;
 pub mod messages;
+mod photo;
+mod session;
+pub mod utils;
 
 // ===== Re-export implementation functions =====
 
 use login::{
-    tg_request_auth_code_impl,
-    tg_sign_in_with_code_impl,
-    tg_sign_in_with_password_impl,
-    tg_generate_qr_code_impl,
-    tg_poll_qr_login_impl,
-    tg_cancel_qr_login_impl,
+    tg_cancel_qr_login_impl, tg_generate_qr_code_impl, tg_poll_qr_login_impl,
+    tg_request_auth_code_impl, tg_sign_in_with_code_impl, tg_sign_in_with_password_impl,
 };
 
-use session::{
-    tg_restore_session_impl,
-    tg_logout_impl,
-};
+use session::{tg_logout_impl, tg_restore_session_impl};
 
-use photo::{
-    tg_get_my_profile_photo_impl,
-};
+use photo::tg_get_my_profile_photo_impl;
 
 use messages::{
-    tg_index_saved_messages_impl,
-    tg_get_indexed_saved_messages_impl,
-    tg_list_saved_items_impl,
-    tg_list_saved_items_page_impl,
-    tg_backfill_saved_messages_batch_impl,
-    tg_rebuild_saved_items_index_impl,
-    tg_create_saved_folder_impl,
-    tg_move_saved_item_to_recycle_bin_impl,
-    tg_restore_saved_item_impl,
-    tg_delete_saved_item_permanently_impl,
-    tg_move_saved_item_impl,
-    tg_rename_saved_item_impl,
-    tg_send_saved_note_message_impl,
-    tg_edit_saved_note_message_impl,
-    tg_get_message_thumbnail_impl,
-    tg_prefetch_message_thumbnails_impl,
-    tg_cancel_saved_file_download_impl,
-    tg_cancel_saved_file_upload_impl,
-    tg_prepare_saved_media_preview_impl,
-    tg_download_saved_file_impl,
-    tg_upload_file_to_saved_messages_impl,
+    tg_backfill_saved_messages_batch_impl, tg_cancel_saved_file_download_impl,
+    tg_cancel_saved_file_upload_impl, tg_create_saved_folder_impl,
+    tg_delete_saved_item_permanently_impl, tg_download_saved_file_impl,
+    tg_edit_saved_note_message_impl, tg_get_indexed_saved_messages_impl,
+    tg_get_message_thumbnail_impl, tg_index_saved_messages_impl, tg_list_saved_items_impl,
+    tg_list_saved_items_page_impl, tg_move_saved_item_impl, tg_move_saved_item_to_recycle_bin_impl,
+    tg_prefetch_message_thumbnails_impl, tg_prepare_saved_media_preview_impl,
+    tg_rebuild_saved_items_index_impl, tg_rename_saved_item_impl, tg_restore_saved_item_impl,
+    tg_send_saved_note_message_impl, tg_upload_file_to_saved_messages_impl,
 };
 
 // ===== Tauri Commands =====
 
 #[tauri::command]
-pub async fn tg_request_auth_code(auth_data: TelegramAuthData) -> Result<TelegramAuthResult, TelegramError> {
+pub async fn tg_request_auth_code(
+    auth_data: TelegramAuthData,
+) -> Result<TelegramAuthResult, TelegramError> {
     tg_request_auth_code_impl(auth_data).await
 }
 
@@ -345,7 +328,10 @@ pub async fn tg_sign_in_with_code(phone_code: String) -> Result<TelegramAuthResu
 }
 
 #[tauri::command]
-pub async fn tg_sign_in_with_password(password: String, state: tauri::State<'_, Database>) -> Result<TelegramAuthResult, TelegramError> {
+pub async fn tg_sign_in_with_password(
+    password: String,
+    state: tauri::State<'_, Database>,
+) -> Result<TelegramAuthResult, TelegramError> {
     tg_sign_in_with_password_impl(password, state.inner().clone()).await
 }
 
@@ -366,7 +352,10 @@ pub async fn tg_cancel_qr_login() -> Result<bool, TelegramError> {
 }
 
 #[tauri::command]
-pub async fn tg_restore_session(db: State<'_, crate::db::Database>, session_data: String) -> Result<TelegramAuthResult, TelegramError> {
+pub async fn tg_restore_session(
+    db: State<'_, crate::db::Database>,
+    session_data: String,
+) -> Result<TelegramAuthResult, TelegramError> {
     tg_restore_session_impl(db, session_data).await
 }
 
@@ -376,17 +365,24 @@ pub async fn tg_logout() -> Result<bool, TelegramError> {
 }
 
 #[tauri::command]
-pub async fn tg_get_my_profile_photo(db: State<'_, crate::db::Database>) -> Result<Option<String>, TelegramError> {
+pub async fn tg_get_my_profile_photo(
+    db: State<'_, crate::db::Database>,
+) -> Result<Option<String>, TelegramError> {
     tg_get_my_profile_photo_impl(db).await
 }
 
 #[tauri::command]
-pub async fn tg_index_saved_messages(db: State<'_, crate::db::Database>) -> Result<serde_json::Value, TelegramError> {
+pub async fn tg_index_saved_messages(
+    db: State<'_, crate::db::Database>,
+) -> Result<serde_json::Value, TelegramError> {
     tg_index_saved_messages_impl(db.inner().clone()).await
 }
 
 #[tauri::command]
-pub async fn tg_get_indexed_saved_messages(db: State<'_, crate::db::Database>, category: String) -> Result<Vec<crate::db::TelegramMessage>, TelegramError> {
+pub async fn tg_get_indexed_saved_messages(
+    db: State<'_, crate::db::Database>,
+    category: String,
+) -> Result<Vec<crate::db::TelegramMessage>, TelegramError> {
     tg_get_indexed_saved_messages_impl(db.inner().clone(), category).await
 }
 
@@ -492,7 +488,10 @@ pub async fn tg_edit_saved_note_message(
 }
 
 #[tauri::command]
-pub async fn tg_get_message_thumbnail(db: State<'_, crate::db::Database>, message_id: i32) -> Result<Option<String>, TelegramError> {
+pub async fn tg_get_message_thumbnail(
+    db: State<'_, crate::db::Database>,
+    message_id: i32,
+) -> Result<Option<String>, TelegramError> {
     tg_get_message_thumbnail_impl(db.inner().clone(), message_id).await
 }
 
@@ -549,7 +548,7 @@ pub async fn tg_upload_file_to_saved_messages(
 // Function to disconnect the Telegram client gracefully when the app closes
 pub async fn disconnect_client() {
     log::info!("Disconnecting Telegram client in background...");
-    
+
     // Check if there's an active QR login flow
     {
         let guard = AUTH_STATE.lock().await;
@@ -560,7 +559,7 @@ pub async fn disconnect_client() {
             }
         }
     }
-    
+
     // Take the current state out so we can drop/stop it cleanly
     let state = {
         let mut guard = AUTH_STATE.lock().await;
@@ -570,23 +569,23 @@ pub async fn disconnect_client() {
     match state {
         Some(state) => {
             log::info!("Found active Telegram client, initiating disconnect sequence...");
-            
+
             // Stop the sender pool first (non-blocking)
             state.pool_handle.quit();
             state.pool_task.abort();
-            
+
             log::info!("Pool stopped, disconnecting client...");
-            
+
             // Disconnect the client gracefully
             state.client.disconnect();
-            
+
             log::info!("Client disconnect initiated");
-            
+
             // Give a small delay to ensure cleanup completes
             tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
-            
+
             log::info!("Telegram client disconnected successfully");
-        },
+        }
         None => {
             log::info!("No active Telegram client to disconnect");
         }
