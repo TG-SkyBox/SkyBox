@@ -149,6 +149,25 @@ fn is_upload_cancel_error(error: &TelegramError) -> bool {
     error.message == UPLOAD_CANCELLED_MARKER
 }
 
+struct UploadCancelCleanupGuard {
+    file_name: String,
+}
+
+impl UploadCancelCleanupGuard {
+    fn new(file_name: &str) -> Self {
+        clear_upload_cancel(file_name);
+        Self {
+            file_name: file_name.to_string(),
+        }
+    }
+}
+
+impl Drop for UploadCancelCleanupGuard {
+    fn drop(&mut self) {
+        clear_upload_cancel(&self.file_name);
+    }
+}
+
 #[derive(serde::Serialize, Clone)]
 #[serde(rename_all = "camelCase")]
 struct UploadProgressPayload {
@@ -2752,6 +2771,11 @@ pub fn tg_cancel_saved_file_download_impl(source_path: String) -> Result<bool, T
     Ok(true)
 }
 
+pub fn tg_cancel_saved_file_upload_impl(file_name: String) -> Result<bool, TelegramError> {
+    request_upload_cancel(&file_name);
+    Ok(true)
+}
+
 pub async fn tg_prepare_saved_media_preview_impl(
     app: AppHandle,
     db: Database,
@@ -3214,6 +3238,8 @@ pub async fn tg_upload_file_to_saved_messages_impl(
         });
     }
 
+    let _upload_cancel_cleanup_guard = UploadCancelCleanupGuard::new(&file_name);
+
     let (upload_file_name, upload_extension) = build_upload_file_name(&file_name);
     let upload_media_kind = upload_media_kind_for_extension(upload_extension.as_deref());
     let upload_mime_type = mime_type_from_extension(upload_extension.as_deref());
@@ -3324,12 +3350,25 @@ pub async fn tg_upload_file_to_saved_messages_impl(
                         )
                         .await
                         .map_err(|error| TelegramError {
-                            message: format!("Failed to upload file to Telegram: {}", error),
+                            message: {
+                                let error_message = error.to_string();
+                                if error_message.contains(UPLOAD_CANCELLED_MARKER) {
+                                    UPLOAD_CANCELLED_MARKER.to_string()
+                                } else {
+                                    format!("Failed to upload file to Telegram: {}", error_message)
+                                }
+                            },
                         })
                 }
             },
         )
         .await?;
+
+        if is_upload_cancel_requested(&file_name) {
+            return Err(TelegramError {
+                message: UPLOAD_CANCELLED_MARKER.to_string(),
+            });
+        }
 
         emit_upload_progress(
             &app,
@@ -3403,6 +3442,10 @@ pub async fn tg_upload_file_to_saved_messages_impl(
             message
         }
         Err(error) => {
+            if is_upload_cancel_error(&error) {
+                return Err(error);
+            }
+
             emit_upload_progress(
                 &app,
                 UploadProgressPayload {
