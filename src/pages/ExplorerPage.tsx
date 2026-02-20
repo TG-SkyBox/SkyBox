@@ -4063,6 +4063,7 @@ export default function ExplorerPage() {
                 uploadItems={transferUploadItems}
                 canCancelUploads={canCancelUploads}
                 onCancelUploads={handleCancelUploadQueue}
+                onClose={() => setIsTransferMenuOpen(false)}
               />
             )}
           </div>

@@ -27,6 +27,7 @@ interface TransferListPopoverProps {
   uploadItems: TransferUploadItem[];
   canCancelUploads: boolean;
   onCancelUploads: () => void | Promise<void>;
+  onClose?: () => void;
 }
 
 const transferItemClassName = "rounded-xl bg-secondary/25 px-3 py-2";
@@ -38,6 +39,7 @@ export const TransferListPopover = forwardRef<HTMLDivElement, TransferListPopove
     uploadItems,
     canCancelUploads,
     onCancelUploads,
+    onClose,
   }, ref) {
     const [mounted, setMounted] = useState(false);
     const popoverRef = useRef<HTMLDivElement>(null);
@@ -60,7 +62,10 @@ export const TransferListPopover = forwardRef<HTMLDivElement, TransferListPopove
           }}
           onMouseDown={(event) => event.stopPropagation()}
           onMouseUp={(event) => event.stopPropagation()}
-          onClick={(event) => event.stopPropagation()}
+          onClick={(event) => {
+            event.stopPropagation();
+            onClose?.();
+          }}
         />
         {/* Main popup */}
         <div
