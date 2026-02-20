@@ -47,6 +47,7 @@ interface ContextMenuProps {
   onCopyNoteText: (file: FileItem) => void;
   onEditNoteMessage: (file: FileItem) => void;
   onRestoreFromRecycleBin: (file: FileItem) => void;
+  onDeleteNoteFromTelegram: (file: FileItem) => void;
   onCopy: (file: FileItem) => void;
   onCut: (file: FileItem) => void;
 }
@@ -82,6 +83,7 @@ export const ContextMenu = forwardRef<HTMLDivElement, ContextMenuProps>(
     onCopyNoteText,
     onEditNoteMessage,
     onRestoreFromRecycleBin,
+    onDeleteNoteFromTelegram,
     onCopy,
     onCut,
   }, ref) {
@@ -216,6 +218,19 @@ export const ContextMenu = forwardRef<HTMLDivElement, ContextMenuProps>(
             >
               <Edit3 className="w-4 h-4 text-muted-foreground" />
               <span>Edit</span>
+            </button>
+
+            <div className="my-1 h-px bg-border" />
+
+            <button
+              className={contextMenuDangerItemClassName}
+              onClick={() => {
+                onClose();
+                onDeleteNoteFromTelegram(contextTargetFile!);
+              }}
+            >
+              <Trash2 className="w-4 h-4" />
+              <span>Delete from Telegram</span>
             </button>
           </>
         ) : isMultiSelectionContextMenu ? (

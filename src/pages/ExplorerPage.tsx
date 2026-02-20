@@ -912,10 +912,8 @@ export default function ExplorerPage() {
     // Listen for Telegram updates
     const unlistenUpdate = listen("tg-update-received", (event) => {
       console.log("Telegram update received:", event.payload);
-      // Refresh current directory if in Saved Messages
-      if (isSavedVirtualFilePath(currentPath)) {
-        void loadDirectory(currentPath);
-      }
+      // Refresh current directory to show updates
+      void loadDirectory(currentPath);
     });
 
     // Cleanup listeners
@@ -2392,6 +2390,35 @@ export default function ExplorerPage() {
       toast({
         title: "Error deleting item",
         description: typedError.message || "An unknown error occurred",
+        variant: "destructive",
+      });
+    }
+  };
+
+  const handleDeleteNoteFromTelegram = async (targetFile?: FileItem | null) => {
+    const file = targetFile ?? selectedFile;
+    if (!file || !file.isNoteMessage || !isNotesVirtualPath(currentPath)) {
+      return;
+    }
+
+    try {
+      await invoke("tg_delete_saved_item_permanently", {
+        sourcePath: file.path,
+      });
+
+      toast({
+        title: "Deleted from Telegram",
+        description: `${file.name} deleted permanently from Telegram`,
+      });
+
+      // Remove from current view
+      removeItemFromCurrentView(file.path);
+      savedPathCacheRef.current = {};
+    } catch (error) {
+      const typedError = error as TelegramError;
+      toast({
+        title: "Delete failed",
+        description: typedError.message || "Unable to delete note from Telegram",
         variant: "destructive",
       });
     }
@@ -4411,6 +4438,7 @@ export default function ExplorerPage() {
         onCopy={(file) => handleStageClipboardItem("copy", file)}
         onCut={(file) => handleStageClipboardItem("cut", file)}
         onDownload={handleDownloadSavedFile}
+        onDeleteNoteFromTelegram={handleDeleteNoteFromTelegram}
       />
 
       <TextInputDialog
