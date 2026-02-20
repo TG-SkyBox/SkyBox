@@ -553,7 +553,7 @@ pub async fn tg_upload_file_to_saved_messages(
 #[tauri::command]
 pub async fn tg_start_real_time_sync(app: tauri::AppHandle) -> Result<(), TelegramError> {
     log::info!("Starting real-time sync from command");
-    initialize_sync_task(app);
+    tokio::spawn(initialize_sync_task(app));
     Ok(())
 }
 
