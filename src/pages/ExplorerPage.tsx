@@ -912,8 +912,54 @@ export default function ExplorerPage() {
     // Listen for Telegram updates
     const unlistenUpdate = listen("tg-update-received", (event) => {
       console.log("Telegram update received:", event.payload);
-      // Refresh current directory to show updates
-      void loadDirectory(currentPath);
+      // Process the update to see if it contains new messages for the current Notes folder
+      const payload: any = event.payload;
+      console.log("Processing update payload:", payload);
+      
+      // The Rust code sends the raw debug format of the update as a string
+      // Parse the update string to detect new messages
+      const updateString = payload.update;
+      
+      // Check if this is a NewMessage update by looking for it in the string
+      if (typeof updateString === 'string') {
+        // Look for NewMessage patterns in the update string
+        if (updateString.includes('NewMessage') && updateString.includes('Message')) {
+          // This is a simplified check - in a real implementation we'd parse the update properly
+          // For now, we'll trigger a refresh when we detect a new message update
+          
+          // Check if we're in the Notes folder and refresh to show new messages
+          if (isNotesVirtualPath(currentPath)) {
+            // For the Notes folder, we want to refresh to pick up new messages
+            // But we should try to identify specific new messages to add directly
+            
+            // As a fallback, refresh the directory to show new messages
+            void loadDirectory(currentPath);
+            
+            // Scroll to bottom to show new messages
+            setTimeout(() => {
+              window.requestAnimationFrame(() => {
+                const area = explorerAreaRef.current;
+                if (area) {
+                  area.scrollTop = area.scrollHeight;
+                }
+              });
+            }, 100); // Small delay to ensure content is loaded
+          } else if (currentPath.startsWith('tg://')) {
+            // For other Telegram paths, refresh to show updates
+            void loadDirectory(currentPath);
+          }
+        } else {
+          // For other types of updates, refresh if in Telegram paths
+          if (currentPath.startsWith('tg://')) {
+            void loadDirectory(currentPath);
+          }
+        }
+      } else {
+        // Fallback to refresh if we can't parse the update
+        if (currentPath.startsWith('tg://')) {
+          void loadDirectory(currentPath);
+        }
+      }
     });
 
     // Cleanup listeners
@@ -1809,6 +1855,16 @@ export default function ExplorerPage() {
   // Sort: directories first, then by name
   const sortedFiles = useMemo(() => {
     if (currentPath.startsWith("tg://saved")) {
+      // For Notes folder, sort by date with newest at the bottom (like a messaging app)
+      if (isNotesVirtualPath(currentPath)) {
+        return [...filteredFiles].sort((a, b) => {
+          // Sort by modified date, oldest first so newest appears at bottom
+          const dateA = new Date(a.modifiedAt || '').getTime();
+          const dateB = new Date(b.modifiedAt || '').getTime();
+          return dateA - dateB; // Ascending order (oldest first, newest at bottom)
+        });
+      }
+      // For other saved folders, return as-is (they may have their own ordering)
       return filteredFiles;
     }
 
@@ -1817,7 +1873,7 @@ export default function ExplorerPage() {
       if (!a.isDirectory && b.isDirectory) return 1;
       return a.name.localeCompare(b.name);
     });
-  }, [currentPath, filteredFiles]);
+  }, [currentPath, filteredFiles, isNotesVirtualPath]);
 
   const isLoadingSavedFiles =
     currentPath.startsWith("tg://saved") &&

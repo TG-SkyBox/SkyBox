@@ -3,6 +3,7 @@ use grammers_client::client::updates::UpdatesLike;
 use log;
 use tauri::{AppHandle, Emitter};
 use tokio::time::{interval, Duration};
+use serde_json::json;
 
 // Background sync task that processes Telegram updates
 pub async fn start_real_time_sync(app: AppHandle) {
@@ -57,15 +58,17 @@ pub async fn start_real_time_sync(app: AppHandle) {
 
 // Process individual Telegram updates
 async fn process_update(app: &AppHandle, update: UpdatesLike) -> Result<(), TelegramError> {
-    log::info!("Received Telegram update: {:?}", update);
-    
-    // For now, just emit a generic update event
-    app.emit("tg-update-received", serde_json::json!({
+    // Simply emit the update with a timestamp
+    // We'll send the debug format for now, and the frontend can handle parsing
+    let update_json = json!({
+        "update": format!("{:?}", update),
         "timestamp": std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap()
             .as_secs()
-    })).map_err(|e| TelegramError {
+    });
+    
+    app.emit("tg-update-received", update_json).map_err(|e| TelegramError {
         message: format!("Failed to emit update event: {}", e),
     })?;
     
