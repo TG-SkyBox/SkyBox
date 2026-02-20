@@ -6,6 +6,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use tauri::Manager;
 use tokio::sync::Mutex;
+use log::LevelFilter;
 
 mod db;
 mod fs;
@@ -31,7 +32,12 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_fs::init())
         .plugin(tauri_plugin_shell::init())
-        .plugin(tauri_plugin_log::Builder::default().build())
+        .plugin(
+            tauri_plugin_log::Builder::new()
+                .level(LevelFilter::Info)                // global log level
+                .level_for("grammers", LevelFilter::Warn) // silence grammers spam
+                .build(),
+        )
         .invoke_handler(tauri::generate_handler![
             // FS Commands
             fs::read_directory,

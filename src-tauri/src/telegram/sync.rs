@@ -33,7 +33,6 @@ pub async fn start_real_time_sync(app: AppHandle) {
             
             match timeout_result {
                 Ok(Some(update)) => {
-                    log::debug!("Received Telegram update");
                     if let Err(e) = process_update(&app, update).await {
                         log::warn!("Failed to process Telegram update: {}", e);
                     }
