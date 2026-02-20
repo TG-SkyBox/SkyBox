@@ -51,18 +51,30 @@ export const TransferListPopover = forwardRef<HTMLDivElement, TransferListPopove
     const hasUploadItems = uploadItems.length > 0;
 
     const popoverContent = (
-      <div
-        ref={ref}
-        className="fixed right-4 top-16 z-[100] w-[360px] rounded-xl p-2 shadow-2xl shadow-black/50 border border-border"
-        style={{
-          backgroundColor: "rgba(30, 30, 30, 0.95)",
-          backdropFilter: "blur(32px) saturate(180%)",
-          WebkitBackdropFilter: "blur(32px) saturate(180%)",
-        }}
-        onMouseDown={(event) => event.stopPropagation()}
-        onMouseUp={(event) => event.stopPropagation()}
-        onClick={(event) => event.stopPropagation()}
-      >
+      <>
+        {/* Backdrop overlay to block interactions */}
+        <div 
+          className="fixed inset-0 z-[99]"
+          style={{
+            backgroundColor: "rgba(0, 0, 0, 0.3)",
+          }}
+          onMouseDown={(event) => event.stopPropagation()}
+          onMouseUp={(event) => event.stopPropagation()}
+          onClick={(event) => event.stopPropagation()}
+        />
+        {/* Main popup */}
+        <div
+          ref={ref}
+          className="fixed right-4 top-16 z-[100] w-[360px] rounded-xl p-2 shadow-2xl shadow-black/50 border border-border"
+          style={{
+            backgroundColor: "rgba(30, 30, 30, 0.95)",
+            backdropFilter: "blur(32px) saturate(180%)",
+            WebkitBackdropFilter: "blur(32px) saturate(180%)",
+          }}
+          onMouseDown={(event) => event.stopPropagation()}
+          onMouseUp={(event) => event.stopPropagation()}
+          onClick={(event) => event.stopPropagation()}
+        >
         <div className="relative z-10">
           {hasDownloadItem && downloadItem && (
             <div className={transferItemClassName}>
@@ -151,6 +163,7 @@ export const TransferListPopover = forwardRef<HTMLDivElement, TransferListPopove
           )}
         </div>
       </div>
+      </>
     );
 
     if (!mounted || (!hasDownloadItem && !hasUploadItems)) {
