@@ -246,16 +246,21 @@ export const ContextMenu = forwardRef<HTMLDivElement, ContextMenuProps>(
           </>
         ) : (
           <>
-            <button
-              className={contextMenuItemClassName}
-              onClick={() => {
-                onClose();
-                onOpen(contextTargetFile!);
-              }}
-            >
-              <FileText className="w-4 h-4 text-muted-foreground" />
-              <span>Open</span>
-            </button>
+            {contextTargetFile.isDirectory || 
+             contextTargetFile.extension?.match(/^(jpg|jpeg|png|gif|webp|svg|bmp|ico)$/i) ||
+             contextTargetFile.extension?.match(/^(mp4|mkv|avi|mov|wmv|webm)$/i) ||
+             contextTargetFile.extension?.match(/^(mp3|wav|flac|aac|ogg)$/i) ? (
+              <button
+                className={contextMenuItemClassName}
+                onClick={() => {
+                  onClose();
+                  onOpen(contextTargetFile!);
+                }}
+              >
+                <FileText className="w-4 h-4 text-muted-foreground" />
+                <span>Open</span>
+              </button>
+            ) : null}
 
             {!contextTargetFile.isDirectory && (
               <>
