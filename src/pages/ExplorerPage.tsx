@@ -9,6 +9,7 @@ import { SavedMediaViewer, type SavedMediaKind } from "@/components/skybox/Saved
 import { ConfirmDialog } from "@/components/skybox/ConfirmDialog";
 import { TextInputDialog } from "@/components/skybox/TextInputDialog";
 import { TransferListPopover } from "@/components/skybox/TransferListPopover";
+import { ContextMenu } from "@/components/skybox/ContextMenu";
 import { TelegramButton } from "@/components/skybox/TelegramButton";
 import { Progress } from "@/components/ui/progress";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -4361,245 +4362,36 @@ export default function ExplorerPage() {
         onClose={closeSavedMediaViewer}
       />
 
-      {contextMenuState && (
-        <div
-          ref={contextMenuRef}
-          className="fixed z-[80] min-w-[220px] rounded-xl bg-glass shadow-2xl shadow-black/50 backdrop-saturate-150 p-1"
-          style={{ left: `${contextMenuState.x}px`, top: `${contextMenuState.y}px` }}
-          onClick={(event) => event.stopPropagation()}
-          onContextMenu={(event) => event.preventDefault()}
-        >
-          {contextMenuState.isEmptyArea ? (
-            <>
-              <button
-                className={contextMenuItemClassName}
-                onClick={() => {
-                  closeContextMenu();
-                  void handleNewFolder();
-                }}
-              >
-                <FolderPlus className="w-4 h-4 text-muted-foreground" />
-                <span>New Folder</span>
-              </button>
-              <button
-                className={canPasteInCurrentPath ? contextMenuItemClassName : contextMenuDisabledItemClassName}
-                disabled={!canPasteInCurrentPath}
-                onClick={() => {
-                  if (!canPasteInCurrentPath) {
-                    return;
-                  }
-                  closeContextMenu();
-                  void handlePaste();
-                }}
-              >
-                <ClipboardPaste className="w-4 h-4 text-muted-foreground" />
-                <span>Paste</span>
-              </button>
-            </>
-          ) : isRecycleBinView ? (
-            <>
-              <button
-                className={contextMenuItemClassName}
-                onClick={() => {
-                  closeContextMenu();
-                  void handleRestoreFromRecycleBin(contextTargetFile);
-                }}
-              >
-                <RotateCcw className="w-4 h-4 text-muted-foreground" />
-                <span>Restore</span>
-              </button>
-
-              <div className="my-1 h-px bg-border/70" />
-
-              <button
-                className={contextMenuDangerItemClassName}
-                onClick={() => {
-                  closeContextMenu();
-                  handleContextDelete();
-                }}
-              >
-                <Trash2 className="w-4 h-4" />
-                <span>Delete</span>
-              </button>
-            </>
-          ) : isNotesMessageContextMenu ? (
-            <>
-              <button
-                className={contextMenuItemClassName}
-                onClick={() => {
-                  closeContextMenu();
-                  void handleCopyNoteText(contextTargetFile);
-                }}
-              >
-                <Copy className="w-4 h-4 text-muted-foreground" />
-                <span>Copy as text</span>
-              </button>
-
-              <button
-                className={contextMenuItemClassName}
-                onClick={() => {
-                  closeContextMenu();
-                  handleEditNoteMessage(contextTargetFile);
-                }}
-              >
-                <Edit3 className="w-4 h-4 text-muted-foreground" />
-                <span>Edit</span>
-              </button>
-
-              <div className="my-1 h-px bg-border/70" />
-
-              <button
-                className={contextMenuDangerItemClassName}
-                onClick={() => {
-                  closeContextMenu();
-                  handleContextDelete();
-                }}
-              >
-                <Trash2 className="w-4 h-4" />
-                <span>Delete</span>
-              </button>
-            </>
-          ) : (
-            <>
-              {!isMultiSelectionContextMenu && (
-                <button
-                  className={contextMenuItemClassName}
-                  onClick={() => {
-                    closeContextMenu();
-                    void handleContextOpen();
-                  }}
-                >
-                  <FolderOpen className="w-4 h-4 text-muted-foreground" />
-                  <span>Open</span>
-                </button>
-              )}
-
-              {contextTargetFile && !contextTargetFile.isDirectory && isSavedVirtualFilePath(contextTargetFile.path) && (
-                <button
-                  className={contextMenuItemClassName}
-                  onClick={() => {
-                    closeContextMenu();
-                    void handleDownloadSavedFile(contextTargetFile);
-                  }}
-                >
-                  <Download className="w-4 h-4 text-muted-foreground" />
-                  <span>Download</span>
-                </button>
-              )}
-
-              {contextTargetFile && !contextTargetFile.isDirectory && (
-                <button
-                  className={contextMenuItemClassName}
-                  onClick={() => {
-                    closeContextMenu();
-                    void handleShare(contextTargetFile);
-                  }}
-                >
-                  <Share2 className="w-4 h-4 text-muted-foreground" />
-                  <span>Share</span>
-                </button>
-              )}
-
-              {( !isMultiSelectionContextMenu
-                || (contextTargetFile && !contextTargetFile.isDirectory)
-              ) && <div className="my-1 h-px bg-border/70" />}
-
-              {!isNotesFolderView && (
-                <>
-                  <button
-                    className={contextMenuItemClassName}
-                    onClick={() => {
-                      if (!contextTargetFile) {
-                        return;
-                      }
-                      closeContextMenu();
-                      handleStageClipboardItem("cut", contextTargetFile);
-                    }}
-                  >
-                    <Scissors className="w-4 h-4 text-muted-foreground" />
-                    <span>Cut</span>
-                  </button>
-                  <button
-                    className={contextMenuItemClassName}
-                    onClick={() => {
-                      if (!contextTargetFile) {
-                        return;
-                      }
-                      closeContextMenu();
-                      handleStageClipboardItem("copy", contextTargetFile);
-                    }}
-                  >
-                    <Copy className="w-4 h-4 text-muted-foreground" />
-                    <span>Copy</span>
-                  </button>
-                  {!isMultiSelectionContextMenu && (
-                    <button
-                      className={canPasteInCurrentPath ? contextMenuItemClassName : contextMenuDisabledItemClassName}
-                      disabled={!canPasteInCurrentPath}
-                      onClick={() => {
-                        if (!canPasteInCurrentPath) {
-                          return;
-                        }
-                        closeContextMenu();
-                        void handlePaste();
-                      }}
-                    >
-                      <ClipboardPaste className="w-4 h-4 text-muted-foreground" />
-                      <span>Paste</span>
-                    </button>
-                  )}
-                </>
-              )}
-
-              <div className="my-1 h-px bg-border/70" />
-
-              {!isMultiSelectionContextMenu && (
-                <button
-                  className={contextMenuItemClassName}
-                  onClick={() => {
-                    closeContextMenu();
-                    void handleRename(contextTargetFile);
-                  }}
-                >
-                  <Edit3 className="w-4 h-4 text-muted-foreground" />
-                  <span>Rename</span>
-                </button>
-              )}
-              <button
-                className={isProtectedContextFolder ? contextMenuDisabledItemClassName : contextMenuDangerItemClassName}
-                disabled={isProtectedContextFolder}
-                onClick={() => {
-                  if (isProtectedContextFolder) {
-                    return;
-                  }
-                  closeContextMenu();
-                  handleContextDelete();
-                }}
-              >
-                <Trash2 className="w-4 h-4" />
-                <span>Delete</span>
-              </button>
-
-              {!isMultiSelectionContextMenu && (
-                <>
-                  <div className="my-1 h-px bg-border/70" />
-
-                  <button
-                    className={contextMenuItemClassName}
-                    onClick={() => {
-                      closeContextMenu();
-                      handleContextDetails(contextTargetFile);
-                    }}
-                  >
-                    <Info className="w-4 h-4 text-muted-foreground" />
-                    <span>Details</span>
-                  </button>
-                </>
-              )}
-            </>
-          )}
-        </div>
-      )}
+      <ContextMenu
+        ref={contextMenuRef}
+        contextMenuState={contextMenuState}
+        selectedPaths={selectedPaths}
+        clipboardItem={clipboardItem}
+        favorites={favorites}
+        currentPath={currentPath}
+        isRecycleBinView={isRecycleBinView}
+        isNotesFolderView={isNotesFolderView}
+        isNotesMessageContextMenu={isNotesMessageContextMenu}
+        isMultiSelectionContextMenu={isMultiSelectionContextMenu}
+        contextTargetFile={contextTargetFile}
+        canPasteInCurrentPath={canPasteInCurrentPath}
+        onClose={closeContextMenu}
+        onOpen={handleContextOpen}
+        onDelete={handleContextDelete}
+        onDetails={handleContextDetails}
+        onCopyPath={handleCopyPath}
+        onToggleFavorite={handleToggleFavorite}
+        onRename={handleRename}
+        onNewFolder={handleNewFolder}
+        onPaste={handlePaste}
+        onShare={handleShare}
+        onCopyNoteText={handleCopyNoteText}
+        onEditNoteMessage={handleEditNoteMessage}
+        onRestoreFromRecycleBin={handleRestoreFromRecycleBin}
+        onCopy={(file) => handleStageClipboardItem("copy", file)}
+        onCut={(file) => handleStageClipboardItem("cut", file)}
+        onDownload={handleDownloadSavedFile}
+      />
 
       <TextInputDialog
         isOpen={isNewFolderDialogOpen}
