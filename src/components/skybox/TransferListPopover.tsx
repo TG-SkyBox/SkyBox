@@ -1,4 +1,5 @@
-import { forwardRef } from "react";
+import { forwardRef, useEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { Progress } from "@/components/ui/progress";
 
 interface TransferDownloadItem {
@@ -28,7 +29,7 @@ interface TransferListPopoverProps {
   onCancelUploads: () => void | Promise<void>;
 }
 
-const transferItemClassName = "rounded-xl bg-secondary/25 px-3 py-2 backdrop-blur-md backdrop-saturate-150";
+const transferItemClassName = "rounded-xl bg-secondary/25 px-3 py-2";
 
 export const TransferListPopover = forwardRef<HTMLDivElement, TransferListPopoverProps>(
   function TransferListPopover({
@@ -38,22 +39,30 @@ export const TransferListPopover = forwardRef<HTMLDivElement, TransferListPopove
     canCancelUploads,
     onCancelUploads,
   }, ref) {
+    const [mounted, setMounted] = useState(false);
+    const popoverRef = useRef<HTMLDivElement>(null);
+
+    useEffect(() => {
+      setMounted(true);
+      return () => setMounted(false);
+    }, []);
+
     const hasDownloadItem = !!downloadItem;
     const hasUploadItems = uploadItems.length > 0;
 
-    return (
+    const popoverContent = (
       <div
         ref={ref}
-        className="fixed right-4 top-[calc(100vh-200px)] z-[95] w-[360px] rounded-xl p-2 shadow-2xl shadow-black/50 border border-border"
+        className="fixed right-4 top-16 z-[100] w-[360px] rounded-xl p-2 shadow-2xl shadow-black/50 border border-border"
+        style={{
+          backgroundColor: "rgba(30, 30, 30, 0.95)",
+          backdropFilter: "blur(32px) saturate(180%)",
+          WebkitBackdropFilter: "blur(32px) saturate(180%)",
+        }}
         onMouseDown={(event) => event.stopPropagation()}
+        onMouseUp={(event) => event.stopPropagation()}
+        onClick={(event) => event.stopPropagation()}
       >
-        <div 
-          className="absolute inset-0 rounded-xl bg-background/80"
-          style={{
-            backdropFilter: "blur(32px)",
-            WebkitBackdropFilter: "blur(32px)",
-          }}
-        />
         <div className="relative z-10">
           {hasDownloadItem && downloadItem && (
             <div className={transferItemClassName}>
@@ -143,6 +152,12 @@ export const TransferListPopover = forwardRef<HTMLDivElement, TransferListPopove
         </div>
       </div>
     );
+
+    if (!mounted || (!hasDownloadItem && !hasUploadItems)) {
+      return null;
+    }
+
+    return createPortal(popoverContent, document.body);
   },
 );
 
