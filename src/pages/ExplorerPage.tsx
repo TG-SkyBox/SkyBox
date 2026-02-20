@@ -904,6 +904,46 @@ export default function ExplorerPage() {
     };
   }, [activeDownload]);
 
+  // Real-time Telegram sync
+  useEffect(() => {
+    // Start real-time sync when component mounts
+    void invoke("tg_start_real_time_sync");
+
+    // Listen for new messages
+    const unlistenNewMessage = listen("tg-new-message", (event) => {
+      console.log("New message received:", event.payload);
+      // Refresh current directory if in Saved Messages
+      if (isSavedVirtualFilePath(currentPath)) {
+        void loadDirectory(currentPath);
+      }
+    });
+
+    // Listen for message edits
+    const unlistenMessageEdited = listen("tg-message-edited", (event) => {
+      console.log("Message edited:", event.payload);
+      // Refresh current directory if in Saved Messages
+      if (isSavedVirtualFilePath(currentPath)) {
+        void loadDirectory(currentPath);
+      }
+    });
+
+    // Listen for message deletions
+    const unlistenMessagesDeleted = listen("tg-messages-deleted", (event) => {
+      console.log("Messages deleted:", event.payload);
+      // Refresh current directory if in Saved Messages
+      if (isSavedVirtualFilePath(currentPath)) {
+        void loadDirectory(currentPath);
+      }
+    });
+
+    // Cleanup listeners
+    return () => {
+      void unlistenNewMessage.then((fn) => fn());
+      void unlistenMessageEdited.then((fn) => fn());
+      void unlistenMessagesDeleted.then((fn) => fn());
+    };
+  }, [currentPath]);
+
   useEffect(() => {
     if (!contextMenuState) {
       return;
