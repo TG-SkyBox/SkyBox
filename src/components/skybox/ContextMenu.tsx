@@ -181,7 +181,7 @@ export const ContextMenu = forwardRef<HTMLDivElement, ContextMenuProps>(
               <span>Restore</span>
             </button>
 
-            <div className="my-1 h-px bg-border/70" />
+            <div className="my-1 h-px bg-border" />
 
             <button
               className={contextMenuDangerItemClassName}
@@ -231,6 +231,8 @@ export const ContextMenu = forwardRef<HTMLDivElement, ContextMenuProps>(
               <span>Share</span>
             </button>
 
+            <div className="my-1 h-px bg-border" />
+
             <button
               className={contextMenuDangerItemClassName}
               onClick={() => {
@@ -255,27 +257,31 @@ export const ContextMenu = forwardRef<HTMLDivElement, ContextMenuProps>(
               <span>Open</span>
             </button>
 
-            <button
-              className={contextMenuItemClassName}
-              onClick={() => {
-                onClose();
-                onDownload(contextTargetFile!);
-              }}
-            >
-              <ArrowDownToLine className="w-4 h-4 text-muted-foreground" />
-              <span>Download</span>
-            </button>
+            {!contextTargetFile.isDirectory && (
+              <>
+                <button
+                  className={contextMenuItemClassName}
+                  onClick={() => {
+                    onClose();
+                    onDownload(contextTargetFile!);
+                  }}
+                >
+                  <ArrowDownToLine className="w-4 h-4 text-muted-foreground" />
+                  <span>Download</span>
+                </button>
 
-            <button
-              className={contextMenuItemClassName}
-              onClick={() => {
-                onClose();
-                onShare(contextTargetFile!);
-              }}
-            >
-              <Share className="w-4 h-4 text-muted-foreground" />
-              <span>Share</span>
-            </button>
+                <button
+                  className={contextMenuItemClassName}
+                  onClick={() => {
+                    onClose();
+                    onShare(contextTargetFile!);
+                  }}
+                >
+                  <Share className="w-4 h-4 text-muted-foreground" />
+                  <span>Share</span>
+                </button>
+              </>
+            )}
 
             <button
               className={contextMenuItemClassName}
@@ -299,6 +305,10 @@ export const ContextMenu = forwardRef<HTMLDivElement, ContextMenuProps>(
               <span>Cut</span>
             </button>
 
+            {(contextTargetFile && !contextTargetFile.isDirectory) && (
+              <div className="my-1 h-px bg-border" />
+            )}
+
             <button
               className={contextMenuItemClassName}
               onClick={() => {
@@ -320,6 +330,8 @@ export const ContextMenu = forwardRef<HTMLDivElement, ContextMenuProps>(
               <Trash2 className="w-4 h-4" />
               <span>Delete</span>
             </button>
+
+            <div className="my-1 h-px bg-border" />
 
             <button
               className={contextMenuItemClassName}
