@@ -57,10 +57,13 @@ pub async fn start_real_time_sync(app: AppHandle) {
 
 // Process individual Telegram updates
 async fn process_update(app: &AppHandle, update: UpdatesLike) -> Result<(), TelegramError> {
-    // Simply emit the update with a timestamp
-    // We'll send the debug format for now, and the frontend can handle parsing
+    // Convert the update to a string and check if it contains NewMessage
+    let update_str = format!("{:?}", update);
+    let has_new_message = update_str.contains("NewMessage");
+    
     let update_json = json!({
-        "update": format!("{:?}", update),
+        "has_new_messages": has_new_message,
+        "raw_update": update_str,
         "timestamp": std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap()

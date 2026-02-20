@@ -590,10 +590,6 @@ impl Database {
                         message: format!("Failed to read created_at: {}", e),
                     })?;
 
-                // Debug logging
-                println!("[DB DEBUG] Found session - id: {}, phone: {}, has_session_data: {}, has_profile_photo: {}, created_at: {}", 
-                         id, phone, session_data.is_some(), profile_photo.is_some(), created_at);
-
                 Ok(Some(Session {
                     id,
                     phone,
