@@ -87,6 +87,7 @@ pub fn run() {
             telegram::tg_cancel_saved_file_upload,
             telegram::tg_prepare_saved_media_preview,
             telegram::tg_upload_file_to_saved_messages,
+            telegram::tg_start_real_time_sync,
             // Logger Commands
             utils::logger::log_debug,
             utils::logger::log_info,

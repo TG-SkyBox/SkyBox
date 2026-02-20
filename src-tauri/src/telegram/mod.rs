@@ -288,6 +288,7 @@ mod login;
 pub mod messages;
 mod photo;
 mod session;
+mod sync;
 pub mod utils;
 
 // ===== Re-export implementation functions =====
@@ -300,6 +301,7 @@ use login::{
 use session::{tg_logout_impl, tg_restore_session_impl};
 
 use photo::tg_get_my_profile_photo_impl;
+use sync::initialize_sync_task;
 
 use messages::{
     tg_backfill_saved_messages_batch_impl, tg_cancel_saved_file_download_impl,
@@ -541,6 +543,18 @@ pub async fn tg_upload_file_to_saved_messages(
 ) -> Result<crate::db::TelegramMessage, TelegramError> {
     tg_upload_file_to_saved_messages_impl(app, db.inner().clone(), file_name, file_bytes, file_path)
         .await
+}
+
+// ===== Utility Functions =====
+
+// Function to disconnect the Telegram client gracefully when the app closes
+// ===== Real-time Sync Commands =====
+
+#[tauri::command]
+pub async fn tg_start_real_time_sync(app: tauri::AppHandle) -> Result<(), TelegramError> {
+    log::info!("Starting real-time sync from command");
+    initialize_sync_task(app);
+    Ok(())
 }
 
 // ===== Utility Functions =====
