@@ -57,7 +57,6 @@ export default function LoadingPage() {
 
   useEffect(() => {
     const checkLoginStatus = async () => {
-      logger.info("LoadingPage: Checking login status on mount");
 
       try {
         const session: Session | null = await invoke("db_get_session");

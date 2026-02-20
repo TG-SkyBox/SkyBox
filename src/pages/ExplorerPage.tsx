@@ -916,46 +916,28 @@ export default function ExplorerPage() {
       const payload: any = event.payload;
       console.log("Processing update payload:", payload);
       
-      // The Rust code sends the raw debug format of the update as a string
-      // Parse the update string to detect new messages
-      const updateString = payload.update;
-      
-      // Check if this is a NewMessage update by looking for it in the string
-      if (typeof updateString === 'string') {
-        // Look for NewMessage patterns in the update string
-        if (updateString.includes('NewMessage') && updateString.includes('Message')) {
-          // This is a simplified check - in a real implementation we'd parse the update properly
-          // For now, we'll trigger a refresh when we detect a new message update
+      // Check if this update contains new messages
+      if (payload && typeof payload === 'object' && payload.has_new_messages === true) {
+        // Check if we're in the Notes folder and refresh to show new messages
+        if (isNotesVirtualPath(currentPath)) {
+          // For the Notes folder, refresh to pick up new messages
+          void loadDirectory(currentPath);
           
-          // Check if we're in the Notes folder and refresh to show new messages
-          if (isNotesVirtualPath(currentPath)) {
-            // For the Notes folder, we want to refresh to pick up new messages
-            // But we should try to identify specific new messages to add directly
-            
-            // As a fallback, refresh the directory to show new messages
-            void loadDirectory(currentPath);
-            
-            // Scroll to bottom to show new messages
-            setTimeout(() => {
-              window.requestAnimationFrame(() => {
-                const area = explorerAreaRef.current;
-                if (area) {
-                  area.scrollTop = area.scrollHeight;
-                }
-              });
-            }, 100); // Small delay to ensure content is loaded
-          } else if (currentPath.startsWith('tg://')) {
-            // For other Telegram paths, refresh to show updates
-            void loadDirectory(currentPath);
-          }
-        } else {
-          // For other types of updates, refresh if in Telegram paths
-          if (currentPath.startsWith('tg://')) {
-            void loadDirectory(currentPath);
-          }
+          // Scroll to bottom to show new messages
+          setTimeout(() => {
+            window.requestAnimationFrame(() => {
+              const area = explorerAreaRef.current;
+              if (area) {
+                area.scrollTop = area.scrollHeight;
+              }
+            });
+          }, 100); // Small delay to ensure content is loaded
+        } else if (currentPath.startsWith('tg://')) {
+          // For other Telegram paths, refresh to show updates
+          void loadDirectory(currentPath);
         }
       } else {
-        // Fallback to refresh if we can't parse the update
+        // For other types of updates, refresh if in Telegram paths
         if (currentPath.startsWith('tg://')) {
           void loadDirectory(currentPath);
         }
