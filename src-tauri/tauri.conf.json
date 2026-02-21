@@ -1,6 +1,6 @@
 {
   "$schema": "../node_modules/@tauri-apps/cli/config.schema.json",
-  "productName": "SkyBox",
+  "productName": "SkyBox Desktop",
   "version": "1.0.20",
   "identifier": "com.skybox.app",
   "build": {
@@ -12,7 +12,7 @@
   "app": {
     "windows": [
       {
-        "title": "SkyBox",
+        "title": "SkyBox Desktop",
         "width": 1200,
         "height": 800,
         "resizable": true,
