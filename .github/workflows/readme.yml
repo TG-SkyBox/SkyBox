@@ -48,11 +48,11 @@ jobs:
 
           | Platform | Download |
           |----------|----------|
-          | Windows (MSI) | [Download](https://github.com/TG-SkyBox/SkyBox/raw/download/{version}/SkyBox_{version}_x64_en-US.msi) |
-          | Windows (NSIS) | [Download](https://github.com/TG-SkyBox/SkyBox/raw/download/{version}/SkyBox_{version}_x64-setup.exe) |
-          | macOS (DMG) | [Download](https://github.com/TG-SkyBox/SkyBox/raw/download/{version}/SkyBox_{version}_aarch64.dmg) |
-          | Linux (AppImage) | [Download](https://github.com/TG-SkyBox/SkyBox/raw/download/{version}/SkyBox_{version}_amd64.AppImage) |
-          | Linux (DEB) | [Download](https://github.com/TG-SkyBox/SkyBox/raw/download/{version}/SkyBox_{version}_amd64.deb) |
+          | Windows (MSI) | [Download](https://raw.githubusercontent.com/TG-SkyBox/SkyBox/download/{version}/SkyBox_{version}_x64_en-US.msi) |
+          | Windows (NSIS) | [Download](https://raw.githubusercontent.com/TG-SkyBox/SkyBox/download/{version}/SkyBox_{version}_x64-setup.exe) |
+          | macOS (DMG) | [Download](https://raw.githubusercontent.com/TG-SkyBox/SkyBox/download/{version}/SkyBox_{version}_aarch64.dmg) |
+          | Linux (AppImage) | [Download](https://raw.githubusercontent.com/TG-SkyBox/SkyBox/download/{version}/SkyBox_{version}_amd64.AppImage) |
+          | Linux (DEB) | [Download](https://raw.githubusercontent.com/TG-SkyBox/SkyBox/download/{version}/SkyBox_{version}_amd64.deb) |
 
           ---
 
