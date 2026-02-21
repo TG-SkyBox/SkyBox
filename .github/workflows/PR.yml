@@ -1,4 +1,4 @@
-name: Full App Check
+name: Check-PR-status
 
 on:
   push:
@@ -45,7 +45,8 @@ jobs:
             libxdamage-dev \
             libxext-dev \
             libxfixes-dev \
-            libsoup-3.0-dev
+            libsoup-3.0-dev \
+            libjavascriptcoregtk-4.1-dev
        
       - name: Set PKG_CONFIG_PATH
         if: runner.os == 'Linux'
