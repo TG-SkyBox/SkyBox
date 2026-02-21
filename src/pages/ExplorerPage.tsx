@@ -1000,7 +1000,7 @@ export default function ExplorerPage() {
     const unlistenUpdate = listen("tg-update-received", (event) => {
       console.log("Telegram update received:", event.payload);
       // Process the update to see if it contains new messages for the current Notes folder
-      const payload: any = event.payload;
+      const payload = event.payload as { has_new_messages?: boolean; raw_update?: string; timestamp?: number };
       console.log("Processing update payload:", payload);
 
       // Check if this update contains new messages
@@ -1278,7 +1278,16 @@ export default function ExplorerPage() {
   // Load user info from session
   const loadUserInfo = async () => {
     try {
-      const session: any = await invoke("db_get_session");
+      const session = await invoke<{ 
+        id: number; 
+        phone: string; 
+        session_data?: string; 
+        profile_photo?: string; 
+        first_name?: string; 
+        last_name?: string; 
+        username?: string; 
+        created_at: string; 
+      }>("db_get_session");
       if (session) {
         // If we have cached user info, use it immediately
         if (session.first_name || session.last_name || session.username) {

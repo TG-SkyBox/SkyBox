@@ -198,7 +198,7 @@ export default function LoginPage() {
       let title = "Error";
       let description =
         typedError.message || "Failed to send verification code";
-      let variant: "destructive" | "default" = "destructive";
+      const variant: "destructive" | "default" = "destructive";
 
       if (description.includes("Network connection lost")) {
         title = "Connection Error";
