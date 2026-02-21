@@ -1,19 +1,19 @@
 use super::{TelegramError, AUTH_STATE};
 use grammers_client::client::updates::UpdatesLike;
 use log;
+use serde_json::json;
 use tauri::{AppHandle, Emitter};
 use tokio::time::{interval, Duration};
-use serde_json::json;
 
 // Background sync task that processes Telegram updates
 pub async fn start_real_time_sync(app: AppHandle) {
     log::info!("Starting real-time Telegram sync background task");
-    
+
     let mut interval = interval(Duration::from_secs(2)); // Check for updates every 2 seconds
-    
+
     loop {
         interval.tick().await;
-        
+
         // Check if we have an active session
         let updates_stream = {
             let guard = AUTH_STATE.lock().await;
@@ -23,14 +23,12 @@ pub async fn start_real_time_sync(app: AppHandle) {
                 None
             }
         };
-        
+
         if let Some(updates) = updates_stream {
             // Try to receive updates with a short timeout
-            let timeout_result = tokio::time::timeout(
-                Duration::from_millis(100),
-                updates.lock().await.recv()
-            ).await;
-            
+            let timeout_result =
+                tokio::time::timeout(Duration::from_millis(100), updates.lock().await.recv()).await;
+
             match timeout_result {
                 Ok(Some(update)) => {
                     if let Err(e) = process_update(&app, update).await {
@@ -51,7 +49,7 @@ pub async fn start_real_time_sync(app: AppHandle) {
             tokio::time::sleep(Duration::from_secs(5)).await;
         }
     }
-    
+
     log::info!("Real-time sync task stopped");
 }
 
@@ -60,7 +58,7 @@ async fn process_update(app: &AppHandle, update: UpdatesLike) -> Result<(), Tele
     // Convert the update to a string and check if it contains NewMessage
     let update_str = format!("{:?}", update);
     let has_new_message = update_str.contains("NewMessage");
-    
+
     let update_json = json!({
         "has_new_messages": has_new_message,
         "raw_update": update_str,
@@ -69,11 +67,12 @@ async fn process_update(app: &AppHandle, update: UpdatesLike) -> Result<(), Tele
             .unwrap()
             .as_secs()
     });
-    
-    app.emit("tg-update-received", update_json).map_err(|e| TelegramError {
-        message: format!("Failed to emit update event: {}", e),
-    })?;
-    
+
+    app.emit("tg-update-received", update_json)
+        .map_err(|e| TelegramError {
+            message: format!("Failed to emit update event: {}", e),
+        })?;
+
     Ok(())
 }
 

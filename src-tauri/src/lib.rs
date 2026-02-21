@@ -1,12 +1,12 @@
 // Prevents additional console window on Windows in release, DO NOT REMOVE!!
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+use log::LevelFilter;
 use once_cell::sync::Lazy;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use tauri::Manager;
 use tokio::sync::Mutex;
-use log::LevelFilter;
 
 mod db;
 mod fs;
@@ -34,7 +34,7 @@ pub fn run() {
         .plugin(tauri_plugin_shell::init())
         .plugin(
             tauri_plugin_log::Builder::new()
-                .level(LevelFilter::Info)                // global log level
+                .level(LevelFilter::Info) // global log level
                 .level_for("grammers", LevelFilter::Warn) // silence grammers spam
                 .build(),
         )

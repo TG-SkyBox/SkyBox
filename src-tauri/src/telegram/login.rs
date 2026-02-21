@@ -99,36 +99,35 @@ pub async fn tg_request_auth_code_impl(
 
         let s = e.to_string().to_lowercase();
 
-        let error_message: String = if (s.contains("dropped") || s.contains("cancelled"))
-            && !s.contains("timeout")
-        {
-            format!(
+        let error_message: String =
+            if (s.contains("dropped") || s.contains("cancelled")) && !s.contains("timeout") {
+                format!(
                 "Connection interrupted: {}. Please check your internet connection and try again.",
                 e
             )
-        } else if s.contains("timeout") {
-            format!(
-                "Request timed out: {}. Please check your network connection and try again.",
-                e
-            )
-        } else if s.contains("invalid") {
-            format!(
-                "Invalid phone number format: {}. Please check the number and try again.",
-                e
-            )
-        } else if s.contains("flood") {
-            format!(
-                "Too many requests: {}. Please wait a few minutes before trying again.",
-                e
-            )
-        } else if (s.contains("api_id") || s.contains("api")) && !s.contains("invalid") {
-            format!(
-                "Authentication service error: {}. Please try again later.",
-                e
-            )
-        } else {
-            format!("Failed to request auth code: {}", e)
-        };
+            } else if s.contains("timeout") {
+                format!(
+                    "Request timed out: {}. Please check your network connection and try again.",
+                    e
+                )
+            } else if s.contains("invalid") {
+                format!(
+                    "Invalid phone number format: {}. Please check the number and try again.",
+                    e
+                )
+            } else if s.contains("flood") {
+                format!(
+                    "Too many requests: {}. Please wait a few minutes before trying again.",
+                    e
+                )
+            } else if (s.contains("api_id") || s.contains("api")) && !s.contains("invalid") {
+                format!(
+                    "Authentication service error: {}. Please try again later.",
+                    e
+                )
+            } else {
+                format!("Failed to request auth code: {}", e)
+            };
 
         TelegramError {
             message: error_message,
