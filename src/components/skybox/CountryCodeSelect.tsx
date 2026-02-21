@@ -38,7 +38,11 @@ interface CountryCodeSelectProps {
   fullWidth?: boolean;
 }
 
-export function CountryCodeSelect({ value, onChange, fullWidth }: CountryCodeSelectProps) {
+export function CountryCodeSelect({
+  value,
+  onChange,
+  fullWidth,
+}: CountryCodeSelectProps) {
   const [isOpen, setIsOpen] = useState(false);
   const [search, setSearch] = useState("");
   const dropdownRef = useRef<HTMLDivElement>(null);
@@ -46,7 +50,10 @@ export function CountryCodeSelect({ value, onChange, fullWidth }: CountryCodeSel
 
   useEffect(() => {
     function handleClickOutside(event: MouseEvent) {
-      if (dropdownRef.current && !dropdownRef.current.contains(event.target as Node)) {
+      if (
+        dropdownRef.current &&
+        !dropdownRef.current.contains(event.target as Node)
+      ) {
         setIsOpen(false);
       }
     }
@@ -64,19 +71,23 @@ export function CountryCodeSelect({ value, onChange, fullWidth }: CountryCodeSel
     (c) =>
       c.name.toLowerCase().includes(search.toLowerCase()) ||
       c.dialCode.includes(search) ||
-      c.code.toLowerCase().includes(search.toLowerCase())
+      c.code.toLowerCase().includes(search.toLowerCase()),
   );
 
   return (
-    <div className={`relative ${fullWidth ? 'w-full' : ''}`} ref={dropdownRef}>
+    <div className={`relative ${fullWidth ? "w-full" : ""}`} ref={dropdownRef}>
       <button
         type="button"
         onClick={() => setIsOpen(!isOpen)}
-        className={`flex items-center gap-3 px-4 py-3 bg-secondary border border-border rounded-lg hover:bg-telegram-panel-2 transition-colors duration-150 ${fullWidth ? 'w-full' : 'min-w-[100px]'}`}
+        className={`flex items-center gap-3 px-4 py-3 bg-secondary border border-border rounded-lg hover:bg-telegram-panel-2 transition-colors duration-150 ${fullWidth ? "w-full" : "min-w-[100px]"}`}
       >
         <span className="text-lg">{value.flag}</span>
-        <span className="text-body text-foreground flex-1 text-left">{value.name}</span>
-        <ChevronDown className={`w-4 h-4 text-muted-foreground transition-transform ${isOpen ? 'rotate-180' : ''}`} />
+        <span className="text-body text-foreground flex-1 text-left">
+          {value.name}
+        </span>
+        <ChevronDown
+          className={`w-4 h-4 text-muted-foreground transition-transform ${isOpen ? "rotate-180" : ""}`}
+        />
       </button>
 
       {isOpen && (
@@ -109,8 +120,12 @@ export function CountryCodeSelect({ value, onChange, fullWidth }: CountryCodeSel
                 }`}
               >
                 <span className="text-lg">{country.flag}</span>
-                <span className="text-body text-foreground flex-1">{country.name}</span>
-                <span className="text-small text-muted-foreground">{country.dialCode}</span>
+                <span className="text-body text-foreground flex-1">
+                  {country.name}
+                </span>
+                <span className="text-small text-muted-foreground">
+                  {country.dialCode}
+                </span>
               </button>
             ))}
           </div>

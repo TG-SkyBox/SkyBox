@@ -32,61 +32,71 @@ interface TransferListPopoverProps {
 
 const transferItemClassName = "rounded-xl bg-secondary/25 px-3 py-2";
 
-export const TransferListPopover = forwardRef<HTMLDivElement, TransferListPopoverProps>(
-  function TransferListPopover({
+export const TransferListPopover = forwardRef<
+  HTMLDivElement,
+  TransferListPopoverProps
+>(function TransferListPopover(
+  {
     downloadItem,
     uploadSummaryLabel,
     uploadItems,
     canCancelUploads,
     onCancelUploads,
     onClose,
-  }, ref) {
-    const [mounted, setMounted] = useState(false);
-    const popoverRef = useRef<HTMLDivElement>(null);
+  },
+  ref,
+) {
+  const [mounted, setMounted] = useState(false);
+  const popoverRef = useRef<HTMLDivElement>(null);
 
-    useEffect(() => {
-      setMounted(true);
-      return () => setMounted(false);
-    }, []);
+  useEffect(() => {
+    setMounted(true);
+    return () => setMounted(false);
+  }, []);
 
-    const hasDownloadItem = !!downloadItem;
-    const hasUploadItems = uploadItems.length > 0;
+  const hasDownloadItem = !!downloadItem;
+  const hasUploadItems = uploadItems.length > 0;
 
-    const popoverContent = (
-      <>
-        {/* Backdrop overlay to block interactions */}
-        <div 
-          className="fixed inset-0 z-[99]"
-          style={{
-            backgroundColor: "rgba(0, 0, 0, 0.3)",
-          }}
-          onMouseDown={(event) => event.stopPropagation()}
-          onMouseUp={(event) => event.stopPropagation()}
-          onClick={(event) => {
-            event.stopPropagation();
-            onClose?.();
-          }}
-        />
-        {/* Main popup */}
-        <div
-          ref={ref}
-          className="fixed right-4 top-16 z-[100] w-[360px] rounded-xl p-2 shadow-2xl shadow-black/50 border border-border"
-          style={{
-            backgroundColor: "rgba(30, 30, 30, 0.95)",
-            backdropFilter: "blur(32px) saturate(180%)",
-            WebkitBackdropFilter: "blur(32px) saturate(180%)",
-          }}
-          onMouseDown={(event) => event.stopPropagation()}
-          onMouseUp={(event) => event.stopPropagation()}
-          onClick={(event) => event.stopPropagation()}
-        >
+  const popoverContent = (
+    <>
+      {/* Backdrop overlay to block interactions */}
+      <div
+        className="fixed inset-0 z-[99]"
+        style={{
+          backgroundColor: "rgba(0, 0, 0, 0.3)",
+        }}
+        onMouseDown={(event) => event.stopPropagation()}
+        onMouseUp={(event) => event.stopPropagation()}
+        onClick={(event) => {
+          event.stopPropagation();
+          onClose?.();
+        }}
+      />
+      {/* Main popup */}
+      <div
+        ref={ref}
+        className="fixed right-4 top-16 z-[100] w-[360px] rounded-xl p-2 shadow-2xl shadow-black/50 border border-border"
+        style={{
+          backgroundColor: "rgba(30, 30, 30, 0.95)",
+          backdropFilter: "blur(32px) saturate(180%)",
+          WebkitBackdropFilter: "blur(32px) saturate(180%)",
+        }}
+        onMouseDown={(event) => event.stopPropagation()}
+        onMouseUp={(event) => event.stopPropagation()}
+        onClick={(event) => event.stopPropagation()}
+      >
         <div className="relative z-10">
           {hasDownloadItem && downloadItem && (
             <div className={transferItemClassName}>
               <div className="mb-2 flex items-center justify-between gap-2">
                 <div className="min-w-0">
-                  <p className="text-body font-medium text-foreground">Download</p>
-                  <p className="text-small truncate text-muted-foreground" title={downloadItem.fileName}>
+                  <p className="text-body font-medium text-foreground">
+                    Download
+                  </p>
+                  <p
+                    className="text-small truncate text-muted-foreground"
+                    title={downloadItem.fileName}
+                  >
                     {downloadItem.fileName}
                   </p>
                 </div>
@@ -104,10 +114,15 @@ export const TransferListPopover = forwardRef<HTMLDivElement, TransferListPopove
                   </button>
                 )}
               </div>
-              <p className="text-small text-muted-foreground">{downloadItem.statusLabel}</p>
-              {downloadItem.detailMessage && downloadItem.detailMessage !== downloadItem.statusLabel && (
-                <p className="text-small text-muted-foreground/80">{downloadItem.detailMessage}</p>
-              )}
+              <p className="text-small text-muted-foreground">
+                {downloadItem.statusLabel}
+              </p>
+              {downloadItem.detailMessage &&
+                downloadItem.detailMessage !== downloadItem.statusLabel && (
+                  <p className="text-small text-muted-foreground/80">
+                    {downloadItem.detailMessage}
+                  </p>
+                )}
               <Progress
                 value={downloadItem.progressPercent}
                 className="mt-2 h-1.5 bg-secondary/60"
@@ -115,15 +130,21 @@ export const TransferListPopover = forwardRef<HTMLDivElement, TransferListPopove
             </div>
           )}
 
-          {hasDownloadItem && hasUploadItems && <div className="my-2 h-px bg-secondary/55" />}
+          {hasDownloadItem && hasUploadItems && (
+            <div className="my-2 h-px bg-secondary/55" />
+          )}
 
           {hasUploadItems && (
             <div className="space-y-2">
               <div className="px-1">
                 <div className="flex items-center justify-between gap-2">
                   <div>
-                    <p className="text-body font-medium text-foreground">Uploads</p>
-                    <p className="text-small text-muted-foreground tabular-nums">{uploadSummaryLabel}</p>
+                    <p className="text-body font-medium text-foreground">
+                      Uploads
+                    </p>
+                    <p className="text-small text-muted-foreground tabular-nums">
+                      {uploadSummaryLabel}
+                    </p>
                   </div>
                   {canCancelUploads && (
                     <button
@@ -146,20 +167,33 @@ export const TransferListPopover = forwardRef<HTMLDivElement, TransferListPopove
                   <div key={item.id} className={transferItemClassName}>
                     <div className="flex items-start justify-between gap-2">
                       <div className="min-w-0">
-                        <p className="text-body truncate font-medium text-foreground" title={item.fileName}>
+                        <p
+                          className="text-body truncate font-medium text-foreground"
+                          title={item.fileName}
+                        >
                           {item.fileName}
                         </p>
-                        <p className="text-small text-muted-foreground">{item.statusLabel}</p>
+                        <p className="text-small text-muted-foreground">
+                          {item.statusLabel}
+                        </p>
                         {item.message && (
-                          <p className="text-small truncate text-muted-foreground/80" title={item.message}>
+                          <p
+                            className="text-small truncate text-muted-foreground/80"
+                            title={item.message}
+                          >
                             {item.message}
                           </p>
                         )}
                       </div>
-                      <span className="text-small text-muted-foreground tabular-nums">{item.trailingLabel}</span>
+                      <span className="text-small text-muted-foreground tabular-nums">
+                        {item.trailingLabel}
+                      </span>
                     </div>
                     {item.isInProgress && (
-                      <Progress value={item.progress} className="mt-2 h-1.5 bg-secondary/60" />
+                      <Progress
+                        value={item.progress}
+                        className="mt-2 h-1.5 bg-secondary/60"
+                      />
                     )}
                   </div>
                 ))}
@@ -168,15 +202,14 @@ export const TransferListPopover = forwardRef<HTMLDivElement, TransferListPopove
           )}
         </div>
       </div>
-      </>
-    );
+    </>
+  );
 
-    if (!mounted || (!hasDownloadItem && !hasUploadItems)) {
-      return null;
-    }
+  if (!mounted || (!hasDownloadItem && !hasUploadItems)) {
+    return null;
+  }
 
-    return createPortal(popoverContent, document.body);
-  },
-);
+  return createPortal(popoverContent, document.body);
+});
 
 TransferListPopover.displayName = "TransferListPopover";

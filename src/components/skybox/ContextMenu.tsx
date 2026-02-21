@@ -1,15 +1,15 @@
 import { forwardRef, useEffect } from "react";
-import { 
-  FolderPlus, 
-  ClipboardPaste, 
-  RotateCcw, 
-  Trash2, 
-  Copy, 
-  Edit3, 
-  Share, 
-  FileText, 
-  Info, 
-  ArrowDownToLine 
+import {
+  FolderPlus,
+  ClipboardPaste,
+  RotateCcw,
+  Trash2,
+  Copy,
+  Edit3,
+  Share,
+  FileText,
+  Info,
+  ArrowDownToLine,
 } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import type { FileItem } from "@/components/skybox/FileRow";
@@ -24,7 +24,12 @@ interface ContextMenuState {
 interface ContextMenuProps {
   contextMenuState: ContextMenuState | null;
   selectedPaths: string[];
-  clipboardItem: { path: string; name: string; mode: "copy" | "cut"; isDirectory: boolean } | null;
+  clipboardItem: {
+    path: string;
+    name: string;
+    mode: "copy" | "cut";
+    isDirectory: boolean;
+  } | null;
   favorites: string[];
   currentPath: string;
   isRecycleBinView: boolean;
@@ -52,41 +57,47 @@ interface ContextMenuProps {
   onCut: (file: FileItem) => void;
 }
 
-const contextMenuItemClassName = "w-full flex items-center gap-2 rounded-lg px-3 py-2 text-left text-body text-foreground transition-colors hover:bg-primary/15 outline-none focus-visible:outline-none";
-const contextMenuDisabledItemClassName = "w-full flex items-center gap-2 rounded-lg px-3 py-2 text-left text-body text-muted-foreground/60 pointer-events-none outline-none focus-visible:outline-none";
-const contextMenuDangerItemClassName = "w-full flex items-center gap-2 rounded-lg px-3 py-2 text-left text-body text-destructive transition-colors hover:bg-destructive/10 outline-none focus-visible:outline-none";
+const contextMenuItemClassName =
+  "w-full flex items-center gap-2 rounded-lg px-3 py-2 text-left text-body text-foreground transition-colors hover:bg-primary/15 outline-none focus-visible:outline-none";
+const contextMenuDisabledItemClassName =
+  "w-full flex items-center gap-2 rounded-lg px-3 py-2 text-left text-body text-muted-foreground/60 pointer-events-none outline-none focus-visible:outline-none";
+const contextMenuDangerItemClassName =
+  "w-full flex items-center gap-2 rounded-lg px-3 py-2 text-left text-body text-destructive transition-colors hover:bg-destructive/10 outline-none focus-visible:outline-none";
 
 export const ContextMenu = forwardRef<HTMLDivElement, ContextMenuProps>(
-  function ContextMenu({
-    contextMenuState,
-    selectedPaths,
-    clipboardItem,
-    favorites,
-    currentPath,
-    isRecycleBinView,
-    isNotesFolderView,
-    isNotesMessageContextMenu,
-    isMultiSelectionContextMenu,
-    contextTargetFile,
-    canPasteInCurrentPath,
-    onClose,
-    onOpen,
-    onDelete,
-    onDetails,
-    onCopyPath,
-    onToggleFavorite,
-    onRename,
-    onNewFolder,
-    onPaste,
-    onShare,
-    onDownload,
-    onCopyNoteText,
-    onEditNoteMessage,
-    onRestoreFromRecycleBin,
-    onDeleteNoteFromTelegram,
-    onCopy,
-    onCut,
-  }, ref) {
+  function ContextMenu(
+    {
+      contextMenuState,
+      selectedPaths,
+      clipboardItem,
+      favorites,
+      currentPath,
+      isRecycleBinView,
+      isNotesFolderView,
+      isNotesMessageContextMenu,
+      isMultiSelectionContextMenu,
+      contextTargetFile,
+      canPasteInCurrentPath,
+      onClose,
+      onOpen,
+      onDelete,
+      onDetails,
+      onCopyPath,
+      onToggleFavorite,
+      onRename,
+      onNewFolder,
+      onPaste,
+      onShare,
+      onDownload,
+      onCopyNoteText,
+      onEditNoteMessage,
+      onRestoreFromRecycleBin,
+      onDeleteNoteFromTelegram,
+      onCopy,
+      onCut,
+    },
+    ref,
+  ) {
     const { toast } = useToast();
 
     useEffect(() => {
@@ -96,7 +107,12 @@ export const ContextMenu = forwardRef<HTMLDivElement, ContextMenuProps>(
 
       const handlePointerDown = (event: MouseEvent) => {
         const target = event.target as Node | null;
-        if (ref && (ref as React.RefObject<HTMLDivElement>).current && target && (ref as React.RefObject<HTMLDivElement>).current.contains(target)) {
+        if (
+          ref &&
+          (ref as React.RefObject<HTMLDivElement>).current &&
+          target &&
+          (ref as React.RefObject<HTMLDivElement>).current.contains(target)
+        ) {
           return;
         }
         onClose();
@@ -129,11 +145,19 @@ export const ContextMenu = forwardRef<HTMLDivElement, ContextMenuProps>(
       return null;
     }
 
-    const isFavorite = contextTargetFile ? favorites.includes(contextTargetFile.path) : false;
+    const isFavorite = contextTargetFile
+      ? favorites.includes(contextTargetFile.path)
+      : false;
     const menuWidth = 220;
     const menuHeight = 300;
-    const clampedX = Math.max(8, Math.min(contextMenuState.x, window.innerWidth - menuWidth - 8));
-    const clampedY = Math.max(8, Math.min(contextMenuState.y, window.innerHeight - menuHeight - 8));
+    const clampedX = Math.max(
+      8,
+      Math.min(contextMenuState.x, window.innerWidth - menuWidth - 8),
+    );
+    const clampedY = Math.max(
+      8,
+      Math.min(contextMenuState.y, window.innerHeight - menuHeight - 8),
+    );
 
     return (
       <div
@@ -156,7 +180,11 @@ export const ContextMenu = forwardRef<HTMLDivElement, ContextMenuProps>(
               <span>New Folder</span>
             </button>
             <button
-              className={canPasteInCurrentPath ? contextMenuItemClassName : contextMenuDisabledItemClassName}
+              className={
+                canPasteInCurrentPath
+                  ? contextMenuItemClassName
+                  : contextMenuDisabledItemClassName
+              }
               disabled={!canPasteInCurrentPath}
               onClick={() => {
                 if (!canPasteInCurrentPath) {
@@ -261,10 +289,14 @@ export const ContextMenu = forwardRef<HTMLDivElement, ContextMenuProps>(
           </>
         ) : (
           <>
-            {contextTargetFile.isDirectory || 
-             contextTargetFile.extension?.match(/^(jpg|jpeg|png|gif|webp|svg|bmp|ico)$/i) ||
-             contextTargetFile.extension?.match(/^(mp4|mkv|avi|mov|wmv|webm)$/i) ||
-             contextTargetFile.extension?.match(/^(mp3|wav|flac|aac|ogg)$/i) ? (
+            {contextTargetFile.isDirectory ||
+            contextTargetFile.extension?.match(
+              /^(jpg|jpeg|png|gif|webp|svg|bmp|ico)$/i,
+            ) ||
+            contextTargetFile.extension?.match(
+              /^(mp4|mkv|avi|mov|wmv|webm)$/i,
+            ) ||
+            contextTargetFile.extension?.match(/^(mp3|wav|flac|aac|ogg)$/i) ? (
               <button
                 className={contextMenuItemClassName}
                 onClick={() => {
@@ -325,7 +357,7 @@ export const ContextMenu = forwardRef<HTMLDivElement, ContextMenuProps>(
               <span>Cut</span>
             </button>
 
-            {(contextTargetFile && !contextTargetFile.isDirectory) && (
+            {contextTargetFile && !contextTargetFile.isDirectory && (
               <div className="my-1 h-px bg-border" />
             )}
 
@@ -363,8 +395,6 @@ export const ContextMenu = forwardRef<HTMLDivElement, ContextMenuProps>(
               <Info className="w-4 h-4 text-muted-foreground" />
               <span>Details</span>
             </button>
-
-
           </>
         )}
       </div>

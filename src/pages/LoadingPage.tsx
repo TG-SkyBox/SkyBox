@@ -42,7 +42,9 @@ export default function LoadingPage() {
           setAppVersion(version);
         }
       } catch (error) {
-        logger.warn(`LoadingPage: Failed to read app version: ${JSON.stringify(error)}`);
+        logger.warn(
+          `LoadingPage: Failed to read app version: ${JSON.stringify(error)}`,
+        );
         if (!cancelled) {
           setAppVersion("unknown");
         }
@@ -57,32 +59,46 @@ export default function LoadingPage() {
 
   useEffect(() => {
     const checkLoginStatus = async () => {
-
       try {
         const session: Session | null = await invoke("db_get_session");
-        logger.info(`LoadingPage: Retrieved session from DB: ${session ? JSON.stringify(session.phone) : 'null'}`);
+        logger.info(
+          `LoadingPage: Retrieved session from DB: ${session ? JSON.stringify(session.phone) : "null"}`,
+        );
 
         if (session && session.session_data) {
-          logger.info("LoadingPage: Session exists with data, attempting to restore");
+          logger.info(
+            "LoadingPage: Session exists with data, attempting to restore",
+          );
 
           try {
-            const result: TelegramAuthResult = await invoke("tg_restore_session", {
-              sessionData: session.session_data
-            });
+            const result: TelegramAuthResult = await invoke(
+              "tg_restore_session",
+              {
+                sessionData: session.session_data,
+              },
+            );
             logger.info("LoadingPage: tg_restore_session result:", result);
 
             if (result.authorized && result.user_info) {
-              logger.info("LoadingPage: Session is valid, navigating to explorer");
+              logger.info(
+                "LoadingPage: Session is valid, navigating to explorer",
+              );
               navigate("/explorer", { state: { userInfo: result.user_info } });
               return;
             } else {
-              logger.info("LoadingPage: Session not authorized, redirecting to login");
+              logger.info(
+                "LoadingPage: Session not authorized, redirecting to login",
+              );
             }
           } catch (restoreError) {
-            logger.error(`LoadingPage: Could not restore session: ${JSON.stringify(restoreError)}`);
+            logger.error(
+              `LoadingPage: Could not restore session: ${JSON.stringify(restoreError)}`,
+            );
           }
         } else {
-          logger.info("LoadingPage: No session found or no session data, redirecting to login");
+          logger.info(
+            "LoadingPage: No session found or no session data, redirecting to login",
+          );
         }
 
         // Redirect to login if no valid session found
@@ -116,7 +132,11 @@ export default function LoadingPage() {
           {/* Telegram Logo with animation */}
           {/* App Logo */}
           <div className="w-32 h-32 mb-8 flex items-center justify-center animate-pulse">
-            <img src={appStartIcon} alt="SkyBox Logo" className="w-full h-full object-contain" />
+            <img
+              src={appStartIcon}
+              alt="SkyBox Logo"
+              className="w-full h-full object-contain"
+            />
           </div>
 
           {/* Loading text */}
@@ -131,9 +151,7 @@ export default function LoadingPage() {
 
       {/* Footer */}
       <div className="p-4 text-center">
-        <p className="text-small text-muted-foreground">
-          skybox {appVersion}
-        </p>
+        <p className="text-small text-muted-foreground">skybox {appVersion}</p>
       </div>
     </div>
   );

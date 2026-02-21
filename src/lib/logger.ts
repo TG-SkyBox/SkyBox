@@ -1,6 +1,7 @@
 import { invoke } from "@tauri-apps/api/core";
 
-const isTauri = () => typeof window !== "undefined" && ("__TAURI_INTERNALS__" in window);
+const isTauri = () =>
+  typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
 
 async function log(cmd: string, message: string, context?: any) {
   console.log(`[${cmd}]`, message, context ?? "");
@@ -9,8 +10,7 @@ async function log(cmd: string, message: string, context?: any) {
 
   try {
     await invoke(cmd, { message });
-  } catch {
-  }
+  } catch {}
 }
 
 export const logger = {

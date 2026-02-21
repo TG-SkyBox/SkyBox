@@ -25,10 +25,12 @@ export const TelegramInput = forwardRef<HTMLInputElement, TelegramInputProps>(
           {...props}
         />
         {error && <p className="text-small text-destructive">{error}</p>}
-        {hint && !error && <p className="text-small text-muted-foreground">{hint}</p>}
+        {hint && !error && (
+          <p className="text-small text-muted-foreground">{hint}</p>
+        )}
       </div>
     );
-  }
+  },
 );
 
 TelegramInput.displayName = "TelegramInput";
