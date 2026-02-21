@@ -1,7 +1,10 @@
 .saved-media-viewer .plyr {
   --plyr-color-main: hsl(var(--primary));
   --plyr-video-control-color: hsl(var(--foreground));
-  --plyr-video-controls-background: linear-gradient(transparent, hsl(0 0% 6% / 0.82));
+  --plyr-video-controls-background: linear-gradient(
+    transparent,
+    hsl(0 0% 6% / 0.82)
+  );
   --plyr-audio-controls-background: hsl(0 0% 100% / 0.04);
   --plyr-audio-control-color: hsl(var(--foreground));
   --plyr-audio-control-background-hover: hsl(var(--primary) / 0.18);

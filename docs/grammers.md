@@ -1,6 +1,6 @@
 # gramme.rs
 
-A set of Rust crates to interact with Telegram's API, hence the name *(tele)gramme.rs*.
+A set of Rust crates to interact with Telegram's API, hence the name _(tele)gramme.rs_.
 
 ## Current status
 
@@ -15,28 +15,28 @@ For the API reference, please refer to <https://docs.rs/grammers-client/>.
 
 ![Diagram depicting the crate hierarchy](assets/crate-hierarchy.svg)
 
-* **[grammers-client]**: high-level API. Depends on:
-  * `grammers-tl-types` to both [invoke requests] and wrap [raw types].
-  * `grammers-session` to persist home [datacenter], logged-in user and [cache peers].
-  * `grammers-mtsender` to connect to Telegram's servers and exchange messages.
-  * `grammers-crypto` to support [Two-Factor Authentication] logins.
-* **[grammers-mtsender]**: network connection to Telegram. Depends on:
-  * `grammers-tl-types` to initialize the connection and offer an ergonomic [RPC interface].
-  * `grammers-session` to persist the DC configuration and corresponding [Authorization Key]s.
-  * `grammers-mtproto` to serialize messages and manage the connection state.
-  * `grammers-crypto` for efficient buffer usage.
-* **[grammers-session]**: session storages for the client. Depends on:
-  * `grammers-tl-types` to provide a more ergonomic interface over peers.
-* **[grammers-mtproto]**: implementation of the [Mobile Transport Protocol]. Depends on:
-  * `grammers-tl-types` to invoke and parse the core messages of the protocol.
-  * `grammers-crypto` to encrypt the communication with Telegram.
-* **[grammers-tl-types]**: generated Rust types for a certain layer. Depends on:
-  * `grammers-tl-gen` to generate the Rust code that makes up the crate itself.
-  * `grammers-tl-parser` to parse the TL files with all definitions used by Telegram.
-* **[grammers-crypto]**: cryptography-related methods.
-* **[grammers-tl-gen]**: Rust code generator from TL definitions. Depends on:
-  * `grammers-tl-parser` to compose functions referencing the parsed definition types.
-* **[grammers-tl-parser]**: a [Type Language] parser.
+- **[grammers-client]**: high-level API. Depends on:
+  - `grammers-tl-types` to both [invoke requests] and wrap [raw types].
+  - `grammers-session` to persist home [datacenter], logged-in user and [cache peers].
+  - `grammers-mtsender` to connect to Telegram's servers and exchange messages.
+  - `grammers-crypto` to support [Two-Factor Authentication] logins.
+- **[grammers-mtsender]**: network connection to Telegram. Depends on:
+  - `grammers-tl-types` to initialize the connection and offer an ergonomic [RPC interface].
+  - `grammers-session` to persist the DC configuration and corresponding [Authorization Key]s.
+  - `grammers-mtproto` to serialize messages and manage the connection state.
+  - `grammers-crypto` for efficient buffer usage.
+- **[grammers-session]**: session storages for the client. Depends on:
+  - `grammers-tl-types` to provide a more ergonomic interface over peers.
+- **[grammers-mtproto]**: implementation of the [Mobile Transport Protocol]. Depends on:
+  - `grammers-tl-types` to invoke and parse the core messages of the protocol.
+  - `grammers-crypto` to encrypt the communication with Telegram.
+- **[grammers-tl-types]**: generated Rust types for a certain layer. Depends on:
+  - `grammers-tl-gen` to generate the Rust code that makes up the crate itself.
+  - `grammers-tl-parser` to parse the TL files with all definitions used by Telegram.
+- **[grammers-crypto]**: cryptography-related methods.
+- **[grammers-tl-gen]**: Rust code generator from TL definitions. Depends on:
+  - `grammers-tl-parser` to compose functions referencing the parsed definition types.
+- **[grammers-tl-parser]**: a [Type Language] parser.
 
 ## Security
 
@@ -55,10 +55,10 @@ here and review the issues found.
 
 All the libraries and binaries contained in this repository are licensed under either of
 
-* Apache License, Version 2.0 ([LICENSE-APACHE] or
+- Apache License, Version 2.0 ([LICENSE-APACHE] or
   http://www.apache.org/licenses/LICENSE-2.0)
 
-* MIT license ([LICENSE-MIT] or http://opensource.org/licenses/MIT)
+- MIT license ([LICENSE-MIT] or http://opensource.org/licenses/MIT)
 
 at your option.
 

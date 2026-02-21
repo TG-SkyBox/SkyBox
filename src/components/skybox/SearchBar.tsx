@@ -7,7 +7,11 @@ interface SearchBarProps {
   placeholder?: string;
 }
 
-export function SearchBar({ value, onChange, placeholder = "Search..." }: SearchBarProps) {
+export function SearchBar({
+  value,
+  onChange,
+  placeholder = "Search...",
+}: SearchBarProps) {
   const [isFocused, setIsFocused] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
 
@@ -53,7 +57,9 @@ export function SearchBar({ value, onChange, placeholder = "Search..." }: Search
         </button>
       )}
       {!value && !isFocused && (
-        <span className="absolute right-3 text-small text-muted-foreground">⌘F</span>
+        <span className="absolute right-3 text-small text-muted-foreground">
+          ⌘F
+        </span>
       )}
     </div>
   );

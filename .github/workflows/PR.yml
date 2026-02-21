@@ -1,0 +1,58 @@
+name: Full App Check
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v2
+      - name: Setup Node.js
+        uses: actions/setup-node@v3
+        with:
+          node-version: "20"
+      - name: Install dependencies
+        run: |
+          npm install
+      - name: Setup Rust
+        run: |
+          cd src-tauri
+          rustup toolchain install stable
+          rustup component add rustfmt clippy
+      - name: Check JavaScript/TypeScript formatting
+        run: npx prettier --check .
+      - name: Check JavaScript/TypeScript linting
+        run: npm run lint
+      - name: Setup Rust environment
+        run: echo "RUSTFLAGS=-D warnings" >> $GITHUB_ENV
+      - name: Check Rust formatting
+        run: |
+          cd src-tauri
+          cargo fmt -- --check
+      - name: Check Rust code with clippy
+        run: |
+          cd src-tauri
+          cargo clippy --all-targets --all-features -- -D warnings
+      - name: Build Rust
+        run: |
+          cd src-tauri
+          cargo build --verbose
+      - name: Run Rust tests
+        env:
+          TG_ID: 1
+          TG_HASH: a
+        run: |
+          cd src-tauri
+          cargo test --verbose --all-features
+      - name: Run JavaScript/TypeScript tests
+        run: npm run test

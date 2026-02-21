@@ -1,7 +1,11 @@
 import { useState, useEffect, useRef } from "react";
 import { useNavigate } from "react-router-dom";
 import { ArrowLeft, X } from "lucide-react";
-import { CountryCodeSelect, countries, Country } from "@/components/skybox/CountryCodeSelect";
+import {
+  CountryCodeSelect,
+  countries,
+  Country,
+} from "@/components/skybox/CountryCodeSelect";
 import { TelegramButton } from "@/components/skybox/TelegramButton";
 import { OtpInput } from "@/components/skybox/OtpInput";
 import { QrCard } from "@/components/skybox/QrCard";
@@ -56,7 +60,12 @@ interface QrPollResult {
   message?: string;
 }
 
-type QrLoginStatus = "Pending" | "Success" | "Expired" | "PasswordRequired" | "Error";
+type QrLoginStatus =
+  | "Pending"
+  | "Success"
+  | "Expired"
+  | "PasswordRequired"
+  | "Error";
 
 interface UserInfo {
   id: number;
@@ -74,7 +83,7 @@ export default function LoginPage() {
   const [step, setStep] = useState<LoginStep>("phone");
   const [loginMode, setLoginMode] = useState<LoginMode>("qr");
   const [selectedCountry, setSelectedCountry] = useState<Country>(
-    countries.find(c => c.code === "LK") || countries[0]
+    countries.find((c) => c.code === "LK") || countries[0],
   );
   const [phoneNumber, setPhoneNumber] = useState("");
   const [otp, setOtp] = useState("");
@@ -130,27 +139,37 @@ export default function LoginPage() {
     if (!phoneRegex.test(fullPhoneNumber)) {
       toast({
         title: "Invalid Phone Number",
-        description: "Please enter a valid phone number in international format",
+        description:
+          "Please enter a valid phone number in international format",
         variant: "destructive",
       });
       return;
     }
 
-    logger.info(`handlePhoneSubmit: Validated phone number: ${fullPhoneNumber}`);
+    logger.info(
+      `handlePhoneSubmit: Validated phone number: ${fullPhoneNumber}`,
+    );
 
     setIsLoading(true);
 
     try {
-      logger.info(`handlePhoneSubmit: Calling tg_request_auth_code with phone: ${fullPhoneNumber}`);
+      logger.info(
+        `handlePhoneSubmit: Calling tg_request_auth_code with phone: ${fullPhoneNumber}`,
+      );
 
       // Request auth code via MTProto
       const authData: TelegramAuthData = {
-        phone_number: fullPhoneNumber
+        phone_number: fullPhoneNumber,
       };
 
-      const result: TelegramAuthResult = await invoke("tg_request_auth_code", { authData });
+      const result: TelegramAuthResult = await invoke("tg_request_auth_code", {
+        authData,
+      });
 
-      logger.info(`handlePhoneSubmit: Received result from tg_request_auth_code:`, result);
+      logger.info(
+        `handlePhoneSubmit: Received result from tg_request_auth_code:`,
+        result,
+      );
 
       if (result.authorized) {
         // If already authorized, save session and navigate
@@ -158,7 +177,7 @@ export default function LoginPage() {
           logger.info("handlePhoneSubmit: User already authorized");
           toast({
             title: "Welcome back!",
-            description: `Logged in as ${result.user_info.first_name || result.user_info.username || 'user'}`,
+            description: `Logged in as ${result.user_info.first_name || result.user_info.username || "user"}`,
           });
           navigate("/explorer");
         }
@@ -177,7 +196,8 @@ export default function LoginPage() {
 
       // More specific error handling based on error message
       let title = "Error";
-      let description = typedError.message || "Failed to send verification code";
+      let description =
+        typedError.message || "Failed to send verification code";
       let variant: "destructive" | "default" = "destructive";
 
       if (description.includes("Network connection lost")) {
@@ -185,7 +205,8 @@ export default function LoginPage() {
         description = "Please check your internet connection and try again.";
       } else if (description.includes("Request timed out")) {
         title = "Timeout Error";
-        description = "The request took too long. Please check your connection and try again.";
+        description =
+          "The request took too long. Please check your connection and try again.";
       } else if (description.includes("Invalid phone number")) {
         title = "Invalid Number";
         description = "Please check the phone number format and try again.";
@@ -194,7 +215,8 @@ export default function LoginPage() {
         description = "Please wait a few minutes before trying again.";
       } else if (description.includes("Authentication service error")) {
         title = "Service Error";
-        description = "Telegram authentication service is temporarily unavailable. Please try again later.";
+        description =
+          "Telegram authentication service is temporarily unavailable. Please try again later.";
       }
 
       toast({
@@ -214,7 +236,7 @@ export default function LoginPage() {
     try {
       // Complete sign in with the code
       const result: TelegramAuthResult = await invoke("tg_sign_in_with_code", {
-        phoneCode: code  // Pass only the phone code as expected by the backend
+        phoneCode: code, // Pass only the phone code as expected by the backend
       });
 
       if (result.requires_password) {
@@ -227,7 +249,7 @@ export default function LoginPage() {
       } else if (result.authorized && result.user_info) {
         toast({
           title: "Welcome!",
-          description: `Successfully logged in as ${result.user_info.first_name || result.user_info.username || 'user'}`,
+          description: `Successfully logged in as ${result.user_info.first_name || result.user_info.username || "user"}`,
         });
         navigate("/explorer");
       } else {
@@ -242,7 +264,8 @@ export default function LoginPage() {
       console.error("Error signing in with code:", error);
       toast({
         title: "Authentication failed",
-        description: typedError.message || "Failed to authenticate with the provided code",
+        description:
+          typedError.message || "Failed to authenticate with the provided code",
         variant: "destructive",
       });
     } finally {
@@ -258,15 +281,18 @@ export default function LoginPage() {
 
     try {
       // Complete sign in with the password
-      const result: TelegramAuthResult = await invoke("tg_sign_in_with_password", {
-        password: password
-      });
+      const result: TelegramAuthResult = await invoke(
+        "tg_sign_in_with_password",
+        {
+          password: password,
+        },
+      );
 
       if (result.authorized && result.user_info) {
         // Session is already saved in backend, just navigate
         toast({
           title: "Welcome!",
-          description: `Successfully logged in as ${result.user_info.first_name || result.user_info.username || 'user'}`,
+          description: `Successfully logged in as ${result.user_info.first_name || result.user_info.username || "user"}`,
         });
         navigate("/explorer");
       } else {
@@ -281,7 +307,9 @@ export default function LoginPage() {
       console.error("Error signing in with password:", error);
       toast({
         title: "Authentication failed",
-        description: typedError.message || "Failed to authenticate with the provided password",
+        description:
+          typedError.message ||
+          "Failed to authenticate with the provided password",
         variant: "destructive",
       });
     } finally {
@@ -335,7 +363,7 @@ export default function LoginPage() {
 
     const poll = async () => {
       if (!pollingRef.current) return;
-      
+
       // Skip polling if migration is in progress
       if (isMigratingRef.current) {
         logger.debug("startQrPolling: Skipping poll during migration");
@@ -355,7 +383,7 @@ export default function LoginPage() {
             if (result.user_info) {
               toast({
                 title: "Login Successful!",
-                description: `Welcome ${result.user_info.first_name || result.user_info.username || 'user'}!`,
+                description: `Welcome ${result.user_info.first_name || result.user_info.username || "user"}!`,
               });
               navigate("/explorer");
             }
@@ -385,19 +413,26 @@ export default function LoginPage() {
             break;
 
           case "Error":
-            if (result.message?.includes("migration") || result.message?.includes("MigrateTo") || result.message?.includes("Migration")) {
+            if (
+              result.message?.includes("migration") ||
+              result.message?.includes("MigrateTo") ||
+              result.message?.includes("Migration")
+            ) {
               // Backend is handling migration, pause frontend polling completely
-              logger.info("startQrPolling: Migration detected, pausing frontend polling");
+              logger.info(
+                "startQrPolling: Migration detected, pausing frontend polling",
+              );
               isMigratingRef.current = true;
               pollingRef.current = false; // STOP POLLING ENTIRELY
               // Don't resume polling - let backend handle everything
               toast({
                 title: "Migration in progress",
-                description: "Please wait while we connect to Telegram servers...",
+                description:
+                  "Please wait while we connect to Telegram servers...",
               });
               return;
             }
-            
+
             if (result.message) {
               toast({
                 title: "Error",
@@ -411,7 +446,9 @@ export default function LoginPage() {
 
           case "Pending":
             if (result.qr_url && result.qr_url !== qrData) {
-              logger.info("startQrPolling: Token updated during poll, updating QR");
+              logger.info(
+                "startQrPolling: Token updated during poll, updating QR",
+              );
               setQrData(result.qr_url);
             }
             // Schedule next poll
@@ -444,7 +481,7 @@ export default function LoginPage() {
 
   // Auto-generate QR code when entering QR mode (with guard to prevent double generation)
   useEffect(() => {
-    if (loginMode === 'qr' && step === 'phone') {
+    if (loginMode === "qr" && step === "phone") {
       // Use ref to ensure this only runs once per mount, even if dependencies change
       if (!qrStartedRef.current) {
         logger.info("LoginPage: Auto-generating QR code (first time)");
@@ -459,33 +496,36 @@ export default function LoginPage() {
 
   // Listen for QR token update events from backend
   useEffect(() => {
-    const unlisten = listen<{ flow_id: number; qr_url: string; expires_at_unix: number }>(
-      'qr-token-updated',
-      (event) => {
-        logger.info(`LoginPage: Received qr-token-updated event for flow_id=${event.payload.flow_id}`);
-        // Only update if it matches our current flow
-        if (qrFlowId && event.payload.flow_id === qrFlowId) {
-          logger.info("LoginPage: Updating QR with new token from backend");
-          setQrData(event.payload.qr_url);
-          setQrExpiresAt(event.payload.expires_at_unix * 1000);
-        }
+    const unlisten = listen<{
+      flow_id: number;
+      qr_url: string;
+      expires_at_unix: number;
+    }>("qr-token-updated", (event) => {
+      logger.info(
+        `LoginPage: Received qr-token-updated event for flow_id=${event.payload.flow_id}`,
+      );
+      // Only update if it matches our current flow
+      if (qrFlowId && event.payload.flow_id === qrFlowId) {
+        logger.info("LoginPage: Updating QR with new token from backend");
+        setQrData(event.payload.qr_url);
+        setQrExpiresAt(event.payload.expires_at_unix * 1000);
       }
-    );
+    });
 
     return () => {
-      unlisten.then(fn => fn());
+      unlisten.then((fn) => fn());
     };
   }, [qrFlowId]);
 
   // Stop QR polling when switching away from QR mode or starting phone login
   useEffect(() => {
-    if (loginMode !== 'qr' || step !== 'phone') {
+    if (loginMode !== "qr" || step !== "phone") {
       if (pollingRef.current) {
         logger.info("LoginPage: Stopping QR polling due to mode/step change");
         pollingRef.current = false;
         isMigratingRef.current = false;
         // Cancel the QR flow on backend
-        invoke("tg_cancel_qr_login").catch(err => {
+        invoke("tg_cancel_qr_login").catch((err) => {
           console.error("Failed to cancel QR login:", err);
         });
       }
@@ -498,7 +538,7 @@ export default function LoginPage() {
       pollingRef.current = false;
       isMigratingRef.current = false;
       // Cancel QR flow when component unmounts
-      invoke("tg_cancel_qr_login").catch(err => {
+      invoke("tg_cancel_qr_login").catch((err) => {
         console.error("Failed to cancel QR login on unmount:", err);
       });
     };
@@ -521,7 +561,8 @@ export default function LoginPage() {
   const maskedPhone = `${selectedCountry.dialCode}${phoneNumber.slice(0, 3)}***${phoneNumber.slice(-2)}`;
   const fullPhoneNumber = `${selectedCountry.dialCode}${phoneNumber}`;
 
-  const showBackButton = loginMode === "phone" || step === "otp" || step === "password";
+  const showBackButton =
+    loginMode === "phone" || step === "otp" || step === "password";
 
   return (
     <div className="min-h-screen bg-background flex flex-col">
@@ -575,7 +616,11 @@ export default function LoginPage() {
             <div className="animate-fade-in flex flex-col items-center">
               {/* Telegram Logo */}
               <div className="w-32 h-32 mb-8 flex items-center justify-center">
-                <img src={appStartIcon} alt="SkyBox Logo" className="w-full h-full object-contain" />
+                <img
+                  src={appStartIcon}
+                  alt="SkyBox Logo"
+                  className="w-full h-full object-contain"
+                />
               </div>
 
               {/* Title */}
@@ -583,7 +628,8 @@ export default function LoginPage() {
                 Your Phone
               </h1>
               <p className="text-body text-muted-foreground text-center mb-8">
-                Please confirm your country code<br />
+                Please confirm your country code
+                <br />
                 and enter your phone number.
               </p>
 
@@ -604,9 +650,11 @@ export default function LoginPage() {
                     onChange={(e) => {
                       const val = e.target.value;
                       // Remove dial code prefix and keep only digits
-                      const withoutDialCode = val.startsWith(selectedCountry.dialCode)
+                      const withoutDialCode = val.startsWith(
+                        selectedCountry.dialCode,
+                      )
                         ? val.slice(selectedCountry.dialCode.length)
-                        : val.replace(/^\+\d*/, '');
+                        : val.replace(/^\+\d*/, "");
                       setPhoneNumber(withoutDialCode.replace(/\D/g, ""));
                     }}
                     placeholder={selectedCountry.dialCode}
@@ -655,7 +703,11 @@ export default function LoginPage() {
             <div className="animate-fade-in flex flex-col items-center">
               {/* Telegram Logo */}
               <div className="w-32 h-32 mb-8 flex items-center justify-center">
-                <img src={appStartIcon} alt="SkyBox Logo" className="w-full h-full object-contain" />
+                <img
+                  src={appStartIcon}
+                  alt="SkyBox Logo"
+                  className="w-full h-full object-contain"
+                />
               </div>
 
               {/* Title */}
@@ -663,7 +715,8 @@ export default function LoginPage() {
                 {maskedPhone}
               </h1>
               <p className="text-body text-muted-foreground text-center mb-8">
-                We've sent the code to your phone.<br />
+                We've sent the code to your phone.
+                <br />
                 Please enter it below.
               </p>
 
@@ -691,7 +744,11 @@ export default function LoginPage() {
             <div className="animate-fade-in flex flex-col items-center">
               {/* Telegram Logo */}
               <div className="w-32 h-32 mb-8 flex items-center justify-center">
-                <img src={appStartIcon} alt="SkyBox Logo" className="w-full h-full object-contain" />
+                <img
+                  src={appStartIcon}
+                  alt="SkyBox Logo"
+                  className="w-full h-full object-contain"
+                />
               </div>
 
               {/* Title */}
@@ -736,9 +793,7 @@ export default function LoginPage() {
 
       {/* Footer */}
       <div className="p-4 text-center">
-        <p className="text-small text-muted-foreground">
-          skybox {appVersion}
-        </p>
+        <p className="text-small text-muted-foreground">skybox {appVersion}</p>
       </div>
     </div>
   );

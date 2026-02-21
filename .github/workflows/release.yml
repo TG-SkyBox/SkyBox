@@ -1,29 +1,72 @@
 name: Build & Release Tauri App
 
 on:
-  pull_request:
-    types: [closed]
-    branches: [ main, master ]
+  push:
+    branches: [main, master]
+  workflow_dispatch:
 
 permissions:
   contents: write
   packages: write
 
 jobs:
+  check-commit-message:
+    runs-on: ubuntu-latest
+    outputs:
+      should_release: ${{ steps.check.outputs.should_release }}
+      commit_message: ${{ steps.check.outputs.commit_message }}
+      release_notes: ${{ steps.extract_release_notes.outputs.release_notes }}
+    steps:
+      - name: Get commit message
+        id: check
+        run: |
+          COMMIT_MSG="${{ github.event.head_commit.message }}"
+          if [[ -z "$COMMIT_MSG" ]]; then
+            COMMIT_MSG="${{ github.event.commits[0].message }}"
+          fi
+          echo "Commit message: $COMMIT_MSG"
+          
+          if [[ "$COMMIT_MSG" =~ ^[[:space:]]*new[[:space:]]+release ]]; then
+            echo "should_release=true" >> $GITHUB_OUTPUT
+            echo "Commit message starts with 'new release', proceeding with release"
+          else
+            echo "should_release=false" >> $GITHUB_OUTPUT
+            echo "Commit message does not start with 'new release', skipping release"
+          fi
+          echo "commit_message=$COMMIT_MSG" >> $GITHUB_OUTPUT
+          
+      - name: Extract release notes
+        id: extract_release_notes
+        run: |
+          COMMIT_MSG="${{ github.event.head_commit.message }}"
+          if [[ -z "$COMMIT_MSG" ]]; then
+            COMMIT_MSG="${{ github.event.commits[0].message }}"
+          fi
+          
+          # Extract release notes from commit message (everything after "new release")
+          if [[ "$COMMIT_MSG" =~ ^[[:space:]]*new[[:space:]]+release[[:space:]]+(.*) ]]; then
+            RELEASE_NOTES="${BASH_REMATCH[1]}"
+            echo "release_notes=$RELEASE_NOTES" >> $GITHUB_OUTPUT
+            echo "Extracted release notes: $RELEASE_NOTES"
+          else
+            echo "release_notes=" >> $GITHUB_OUTPUT
+          fi
+
   bump-version:
-    if: github.event.pull_request.merged == true
+    needs: check-commit-message
+    if: needs.check-commit-message.outputs.should_release == 'true'
     runs-on: ubuntu-latest
     outputs:
       version: ${{ steps.get_version.outputs.version }}
       release_tag: ${{ steps.get_version.outputs.release_tag }}
-      release_notes: ${{ steps.get_release_notes.outputs.release_notes }}
+      release_notes: ${{ needs.check-commit-message.outputs.release_notes }}
       bump_sha: ${{ steps.commit_version.outputs.bump_sha }}
-    
+
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
-          ref: ${{ github.event.pull_request.base.ref }}
+          ref: main
           fetch-depth: 0
           fetch-tags: true
           token: ${{ secrets.PERSONAL_ACCESS_TOKEN }}
@@ -103,7 +146,7 @@ jobs:
 
           # Get PR body for release notes
           pr_body = ev.get('pull_request', {}).get('body') or ''
-          
+
           out_path = os.environ.get('GITHUB_OUTPUT')
           if not out_path:
               raise SystemExit('GITHUB_OUTPUT not set')
@@ -126,22 +169,23 @@ jobs:
             echo "No version changes to commit."
             exit 1
           fi
-          
+
           # Include release notes in commit message
           RELEASE_NOTES=$(cat <<'EOF'
           ${{ steps.get_release_notes.outputs.release_notes }}
           EOF
           )
-          
+
           # Create commit message with release notes
-          git commit -m "chore: new release v${{ steps.get_version.outputs.version }}" -m "${RELEASE_NOTES}"
-          git push origin "HEAD:${{ github.event.pull_request.base.ref }}"
+          git commit -m "new release v${{ steps.get_version.outputs.version }}" -m "${RELEASE_NOTES}"
+          git push origin main
           echo "bump_sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
         shell: bash
 
   # Step 2: Build on all platforms in parallel
   build:
-    needs: bump-version
+    needs: [bump-version, check-commit-message]
+    if: needs.check-commit-message.outputs.should_release == 'true'
     env:
       TAURI_PRIVATE_KEY: ${{ secrets.TAURI_PRIVATE_KEY }}
       TAURI_KEY_PASSWORD: ${{ secrets.TAURI_KEY_PASSWORD }}
@@ -172,8 +216,8 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: '20'
-          cache: 'npm'
+          node-version: "20"
+          cache: "npm"
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
@@ -183,7 +227,7 @@ jobs:
       - name: Rust cache
         uses: swatinem/rust-cache@v2
         with:
-          workspaces: './src-tauri -> target'
+          workspaces: "./src-tauri -> target"
 
       - name: Install dependencies
         run: npm install
@@ -253,9 +297,10 @@ jobs:
 
   # Step 3: Publish release and push to download branch (after all builds complete)
   publish:
-    needs: [bump-version, build]
+    needs: [bump-version, build, check-commit-message]
+    if: needs.check-commit-message.outputs.should_release == 'true'
     runs-on: ubuntu-latest
-    
+
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -276,10 +321,10 @@ jobs:
       - name: Prepare release files
         run: |
           mkdir -p release-files
-          
+
           # Copy all files from artifact folders to release-files (flattening structure)
           find artifacts -type f -exec cp -v {} release-files/ \;
-          
+
           echo "Release files prepared:"
           ls -lh release-files/
         shell: bash
@@ -313,67 +358,37 @@ jobs:
         with:
           tag_name: ${{ needs.bump-version.outputs.release_tag }}
           name: ${{ needs.bump-version.outputs.release_tag }}
-          body: ${{ needs.bump-version.outputs.release_notes }}
+          body: ${{ needs.check-commit-message.outputs.release_notes }}
           draft: false
           prerelease: false
-          repository: pamod-madubashana/SkyBox
           token: ${{ secrets.PERSONAL_ACCESS_TOKEN }}
           files: release-files/*
 
-      - name: Push release files to "download" branch
+      - name: Push release files to "download" branch in current repo
         shell: bash
         env:
           TAG_NAME: ${{ needs.bump-version.outputs.version }}
-          OWNER_REPO: pamod-madubashana/SkyBox
           TOKEN: ${{ secrets.PERSONAL_ACCESS_TOKEN }}
         run: |
-          set -uo pipefail
-          shopt -s nullglob
-          # bash 3.2 (macos-latest) doesn't support `globstar`, ignore if not available
-          { shopt -s globstar 2>/dev/null || true; }
-          set -e
+          set -euo pipefail
 
-          # Fresh staging folder
-          rm -rf upload
-          mkdir -p upload
-
-          # Try to fetch existing download branch to preserve previous releases
-          git init upload
-          cd upload
+          # Configure git
           git config user.name "pamod-madubashana"
           git config user.email "pamod.main@gmail.com"
-          git remote add origin "https://x-access-token:${TOKEN}@github.com/${OWNER_REPO}.git"
-          
-          # Try to fetch existing download branch, but don't fail if it doesn't exist
-          if git fetch origin download 2>/dev/null; then
-            echo "Found existing download branch, preserving previous releases..."
-            git checkout -B download origin/download
-          else
-            echo "No existing download branch found, creating new one..."
-            git checkout -B download
-          fi
-          
-          cd ..
 
-          # Copy all release files to version-numbered folder
-          if [ -d "release-files" ]; then
-            mkdir -p "upload/${TAG_NAME}"
-            cp -v release-files/* "upload/${TAG_NAME}/"
-          else
-            echo "No release-files folder found!"
-            exit 1
-          fi
+          # Fetch all branches to ensure we have the download branch
+          git fetch origin
 
-          # Check if any files were copied
-          if [ -z "$(ls -A upload/${TAG_NAME})" ]; then
-            echo "No release files found to push. Check your build paths."
-            exit 1
-          fi
+          # Create or checkout the download branch
+          git checkout -B download origin/download 2>/dev/null || git checkout -b download
 
-          cd upload
+          # Create a folder with the version number and copy release files there
+          mkdir -p "${TAG_NAME}"
+          cp -v release-files/* "${TAG_NAME}/"
 
-          git add -A
-          git commit -m "${TAG_NAME}" || echo "No changes to commit."
+          # Add the version folder to git
+          git add "${TAG_NAME}/"
 
-          # Push to download branch
-          git push -f origin download
+          # Commit and push to download branch
+          git commit -m "Add release files for version ${TAG_NAME}" || echo "No changes to commit"
+          git push origin download
