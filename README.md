@@ -15,11 +15,11 @@ A Tauri-based file explorer application with Telegram integration
 
 | Platform | Download |
 |----------|----------|
-| Windows (MSI) | [Download](https://raw.githubusercontent.com/TG-SkyBox/SkyBox/download/1.0.21/SkyBox_1.0.21_x64_en-US.msi) |
-| Windows (NSIS) | [Download](https://raw.githubusercontent.com/TG-SkyBox/SkyBox/download/1.0.21/SkyBox_1.0.21_x64-setup.exe) |
-| macOS (DMG) | [Download](https://raw.githubusercontent.com/TG-SkyBox/SkyBox/download/1.0.21/SkyBox_1.0.21_aarch64.dmg) |
-| Linux (AppImage) | [Download](https://raw.githubusercontent.com/TG-SkyBox/SkyBox/download/1.0.21/SkyBox_1.0.21_amd64.AppImage) |
-| Linux (DEB) | [Download](https://raw.githubusercontent.com/TG-SkyBox/SkyBox/download/1.0.21/SkyBox_1.0.21_amd64.deb) |
+| Windows (MSI) | [Download](https://raw.githubusercontent.com/TG-SkyBox/SkyBox/download/1.0.21/SkyBox%20Desktop_1.0.21_x64_en-US.msi) |
+| Windows (NSIS) | [Download](https://raw.githubusercontent.com/TG-SkyBox/SkyBox/download/1.0.21/SkyBox%20Desktop_1.0.21_x64-setup.exe) |
+| macOS (DMG) | [Download](https://raw.githubusercontent.com/TG-SkyBox/SkyBox/download/1.0.21/SkyBox%20Desktop_1.0.21_aarch64.dmg) |
+| Linux (AppImage) | [Download](https://raw.githubusercontent.com/TG-SkyBox/SkyBox/download/1.0.21/SkyBox%20Desktop_1.0.21_amd64.AppImage) |
+| Linux (DEB) | [Download](https://raw.githubusercontent.com/TG-SkyBox/SkyBox/download/1.0.21/SkyBox%20Desktop_1.0.21_amd64.deb) |
 
 ---
 
