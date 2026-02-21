@@ -28,8 +28,8 @@ jobs:
           npm install
 
       - name: Setup Rust
+        working-directory: ./src-tauri
         run: |
-          cd src-tauri
           rustup toolchain install stable
           rustup component add rustfmt clippy
 
@@ -40,22 +40,19 @@ jobs:
         run: echo "RUSTFLAGS=-D warnings" >> $GITHUB_ENV
 
       - name: Check Rust formatting
-        run: |
-          cd src-tauri
-          cargo fmt -- --check
+        working-directory: ./src-tauri
+        run: cargo fmt -- --check
 
       - name: Build Rust
-        run: |
-          cd src-tauri
-          cargo build --verbose
+        working-directory: ./src-tauri
+        run: cargo build --verbose
 
       - name: Run Rust tests
         env:
           TG_ID: 1
           TG_HASH: a
-        run: |
-          cd src-tauri
-          cargo test --verbose --all-features
+        working-directory: ./src-tauri
+        run: cargo test --verbose --all-features
 
       - name: Run JavaScript/TypeScript tests
         run: npm run test
