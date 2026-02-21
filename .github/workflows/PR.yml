@@ -12,7 +12,7 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
-  build:
+  Check-PR-Status:
     runs-on: ubuntu-latest
 
     steps:
