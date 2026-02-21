@@ -35,10 +35,14 @@ jobs:
         shell: bash
 
       - name: Update README with download links
+        env:
+          GITHUB_REPO: ${{ github.repository }}
         run: |
           import re
           import sys
+          import os
 
+          repo = os.environ["GITHUB_REPO"]
           version = "${{ steps.extract_version.outputs.version }}"
           readme_file = "README.md"
 
@@ -48,11 +52,11 @@ jobs:
 
           | Platform | Download |
           |----------|----------|
-          | Windows (MSI) | [Download](https://raw.githubusercontent.com/TG-SkyBox/SkyBox/download/{version}/SkyBox_{version}_x64_en-US.msi) |
-          | Windows (NSIS) | [Download](https://raw.githubusercontent.com/TG-SkyBox/SkyBox/download/{version}/SkyBox_{version}_x64-setup.exe) |
-          | macOS (DMG) | [Download](https://raw.githubusercontent.com/TG-SkyBox/SkyBox/download/{version}/SkyBox_{version}_aarch64.dmg) |
-          | Linux (AppImage) | [Download](https://raw.githubusercontent.com/TG-SkyBox/SkyBox/download/{version}/SkyBox_{version}_amd64.AppImage) |
-          | Linux (DEB) | [Download](https://raw.githubusercontent.com/TG-SkyBox/SkyBox/download/{version}/SkyBox_{version}_amd64.deb) |
+          | Windows (MSI) | [Download](https://raw.githubusercontent.com/{repo}/download/{version}/SkyBox_{version}_x64_en-US.msi) |
+          | Windows (NSIS) | [Download](https://raw.githubusercontent.com/{repo}/download/{version}/SkyBox_{version}_x64-setup.exe) |
+          | macOS (DMG) | [Download](https://raw.githubusercontent.com/{repo}/download/{version}/SkyBox_{version}_aarch64.dmg) |
+          | Linux (AppImage) | [Download](https://raw.githubusercontent.com/{repo}/download/{version}/SkyBox_{version}_amd64.AppImage) |
+          | Linux (DEB) | [Download](https://raw.githubusercontent.com/{repo}/download/{version}/SkyBox_{version}_amd64.deb) |
 
           ---
 

@@ -1,10 +1,13 @@
 [package]
 name = "SkyBox"
 version = "1.0.19"
-description = "A Tauri App"
+description = "A Telegram-themed desktop file explorer with cloud integration"
 authors = ["pamod-madubashana"]
 license = ""
-repository = ""
+repository = "https://github.com/TG-SkyBox/SkyBox"
+homepage = "https://github.com/TG-SkyBox/SkyBox"
+documentation = "https://github.com/TG-SkyBox/SkyBox/blob/main/README.md"
+publisher = "SkyBox Team"
 edition = "2021"
 rust-version = "1.77.2"
 
