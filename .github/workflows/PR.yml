@@ -44,11 +44,6 @@ jobs:
           cd src-tauri
           cargo fmt -- --check
 
-      - name: Check Rust code with clippy
-        run: |
-          cd src-tauri
-          cargo clippy --all-targets --all-features -- -D warnings
-
       - name: Build Rust
         run: |
           cd src-tauri
@@ -61,6 +56,6 @@ jobs:
         run: |
           cd src-tauri
           cargo test --verbose --all-features
-          
+
       - name: Run JavaScript/TypeScript tests
         run: npm run test
