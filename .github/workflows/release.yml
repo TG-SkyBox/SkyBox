@@ -177,7 +177,7 @@ jobs:
           )
 
           # Create commit message with release notes
-          git commit -m "new release v${{ steps.get_version.outputs.version }}" -m "${RELEASE_NOTES}"
+          git commit -m "new version v${{ steps.get_version.outputs.version }}" -m "${RELEASE_NOTES}"
           git push origin main
           echo "bump_sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
         shell: bash
@@ -364,31 +364,40 @@ jobs:
           token: ${{ secrets.PERSONAL_ACCESS_TOKEN }}
           files: release-files/*
 
-      - name: Push release files to "download" branch in current repo
+      - name: Push to "download" branch
         shell: bash
         env:
           TAG_NAME: ${{ needs.bump-version.outputs.version }}
           TOKEN: ${{ secrets.PERSONAL_ACCESS_TOKEN }}
         run: |
-          set -euo pipefail
+          # Create temp directory to stage files
+          mkdir -p upload
+          cd upload
 
-          # Configure git
-          git config user.name "pamod-madubashana"
-          git config user.email "pamod.main@gmail.com"
+          # Create version-named directory and copy all release files into it
+          if [ -d "../release-files" ] && [ -n "$(ls -A ../release-files/)" ]; then
+            mkdir -p "${TAG_NAME}"
+            cp -r ../release-files/* "${TAG_NAME}/"
+          else
+            echo "Warning: release-files directory does not exist or is empty"
+            # Create a placeholder to maintain structure
+            mkdir -p "${TAG_NAME}"
+            touch "${TAG_NAME}/README.md"
+            echo "# Release ${TAG_NAME}" > "${TAG_NAME}/README.md"
+            echo "No release artifacts available for this version." >> "${TAG_NAME}/README.md"
+          fi
 
-          # Fetch all branches to ensure we have the download branch
-          git fetch origin
+          # Create .github/workflows directory and copy readme.yml
+          mkdir -p .github/workflows
+          if [ -f "../.github/workflows/readme.yml" ]; then
+            cp ../.github/workflows/readme.yml .github/workflows/readme.yml
+          fi
 
-          # Create or checkout the download branch
-          git checkout -B download origin/download 2>/dev/null || git checkout -b download
-
-          # Create a folder with the version number and copy release files there
-          mkdir -p "${TAG_NAME}"
-          cp -v release-files/* "${TAG_NAME}/"
-
-          # Add the version folder to git
-          git add "${TAG_NAME}/"
-
-          # Commit and push to download branch
-          git commit -m "Add release files for version ${TAG_NAME}" || echo "No changes to commit"
-          git push origin download
+          git init
+          git config user.name "${{ github.actor }}"
+          git config user.email "${{ github.actor }}@users.noreply.github.com"
+          git checkout -b download
+          git add .
+          git commit -m "${TAG_NAME}"
+          git remote add origin "https://${{ github.actor }}:${{ secrets.PERSONAL_ACCESS_TOKEN }}@github.com/${{ github.repository }}"
+          git push -f origin download

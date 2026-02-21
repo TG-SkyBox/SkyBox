@@ -1,0 +1,35 @@
+# Code owners for the SkyBox project
+# Format: file-pattern @username-or-group
+
+# All files in the repository
+* @pamod-madubashana
+
+# Frontend components
+/src/ @pamod-madubashana
+
+# Tauri backend/Rust code
+/src-tauri/ @pamod-madubashana
+
+# UI components specifically
+/src/components/ui/ @pamod-madubashana
+
+# Telegram integration
+/src-tauri/src/telegram/ @pamod-madubashana
+
+# Database operations
+/src-tauri/src/db/ @pamod-madubashana
+
+# Tests
+/src/test/ @pamod-madubashana
+
+# Documentation
+/docs/ @pamod-madubashana
+*.md @pamod-madubashana
+
+# Configuration files
+*.json @pamod-madubashana
+*.toml @pamod-madubashana
+*.js @pamod-madubashana
+*.ts @pamod-madubashana
+*.tsx @pamod-madubashana
+*.rs @pamod-madubashana

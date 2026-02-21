@@ -8,6 +8,21 @@ A Tauri-based file explorer application with Telegram integration
 
 </div>
 
+
+## Download
+
+### Latest Release: v1.0.19
+
+| Platform | Download |
+|----------|----------|
+| Windows (MSI) | [Download](https://github.com/TG-SkyBox/SkyBox/raw/download/1.0.19/SkyBox_1.0.19_x64_en-US.msi) |
+| Windows (NSIS) | [Download](https://github.com/TG-SkyBox/SkyBox/raw/download/1.0.19/SkyBox_1.0.19_x64-setup.exe) |
+| macOS (DMG) | [Download](https://github.com/TG-SkyBox/SkyBox/raw/download/1.0.19/SkyBox_1.0.19_aarch64.dmg) |
+| Linux (AppImage) | [Download](https://github.com/TG-SkyBox/SkyBox/raw/download/1.0.19/SkyBox_1.0.19_amd64.AppImage) |
+| Linux (DEB) | [Download](https://github.com/TG-SkyBox/SkyBox/raw/download/1.0.19/SkyBox_1.0.19_amd64.deb) |
+
+---
+
 ## Tech Stack
 
 - **Frontend**: React, TypeScript, Tailwind CSS
@@ -27,7 +42,7 @@ A Tauri-based file explorer application with Telegram integration
 
 ```
 src/
-├── components/          # React components
+├── components/         # React components
 │   ├── skybox/         # SkyBox-specific components
 │   └── ui/             # shadcn/ui components
 ├── hooks/              # Custom React hooks
@@ -82,3 +97,74 @@ tailwind.config.ts
 - View file details in a dedicated panel
 - Manage files through a grid or list view
 - Secure local data storage with SQLite
+
+## Contributing
+
+We welcome contributions to SkyBox! Here's how you can get involved:
+
+### Prerequisites
+
+- Node.js (latest LTS version recommended)
+- Rust (1.77.2 or later)
+- npm or bun package manager
+- Git
+
+### Development Setup
+
+1. **Clone the repository:**
+   ```bash
+   git clone https://github.com/pamod-madubashana/SkyBox.git
+   cd SkyBox
+   ```
+
+2. **Install dependencies:**
+   ```bash
+   npm install
+   ```
+
+3. **Run the development server:**
+   ```bash
+   npm run tauri:dev
+   ```
+   
+   This will start the Vite development server and launch the Tauri application in development mode.
+
+4. **Alternative development commands:**
+   - Frontend only: `npm run dev`
+   - Build frontend: `npm run build`
+   - Run tests: `npm run test`
+   - Run linter: `npm run lint`
+
+5. **Rust-specific development:**
+   - Navigate to `src-tauri/` directory for Rust-specific commands
+   - Format Rust code: `cargo fmt`
+   - Lint Rust code: `cargo clippy`
+   - Run Rust tests: `cargo test`
+
+### Project Structure
+
+The project follows a typical Tauri application structure:
+
+- `src/` - Contains the React frontend code
+- `src-tauri/` - Contains the Rust backend code
+- `src/components/` - Reusable UI components
+- `src/pages/` - Application pages/routing components
+- `src-tauri/src/telegram/` - Telegram integration logic
+- `src-tauri/src/db/` - Database operations
+
+### Coding Guidelines
+
+- Use 2-space indentation for TypeScript/JavaScript
+- Use PascalCase for components and interfaces
+- Use camelCase for variables and functions
+- Use SCREAMING_SNAKE_CASE for constants
+- Follow the existing code style in the respective files
+- Write meaningful commit messages using conventional prefixes (feat:, fix:, refactor:, etc.)
+
+### Pull Request Process
+
+1. Fork the repository
+2. Create a feature branch (`git checkout -b feature/amazing-feature`)
+3. Make your changes
+4. Ensure your code follows the style guidelines
+5. Submit a pull request with a clear description of your changes

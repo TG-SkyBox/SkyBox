@@ -1,0 +1,103 @@
+name: Update README Download Links
+
+on:
+  push:
+    branches: [ download ]
+
+permissions:
+  contents: write
+
+jobs:
+  update-readme:
+    # Only run if commit is not from readme updates
+    if: |
+      !startsWith(github.event.head_commit.message, 'docs: update download links')
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          ref: main  # Checkout main branch to update README
+
+      - name: Extract version from commit message
+        id: extract_version
+        run: |
+          # Extract version from commit message like "1.0.5"
+          VERSION=$(echo "${{ github.event.head_commit.message }}" | grep -oP '^[0-9]+\.[0-9]+\.[0-9]+')
+          if [ -z "$VERSION" ]; then
+            echo "Could not extract version from commit message: ${{ github.event.head_commit.message }}"
+            exit 1
+          fi
+          echo "version=${VERSION}" >> $GITHUB_OUTPUT
+          echo "Extracted version: ${VERSION}"
+        shell: bash
+
+      - name: Update README with download links
+        run: |
+          import re
+          import sys
+
+          version = "${{ steps.extract_version.outputs.version }}"
+          readme_file = "README.md"
+
+          download_section = f"""## Download
+
+          ### Latest Release: v{version}
+
+          | Platform | Download |
+          |----------|----------|
+          | Windows (MSI) | [Download](https://github.com/TG-SkyBox/SkyBox/raw/download/{version}/SkyBox_{version}_x64_en-US.msi) |
+          | Windows (NSIS) | [Download](https://github.com/TG-SkyBox/SkyBox/raw/download/{version}/SkyBox_{version}_x64-setup.exe) |
+          | macOS (DMG) | [Download](https://github.com/TG-SkyBox/SkyBox/raw/download/{version}/SkyBox_{version}_aarch64.dmg) |
+          | Linux (AppImage) | [Download](https://github.com/TG-SkyBox/SkyBox/raw/download/{version}/SkyBox_{version}_amd64.AppImage) |
+          | Linux (DEB) | [Download](https://github.com/TG-SkyBox/SkyBox/raw/download/{version}/SkyBox_{version}_amd64.deb) |
+
+          ---
+
+          """
+
+          try:
+              with open(readme_file, 'r', encoding='utf-8') as f:
+                  content = f.read()
+          except FileNotFoundError:
+              print("README.md not found!")
+              sys.exit(1)
+
+          # Check if Download section already exists
+          if re.search(r'^## Download', content, re.MULTILINE):
+              print("Updating existing Download section...")
+              # Replace existing Download section (from ## Download to next ## or end of section)
+              pattern = r'^## Download.*?(?=^## |\Z)'
+              content = re.sub(pattern, download_section, content, flags=re.MULTILINE | re.DOTALL)
+          else:
+              print("Adding new Download section...")
+              # Try to insert before Project Overview
+              if re.search(r'^## Project Overview', content, re.MULTILINE):
+                  content = re.sub(r'^(## Project Overview)', download_section + r'\1', content, flags=re.MULTILINE)
+              else:
+                  # Insert after first # heading
+                  content = re.sub(r'^(# .*)$', r'\1\n\n' + download_section, content, flags=re.MULTILINE, count=1)
+
+          with open(readme_file, 'w', encoding='utf-8') as f:
+              f.write(content)
+
+          print(f"README.md updated with download links for v{version}")
+        shell: python
+
+      - name: Commit and Push README Update
+        run: |
+          git config --global user.name "pamod-madubashana"
+          git config --global user.email "contact@pamod.is-a.dev"
+          
+          # Check if there are changes to commit
+          if git diff --quiet; then
+            echo "No changes to README.md"
+            exit 0
+          fi
+          
+          git add README.md
+          git commit -m "docs: update download links for v${{ steps.extract_version.outputs.version }}"
+          git push origin HEAD:main
+        shell: bash
