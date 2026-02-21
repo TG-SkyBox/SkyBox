@@ -25,3 +25,4 @@ logs/
 *.sw?
 *.db
 .env
+sync.bat
