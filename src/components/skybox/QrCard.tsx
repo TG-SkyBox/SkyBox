@@ -11,14 +11,24 @@ interface QrCardProps {
   expiresAt?: number;
 }
 
-export function QrCard({ isActive, onConfirm, qrData, onRefresh, isRefreshing, expiresAt }: QrCardProps) {
+export function QrCard({
+  isActive,
+  onConfirm,
+  qrData,
+  onRefresh,
+  isRefreshing,
+  expiresAt,
+}: QrCardProps) {
   const [timeLeft, setTimeLeft] = useState<number>(0);
 
   useEffect(() => {
     if (!expiresAt) return;
 
     const updateTimer = () => {
-      const remaining = Math.max(0, Math.floor((expiresAt - Date.now()) / 1000));
+      const remaining = Math.max(
+        0,
+        Math.floor((expiresAt - Date.now()) / 1000),
+      );
       setTimeLeft(remaining);
     };
 
@@ -57,8 +67,12 @@ export function QrCard({ isActive, onConfirm, qrData, onRefresh, isRefreshing, e
           Scan From Mobile Telegram
         </h2>
         {expiresAt && (
-          <div className={`text-sm ${isExpired ? "text-destructive" : "text-muted-foreground"}`}>
-            {isExpired ? "QR code expired" : `Expires in ${Math.floor(timeLeft / 60)}:${(timeLeft % 60).toString().padStart(2, "0")}`}
+          <div
+            className={`text-sm ${isExpired ? "text-destructive" : "text-muted-foreground"}`}
+          >
+            {isExpired
+              ? "QR code expired"
+              : `Expires in ${Math.floor(timeLeft / 60)}:${(timeLeft % 60).toString().padStart(2, "0")}`}
           </div>
         )}
       </div>
@@ -67,7 +81,9 @@ export function QrCard({ isActive, onConfirm, qrData, onRefresh, isRefreshing, e
       <div className="flex flex-col gap-3 w-full max-w-sm">
         <div className="flex items-center gap-3">
           <div className="w-6 h-6 rounded-full bg-primary flex items-center justify-center flex-shrink-0">
-            <span className="text-sm text-primary-foreground font-medium">1</span>
+            <span className="text-sm text-primary-foreground font-medium">
+              1
+            </span>
           </div>
           <p className="text-body text-foreground">
             Open Telegram on your phone
@@ -75,7 +91,9 @@ export function QrCard({ isActive, onConfirm, qrData, onRefresh, isRefreshing, e
         </div>
         <div className="flex items-center gap-3">
           <div className="w-6 h-6 rounded-full bg-primary flex items-center justify-center flex-shrink-0">
-            <span className="text-sm text-primary-foreground font-medium">2</span>
+            <span className="text-sm text-primary-foreground font-medium">
+              2
+            </span>
           </div>
           <p className="text-body text-foreground">
             Go to Settings &gt; Devices &gt; Link Desktop Device
@@ -83,7 +101,9 @@ export function QrCard({ isActive, onConfirm, qrData, onRefresh, isRefreshing, e
         </div>
         <div className="flex items-center gap-3">
           <div className="w-6 h-6 rounded-full bg-primary flex items-center justify-center flex-shrink-0">
-            <span className="text-sm text-primary-foreground font-medium">3</span>
+            <span className="text-sm text-primary-foreground font-medium">
+              3
+            </span>
           </div>
           <p className="text-body text-foreground">
             Scan this QR code to Log In

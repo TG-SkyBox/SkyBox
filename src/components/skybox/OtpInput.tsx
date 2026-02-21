@@ -7,7 +7,12 @@ interface OtpInputProps {
   onComplete?: (value: string) => void;
 }
 
-export function OtpInput({ length = 5, value, onChange, onComplete }: OtpInputProps) {
+export function OtpInput({
+  length = 5,
+  value,
+  onChange,
+  onComplete,
+}: OtpInputProps) {
   const inputRefs = useRef<(HTMLInputElement | null)[]>([]);
   const [focusedIndex, setFocusedIndex] = useState<number | null>(null);
 
@@ -41,9 +46,12 @@ export function OtpInput({ length = 5, value, onChange, onComplete }: OtpInputPr
 
   const handlePaste = (e: ClipboardEvent<HTMLInputElement>) => {
     e.preventDefault();
-    const pastedData = e.clipboardData.getData("text").replace(/\D/g, "").slice(0, length);
+    const pastedData = e.clipboardData
+      .getData("text")
+      .replace(/\D/g, "")
+      .slice(0, length);
     onChange(pastedData);
-    
+
     const focusIndex = Math.min(pastedData.length, length - 1);
     inputRefs.current[focusIndex]?.focus();
 
@@ -71,8 +79,8 @@ export function OtpInput({ length = 5, value, onChange, onComplete }: OtpInputPr
             focusedIndex === index
               ? "border-primary telegram-glow"
               : value[index]
-              ? "border-primary/50"
-              : "border-border"
+                ? "border-primary/50"
+                : "border-border"
           }`}
         />
       ))}

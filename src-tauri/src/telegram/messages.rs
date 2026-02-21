@@ -1,9 +1,9 @@
 use crate::db::{Database, TelegramMessage, TelegramSavedItem};
-use crate::telegram::{run_telegram_request, AUTH_STATE, TelegramError};
+use crate::telegram::{run_telegram_request, TelegramError, AUTH_STATE};
 use directories::{BaseDirs, UserDirs};
-use grammers_client::InputMessage;
-use grammers_client::types::{Attribute, Downloadable, Media, Message};
 use grammers_client::grammers_tl_types as tl;
+use grammers_client::types::{Attribute, Downloadable, Media, Message};
+use grammers_client::InputMessage;
 use serde_json::json;
 use std::collections::HashSet;
 use std::fs;
@@ -24,6 +24,8 @@ const RECYCLE_BIN_SAVED_PATH: &str = "/Home/Recycle Bin";
 const TELEGRAM_DELETE_BATCH_SIZE: usize = 100;
 const PHOTO_SIZE_REPAIR_LIMIT: i64 = 200;
 const THUMBNAIL_PREFETCH_DELAY_MS: u64 = 90;
+const DOWNLOAD_SPEED_SAMPLE_INTERVAL_MS: u64 = 300;
+const DOWNLOAD_SPEED_FAST_TRANSFER_THRESHOLD_MS: u64 = 300;
 
 static THUMBNAIL_FLOOD_WAIT_UNTIL: LazyLock<StdMutex<Option<Instant>>> =
     LazyLock::new(|| StdMutex::new(None));
@@ -96,6 +98,7 @@ struct DownloadProgressPayload {
     stage: String,
     progress: f64,
     downloaded_bytes: u64,
+    bytes_per_second: Option<f64>,
     total_bytes: Option<u64>,
     destination_path: Option<String>,
     message: Option<String>,
@@ -175,6 +178,7 @@ struct UploadProgressPayload {
     stage: String,
     progress: f64,
     uploaded_bytes: u64,
+    bytes_per_second: Option<f64>,
     total_bytes: Option<u64>,
     message: Option<String>,
 }
@@ -201,6 +205,40 @@ fn download_progress_percent(downloaded_bytes: u64, total_bytes: Option<u64>) ->
     }
 }
 
+fn sample_transfer_speed_bytes_per_second(
+    latest_bytes: u64,
+    last_sample_bytes: u64,
+    last_sample_at: Instant,
+) -> (Option<f64>, u64, Instant) {
+    let now = Instant::now();
+    let elapsed = now.saturating_duration_since(last_sample_at);
+    let delta_bytes = latest_bytes.saturating_sub(last_sample_bytes);
+
+    if delta_bytes == 0 || elapsed.is_zero() {
+        return (None, latest_bytes, now);
+    }
+
+    let bytes_per_second = delta_bytes as f64 / elapsed.as_secs_f64();
+    if bytes_per_second.is_finite() && bytes_per_second > 0.0 {
+        (Some(bytes_per_second), latest_bytes, now)
+    } else {
+        (None, latest_bytes, now)
+    }
+}
+
+fn calculate_bytes_per_second(delta_bytes: u64, elapsed: Duration) -> Option<f64> {
+    if delta_bytes == 0 || elapsed.is_zero() {
+        return None;
+    }
+
+    let bytes_per_second = delta_bytes as f64 / elapsed.as_secs_f64();
+    if bytes_per_second.is_finite() && bytes_per_second > 0.0 {
+        Some(bytes_per_second)
+    } else {
+        None
+    }
+}
+
 struct UploadProgressReader<R> {
     inner: R,
     app: AppHandle,
@@ -208,6 +246,8 @@ struct UploadProgressReader<R> {
     total_bytes: u64,
     uploaded_bytes: u64,
     last_emit_at: Instant,
+    last_speed_sample_bytes: u64,
+    last_speed_sample_at: Instant,
 }
 
 impl<R: AsyncRead + Unpin> UploadProgressReader<R> {
@@ -219,10 +259,12 @@ impl<R: AsyncRead + Unpin> UploadProgressReader<R> {
             total_bytes,
             uploaded_bytes: 0,
             last_emit_at: Instant::now(),
+            last_speed_sample_bytes: 0,
+            last_speed_sample_at: Instant::now(),
         }
     }
 
-    fn emit_progress(&self, stage: &str, message: Option<String>) {
+    fn emit_progress(&self, stage: &str, message: Option<String>, bytes_per_second: Option<f64>) {
         emit_upload_progress(
             &self.app,
             UploadProgressPayload {
@@ -230,6 +272,7 @@ impl<R: AsyncRead + Unpin> UploadProgressReader<R> {
                 stage: stage.to_string(),
                 progress: download_progress_percent(self.uploaded_bytes, Some(self.total_bytes)),
                 uploaded_bytes: self.uploaded_bytes,
+                bytes_per_second,
                 total_bytes: Some(self.total_bytes),
                 message,
             },
@@ -263,7 +306,15 @@ impl<R: AsyncRead + Unpin> AsyncRead for UploadProgressReader<R> {
                 if self.last_emit_at.elapsed() >= Duration::from_millis(120)
                     || self.uploaded_bytes >= self.total_bytes
                 {
-                    self.emit_progress("uploading", None);
+                    let (bytes_per_second, sampled_bytes, sampled_at) =
+                        sample_transfer_speed_bytes_per_second(
+                            self.uploaded_bytes,
+                            self.last_speed_sample_bytes,
+                            self.last_speed_sample_at,
+                        );
+                    self.last_speed_sample_bytes = sampled_bytes;
+                    self.last_speed_sample_at = sampled_at;
+                    self.emit_progress("uploading", None, bytes_per_second);
                     self.last_emit_at = Instant::now();
                 }
             }
@@ -350,12 +401,8 @@ fn build_upload_file_name(file_name: &str) -> (String, Option<String>) {
 fn upload_media_kind_for_extension(extension: Option<&str>) -> UploadMediaKind {
     match extension.unwrap_or_default() {
         "jpg" | "jpeg" | "png" | "webp" | "gif" | "bmp" => UploadMediaKind::Photo,
-        "mp4" | "mkv" | "webm" | "mov" | "avi" | "wmv" | "m4v" | "flv" => {
-            UploadMediaKind::Video
-        }
-        "mp3" | "m4a" | "ogg" | "wav" | "flac" | "aac" | "opus" | "wma" => {
-            UploadMediaKind::Audio
-        }
+        "mp4" | "mkv" | "webm" | "mov" | "avi" | "wmv" | "m4v" | "flv" => UploadMediaKind::Video,
+        "mp3" | "m4a" | "ogg" | "wav" | "flac" | "aac" | "opus" | "wma" => UploadMediaKind::Audio,
         _ => UploadMediaKind::Document,
     }
 }
@@ -401,12 +448,10 @@ fn classify_extension(extension: Option<&str>) -> ExtensionClassification {
                 file_type: "image",
             }
         }
-        "mp4" | "mkv" | "webm" | "mov" | "avi" | "wmv" | "m4v" | "flv" => {
-            ExtensionClassification {
-                category: "Videos",
-                file_type: "video",
-            }
-        }
+        "mp4" | "mkv" | "webm" | "mov" | "avi" | "wmv" | "m4v" | "flv" => ExtensionClassification {
+            category: "Videos",
+            file_type: "video",
+        },
         "mp3" | "m4a" | "ogg" | "wav" | "flac" | "aac" | "opus" | "wma" => {
             ExtensionClassification {
                 category: "Audios",
@@ -498,7 +543,11 @@ fn generated_file_name(file_type: &str, extension: Option<&str>) -> String {
     }
 }
 
-fn fallback_file_name_for_non_media(message_id: i32, file_type: &str, extension: Option<&str>) -> String {
+fn fallback_file_name_for_non_media(
+    message_id: i32,
+    file_type: &str,
+    extension: Option<&str>,
+) -> String {
     let base = if file_type == "text" {
         format!("note_{}", message_id)
     } else {
@@ -530,7 +579,10 @@ fn get_thumbnail_cache_dir() -> Result<PathBuf, TelegramError> {
         message: "Failed to resolve app data directory".to_string(),
     })?;
 
-    let thumbnails_dir = base_dirs.data_local_dir().join("Skybox").join(".thumbnails");
+    let thumbnails_dir = base_dirs
+        .data_local_dir()
+        .join("Skybox")
+        .join(".thumbnails");
     fs::create_dir_all(&thumbnails_dir).map_err(|e| TelegramError {
         message: format!(
             "Failed to create thumbnail cache directory {}: {}",
@@ -568,7 +620,11 @@ fn detect_thumbnail_extension(bytes: &[u8]) -> &'static str {
     "jpg"
 }
 
-fn cache_thumbnail_bytes(chat_id: i64, message_id: i32, bytes: &[u8]) -> Result<String, TelegramError> {
+fn cache_thumbnail_bytes(
+    chat_id: i64,
+    message_id: i32,
+    bytes: &[u8],
+) -> Result<String, TelegramError> {
     let extension = detect_thumbnail_extension(bytes);
     let thumbnail_dir = get_thumbnail_cache_dir()?;
     let thumbnail_path = thumbnail_dir.join(format!("{}_{}.{}", chat_id, message_id, extension));
@@ -590,7 +646,9 @@ fn decode_data_url_image_bytes(data_url: &str) -> Option<Vec<u8>> {
     let payload = &data_url[payload_index..];
 
     use base64::Engine;
-    base64::engine::general_purpose::STANDARD.decode(payload).ok()
+    base64::engine::general_purpose::STANDARD
+        .decode(payload)
+        .ok()
 }
 
 fn normalize_saved_path(path: &str) -> String {
@@ -635,8 +693,7 @@ fn virtual_to_saved_path(path: &str) -> Option<String> {
 }
 
 fn parse_message_id_from_virtual_path(path: &str) -> Option<i32> {
-    path
-        .trim()
+    path.trim()
         .strip_prefix("tg://msg/")
         .and_then(|value| value.parse::<i32>().ok())
 }
@@ -918,11 +975,14 @@ fn upsert_saved_item_from_message(
 ) -> Result<(), TelegramError> {
     let preferred_name = fallback_file_name
         .and_then(optional_sanitized_name)
-        .or_else(|| message.filename.as_deref().and_then(optional_sanitized_name));
+        .or_else(|| {
+            message
+                .filename
+                .as_deref()
+                .and_then(optional_sanitized_name)
+        });
 
-    let extension_from_name_candidate = preferred_name
-        .as_deref()
-        .and_then(extension_from_name);
+    let extension_from_name_candidate = preferred_name.as_deref().and_then(extension_from_name);
 
     let extension_candidate = normalize_extension(message.extension.as_deref())
         .or(extension_from_name_candidate)
@@ -973,9 +1033,10 @@ fn upsert_saved_item_from_message(
         owner_id: owner_id.to_string(),
     };
 
-    db.upsert_telegram_saved_item(&saved_item).map_err(|e| TelegramError {
-        message: format!("Failed to save item metadata: {}", e.message),
-    })
+    db.upsert_telegram_saved_item(&saved_item)
+        .map_err(|e| TelegramError {
+            message: format!("Failed to save item metadata: {}", e.message),
+        })
 }
 
 fn hydrate_saved_items_from_cached_messages(
@@ -983,11 +1044,11 @@ fn hydrate_saved_items_from_cached_messages(
     owner_id: &str,
     chat_id: i64,
 ) -> Result<usize, TelegramError> {
-    let indexed_messages_count = db
-        .count_all_indexed_messages(chat_id)
-        .map_err(|e| TelegramError {
-            message: format!("Failed to count indexed messages: {}", e.message),
-        })?;
+    let indexed_messages_count =
+        db.count_all_indexed_messages(chat_id)
+            .map_err(|e| TelegramError {
+                message: format!("Failed to count indexed messages: {}", e.message),
+            })?;
 
     if indexed_messages_count == 0 {
         log::debug!("No cached telegram_messages rows found; skipping saved-item hydration");
@@ -1009,10 +1070,16 @@ fn hydrate_saved_items_from_cached_messages(
     let generated_without_extension = db
         .count_telegram_generated_names_missing_extension(owner_id)
         .map_err(|e| TelegramError {
-            message: format!("Failed to count generated names without extension: {}", e.message),
+            message: format!(
+                "Failed to count generated names without extension: {}",
+                e.message
+            ),
         })?;
 
-    if existing_items >= indexed_messages_count && unnamed_items == 0 && generated_without_extension == 0 {
+    if existing_items >= indexed_messages_count
+        && unnamed_items == 0
+        && generated_without_extension == 0
+    {
         log::debug!(
             "Saved-item hydration already up-to-date (saved_items={}, indexed_messages={}, unnamed_items={}, generated_without_extension={})",
             existing_items,
@@ -1031,9 +1098,11 @@ fn hydrate_saved_items_from_cached_messages(
         generated_without_extension
     );
 
-    let cached_messages = db.get_all_indexed_messages(chat_id).map_err(|e| TelegramError {
-        message: format!("Failed to read cached telegram messages: {}", e.message),
-    })?;
+    let cached_messages = db
+        .get_all_indexed_messages(chat_id)
+        .map_err(|e| TelegramError {
+            message: format!("Failed to read cached telegram messages: {}", e.message),
+        })?;
 
     if cached_messages.is_empty() {
         return Ok(0);
@@ -1045,15 +1114,20 @@ fn hydrate_saved_items_from_cached_messages(
         hydrated += 1;
     }
 
-    let oldest_message_id = db.get_oldest_indexed_message_id(chat_id).map_err(|e| TelegramError {
-        message: format!("Failed to read oldest cached message id: {}", e.message),
-    })?;
+    let oldest_message_id =
+        db.get_oldest_indexed_message_id(chat_id)
+            .map_err(|e| TelegramError {
+                message: format!("Failed to read oldest cached message id: {}", e.message),
+            })?;
 
     if oldest_message_id > 0 {
-        db.set_setting(&backfill_cursor_key(chat_id), &oldest_message_id.to_string())
-            .map_err(|e| TelegramError {
-                message: format!("Failed to update backfill cursor: {}", e.message),
-            })?;
+        db.set_setting(
+            &backfill_cursor_key(chat_id),
+            &oldest_message_id.to_string(),
+        )
+        .map_err(|e| TelegramError {
+            message: format!("Failed to update backfill cursor: {}", e.message),
+        })?;
         db.set_setting(&backfill_complete_key(chat_id), "0")
             .map_err(|e| TelegramError {
                 message: format!("Failed to update backfill completion state: {}", e.message),
@@ -1087,10 +1161,10 @@ async fn repair_zero_sized_image_items(
             "repair_zero_sized_image_items.get_messages_by_id",
             || async { client.get_messages_by_id(input_peer.clone(), chunk).await },
         )
-            .await
-            .map_err(|e| TelegramError {
-                message: format!("Failed to fetch messages for size repair: {}", e),
-            })?;
+        .await
+        .map_err(|e| TelegramError {
+            message: format!("Failed to fetch messages for size repair: {}", e),
+        })?;
 
         for message in fetched_messages.into_iter().flatten() {
             let Some(parsed) = categorize_message(&message, chat_id) else {
@@ -1118,7 +1192,9 @@ async fn repair_zero_sized_image_items(
     Ok(repaired)
 }
 
-pub async fn tg_index_saved_messages_impl(db: Database) -> Result<serde_json::Value, TelegramError> {
+pub async fn tg_index_saved_messages_impl(
+    db: Database,
+) -> Result<serde_json::Value, TelegramError> {
     let state_guard = AUTH_STATE.lock().await;
     let state = state_guard.as_ref().ok_or_else(|| TelegramError {
         message: "Not authorized".to_string(),
@@ -1128,20 +1204,23 @@ pub async fn tg_index_saved_messages_impl(db: Database) -> Result<serde_json::Va
     let me = run_telegram_request("tg_index_saved_messages_impl.get_me", || async {
         client.get_me().await
     })
-        .await
-        .map_err(|e| TelegramError {
+    .await
+    .map_err(|e| TelegramError {
         message: format!("Failed to get user info: {}", e),
     })?;
 
     let chat_id = me.raw.id();
     let owner_id = chat_id.to_string();
-    let last_id = db.get_last_indexed_message_id(chat_id).map_err(|e| TelegramError {
-        message: format!("Database error: {}", e.message),
-    })?;
+    let last_id = db
+        .get_last_indexed_message_id(chat_id)
+        .map_err(|e| TelegramError {
+            message: format!("Database error: {}", e.message),
+        })?;
 
-    db.ensure_telegram_saved_folders(&owner_id).map_err(|e| TelegramError {
-        message: format!("Failed to ensure default folders: {}", e.message),
-    })?;
+    db.ensure_telegram_saved_folders(&owner_id)
+        .map_err(|e| TelegramError {
+            message: format!("Failed to ensure default folders: {}", e.message),
+        })?;
 
     let hydrated_count = hydrate_saved_items_from_cached_messages(&db, &owner_id, chat_id)?;
     if hydrated_count > 0 {
@@ -1151,7 +1230,11 @@ pub async fn tg_index_saved_messages_impl(db: Database) -> Result<serde_json::Va
         );
     }
 
-    log::info!("Indexing Saved Messages for user {} starting from message ID {}", chat_id, last_id);
+    log::info!(
+        "Indexing Saved Messages for user {} starting from message ID {}",
+        chat_id,
+        last_id
+    );
 
     // Fetch messages for Saved Messages
     let input_peer = match &me.raw {
@@ -1159,11 +1242,15 @@ pub async fn tg_index_saved_messages_impl(db: Database) -> Result<serde_json::Va
             user_id: u.id,
             access_hash: u.access_hash.unwrap_or(0),
         }),
-        _ => return Err(TelegramError { message: "Invalid user type".to_string() }),
+        _ => {
+            return Err(TelegramError {
+                message: "Invalid user type".to_string(),
+            })
+        }
     };
     let started_from_empty_db = last_id == 0;
     let mut messages_iter = client.iter_messages(input_peer.clone());
-    
+
     let mut new_count = 0;
     let mut category_counts = std::collections::HashMap::new();
     let mut min_indexed_id = 0;
@@ -1176,12 +1263,13 @@ pub async fn tg_index_saved_messages_impl(db: Database) -> Result<serde_json::Va
         }
 
         if let Some(tg_msg) = categorize_message(&message, chat_id) {
-            db.save_telegram_message(&tg_msg).map_err(|e| TelegramError {
-                message: format!("Failed to save message: {}", e.message),
-            })?;
+            db.save_telegram_message(&tg_msg)
+                .map_err(|e| TelegramError {
+                    message: format!("Failed to save message: {}", e.message),
+                })?;
 
             upsert_saved_item_from_message(&db, &owner_id, &tg_msg, None, None)?;
-              
+
             new_count += 1;
             if min_indexed_id == 0 || tg_msg.message_id < min_indexed_id {
                 min_indexed_id = tg_msg.message_id;
@@ -1191,25 +1279,21 @@ pub async fn tg_index_saved_messages_impl(db: Database) -> Result<serde_json::Va
     }
 
     if started_from_empty_db {
-        db.set_setting(&backfill_complete_key(chat_id), "1").map_err(|e| TelegramError {
-            message: format!("Failed to update backfill completion state: {}", e.message),
-        })?;
+        db.set_setting(&backfill_complete_key(chat_id), "1")
+            .map_err(|e| TelegramError {
+                message: format!("Failed to update backfill completion state: {}", e.message),
+            })?;
 
         if min_indexed_id > 0 {
-            db.set_setting(&backfill_cursor_key(chat_id), &min_indexed_id.to_string()).map_err(|e| TelegramError {
-                message: format!("Failed to update backfill cursor: {}", e.message),
-            })?;
+            db.set_setting(&backfill_cursor_key(chat_id), &min_indexed_id.to_string())
+                .map_err(|e| TelegramError {
+                    message: format!("Failed to update backfill cursor: {}", e.message),
+                })?;
         }
     }
 
-    let repaired_image_sizes = repair_zero_sized_image_items(
-        &db,
-        client,
-        &owner_id,
-        chat_id,
-        &input_peer,
-    )
-    .await?;
+    let repaired_image_sizes =
+        repair_zero_sized_image_items(&db, client, &owner_id, chat_id, &input_peer).await?;
 
     if repaired_image_sizes > 0 {
         log::info!(
@@ -1226,7 +1310,10 @@ pub async fn tg_index_saved_messages_impl(db: Database) -> Result<serde_json::Va
     }))
 }
 
-pub async fn tg_get_indexed_saved_messages_impl(db: Database, category: String) -> Result<Vec<TelegramMessage>, TelegramError> {
+pub async fn tg_get_indexed_saved_messages_impl(
+    db: Database,
+    category: String,
+) -> Result<Vec<TelegramMessage>, TelegramError> {
     let state_guard = AUTH_STATE.lock().await;
     let state = state_guard.as_ref().ok_or_else(|| TelegramError {
         message: "Not authorized".to_string(),
@@ -1235,17 +1322,21 @@ pub async fn tg_get_indexed_saved_messages_impl(db: Database, category: String) 
     let me = run_telegram_request("tg_get_indexed_saved_messages_impl.get_me", || async {
         state.client.get_me().await
     })
-        .await
-        .map_err(|e| TelegramError {
+    .await
+    .map_err(|e| TelegramError {
         message: format!("Failed to get user info: {}", e),
     })?;
 
-    db.get_indexed_messages_by_category(me.raw.id(), &category).map_err(|e| TelegramError {
-        message: format!("Database error: {}", e.message),
-    })
+    db.get_indexed_messages_by_category(me.raw.id(), &category)
+        .map_err(|e| TelegramError {
+            message: format!("Database error: {}", e.message),
+        })
 }
 
-pub async fn tg_list_saved_items_impl(db: Database, file_path: String) -> Result<Vec<TelegramSavedItem>, TelegramError> {
+pub async fn tg_list_saved_items_impl(
+    db: Database,
+    file_path: String,
+) -> Result<Vec<TelegramSavedItem>, TelegramError> {
     let state_guard = AUTH_STATE.lock().await;
     let state = state_guard.as_ref().ok_or_else(|| TelegramError {
         message: "Not authorized".to_string(),
@@ -1254,21 +1345,23 @@ pub async fn tg_list_saved_items_impl(db: Database, file_path: String) -> Result
     let me = run_telegram_request("tg_list_saved_items_impl.get_me", || async {
         state.client.get_me().await
     })
-        .await
-        .map_err(|e| TelegramError {
+    .await
+    .map_err(|e| TelegramError {
         message: format!("Failed to get user info: {}", e),
     })?;
 
     let owner_id = me.raw.id().to_string();
     let normalized_path = normalize_saved_path(&file_path);
 
-    db.ensure_telegram_saved_folders(&owner_id).map_err(|e| TelegramError {
-        message: format!("Failed to ensure default folders: {}", e.message),
-    })?;
+    db.ensure_telegram_saved_folders(&owner_id)
+        .map_err(|e| TelegramError {
+            message: format!("Failed to ensure default folders: {}", e.message),
+        })?;
 
-    db.get_telegram_saved_items_by_path(&owner_id, &normalized_path).map_err(|e| TelegramError {
-        message: format!("Database error: {}", e.message),
-    })
+    db.get_telegram_saved_items_by_path(&owner_id, &normalized_path)
+        .map_err(|e| TelegramError {
+            message: format!("Database error: {}", e.message),
+        })
 }
 
 pub async fn tg_list_saved_items_page_impl(
@@ -1285,8 +1378,8 @@ pub async fn tg_list_saved_items_page_impl(
     let me = run_telegram_request("tg_list_saved_items_page_impl.get_me", || async {
         state.client.get_me().await
     })
-        .await
-        .map_err(|e| TelegramError {
+    .await
+    .map_err(|e| TelegramError {
         message: format!("Failed to get user info: {}", e),
     })?;
 
@@ -1295,12 +1388,18 @@ pub async fn tg_list_saved_items_page_impl(
     let safe_offset = offset.max(0);
     let safe_limit = limit.clamp(1, MAX_BATCH_SIZE as i64);
 
-    db.ensure_telegram_saved_folders(&owner_id).map_err(|e| TelegramError {
-        message: format!("Failed to ensure default folders: {}", e.message),
-    })?;
+    db.ensure_telegram_saved_folders(&owner_id)
+        .map_err(|e| TelegramError {
+            message: format!("Failed to ensure default folders: {}", e.message),
+        })?;
 
     let mut items = db
-        .get_telegram_saved_items_by_path_paginated(&owner_id, &normalized_path, safe_offset, safe_limit + 1)
+        .get_telegram_saved_items_by_path_paginated(
+            &owner_id,
+            &normalized_path,
+            safe_offset,
+            safe_limit + 1,
+        )
         .map_err(|e| TelegramError {
             message: format!("Database error: {}", e.message),
         })?;
@@ -1330,8 +1429,8 @@ pub async fn tg_backfill_saved_messages_batch_impl(
     let me = run_telegram_request("tg_backfill_saved_messages_batch_impl.get_me", || async {
         client.get_me().await
     })
-        .await
-        .map_err(|e| TelegramError {
+    .await
+    .map_err(|e| TelegramError {
         message: format!("Failed to get user info: {}", e),
     })?;
 
@@ -1339,9 +1438,10 @@ pub async fn tg_backfill_saved_messages_batch_impl(
     let owner_id = chat_id.to_string();
     let limit = clamp_batch_size(batch_size);
 
-    db.ensure_telegram_saved_folders(&owner_id).map_err(|e| TelegramError {
-        message: format!("Failed to ensure default folders: {}", e.message),
-    })?;
+    db.ensure_telegram_saved_folders(&owner_id)
+        .map_err(|e| TelegramError {
+            message: format!("Failed to ensure default folders: {}", e.message),
+        })?;
 
     let complete_key = backfill_complete_key(chat_id);
     let complete = db
@@ -1374,9 +1474,10 @@ pub async fn tg_backfill_saved_messages_batch_impl(
     let initial_cursor = if stored_cursor > 0 {
         stored_cursor
     } else {
-        db.get_oldest_indexed_message_id(chat_id).map_err(|e| TelegramError {
-            message: format!("Failed to read oldest indexed message: {}", e.message),
-        })?
+        db.get_oldest_indexed_message_id(chat_id)
+            .map_err(|e| TelegramError {
+                message: format!("Failed to read oldest indexed message: {}", e.message),
+            })?
     };
 
     let input_peer = match &me.raw {
@@ -1384,7 +1485,11 @@ pub async fn tg_backfill_saved_messages_batch_impl(
             user_id: u.id,
             access_hash: u.access_hash.unwrap_or(0),
         }),
-        _ => return Err(TelegramError { message: "Invalid user type".to_string() }),
+        _ => {
+            return Err(TelegramError {
+                message: "Invalid user type".to_string(),
+            })
+        }
     };
 
     let mut messages_iter = if initial_cursor > 0 {
@@ -1407,9 +1512,10 @@ pub async fn tg_backfill_saved_messages_batch_impl(
         }
 
         if let Some(tg_msg) = categorize_message(&message, chat_id) {
-            db.save_telegram_message(&tg_msg).map_err(|e| TelegramError {
-                message: format!("Failed to save message: {}", e.message),
-            })?;
+            db.save_telegram_message(&tg_msg)
+                .map_err(|e| TelegramError {
+                    message: format!("Failed to save message: {}", e.message),
+                })?;
 
             upsert_saved_item_from_message(&db, &owner_id, &tg_msg, None, None)?;
             indexed_count += 1;
@@ -1417,15 +1523,17 @@ pub async fn tg_backfill_saved_messages_batch_impl(
     }
 
     if fetched_count > 0 && min_message_id > 0 {
-        db.set_setting(&cursor_key, &min_message_id.to_string()).map_err(|e| TelegramError {
-            message: format!("Failed to update backfill cursor: {}", e.message),
-        })?;
+        db.set_setting(&cursor_key, &min_message_id.to_string())
+            .map_err(|e| TelegramError {
+                message: format!("Failed to update backfill cursor: {}", e.message),
+            })?;
     }
 
     let has_more = fetched_count == limit;
-    db.set_setting(&complete_key, if has_more { "0" } else { "1" }).map_err(|e| TelegramError {
-        message: format!("Failed to update backfill completion state: {}", e.message),
-    })?;
+    db.set_setting(&complete_key, if has_more { "0" } else { "1" })
+        .map_err(|e| TelegramError {
+            message: format!("Failed to update backfill completion state: {}", e.message),
+        })?;
 
     Ok(json!({
         "fetched_count": fetched_count,
@@ -1436,7 +1544,9 @@ pub async fn tg_backfill_saved_messages_batch_impl(
     }))
 }
 
-pub async fn tg_rebuild_saved_items_index_impl(db: Database) -> Result<serde_json::Value, TelegramError> {
+pub async fn tg_rebuild_saved_items_index_impl(
+    db: Database,
+) -> Result<serde_json::Value, TelegramError> {
     let state_guard = AUTH_STATE.lock().await;
     let state = state_guard.as_ref().ok_or_else(|| TelegramError {
         message: "Not authorized".to_string(),
@@ -1445,23 +1555,24 @@ pub async fn tg_rebuild_saved_items_index_impl(db: Database) -> Result<serde_jso
     let me = run_telegram_request("tg_rebuild_saved_items_index_impl.get_me", || async {
         state.client.get_me().await
     })
-        .await
-        .map_err(|e| TelegramError {
+    .await
+    .map_err(|e| TelegramError {
         message: format!("Failed to get user info: {}", e),
     })?;
 
     let chat_id = me.raw.id();
     let owner_id = chat_id.to_string();
 
-    db.ensure_telegram_saved_folders(&owner_id).map_err(|e| TelegramError {
-        message: format!("Failed to ensure default folders: {}", e.message),
-    })?;
-
-    let indexed_messages_count = db
-        .count_all_indexed_messages(chat_id)
+    db.ensure_telegram_saved_folders(&owner_id)
         .map_err(|e| TelegramError {
-            message: format!("Failed to count indexed messages: {}", e.message),
+            message: format!("Failed to ensure default folders: {}", e.message),
         })?;
+
+    let indexed_messages_count =
+        db.count_all_indexed_messages(chat_id)
+            .map_err(|e| TelegramError {
+                message: format!("Failed to count indexed messages: {}", e.message),
+            })?;
     let saved_items_count = db
         .count_telegram_saved_non_folder_items(&owner_id)
         .map_err(|e| TelegramError {
@@ -1475,7 +1586,10 @@ pub async fn tg_rebuild_saved_items_index_impl(db: Database) -> Result<serde_jso
     let generated_without_extension_count = db
         .count_telegram_generated_names_missing_extension(&owner_id)
         .map_err(|e| TelegramError {
-            message: format!("Failed to count generated names without extension: {}", e.message),
+            message: format!(
+                "Failed to count generated names without extension: {}",
+                e.message
+            ),
         })?;
 
     if indexed_messages_count == 0
@@ -1489,9 +1603,11 @@ pub async fn tg_rebuild_saved_items_index_impl(db: Database) -> Result<serde_jso
         }));
     }
 
-    let cached_messages = db.get_all_indexed_messages(chat_id).map_err(|e| TelegramError {
-        message: format!("Failed to read cached telegram messages: {}", e.message),
-    })?;
+    let cached_messages = db
+        .get_all_indexed_messages(chat_id)
+        .map_err(|e| TelegramError {
+            message: format!("Failed to read cached telegram messages: {}", e.message),
+        })?;
 
     let mut upserted = 0usize;
     for message in cached_messages {
@@ -1499,15 +1615,20 @@ pub async fn tg_rebuild_saved_items_index_impl(db: Database) -> Result<serde_jso
         upserted += 1;
     }
 
-    let oldest_message_id = db.get_oldest_indexed_message_id(chat_id).map_err(|e| TelegramError {
-        message: format!("Failed to read oldest cached message id: {}", e.message),
-    })?;
+    let oldest_message_id =
+        db.get_oldest_indexed_message_id(chat_id)
+            .map_err(|e| TelegramError {
+                message: format!("Failed to read oldest cached message id: {}", e.message),
+            })?;
 
     if oldest_message_id > 0 {
-        db.set_setting(&backfill_cursor_key(chat_id), &oldest_message_id.to_string())
-            .map_err(|e| TelegramError {
-                message: format!("Failed to update backfill cursor: {}", e.message),
-            })?;
+        db.set_setting(
+            &backfill_cursor_key(chat_id),
+            &oldest_message_id.to_string(),
+        )
+        .map_err(|e| TelegramError {
+            message: format!("Failed to update backfill cursor: {}", e.message),
+        })?;
         db.set_setting(&backfill_complete_key(chat_id), "0")
             .map_err(|e| TelegramError {
                 message: format!("Failed to update backfill completion state: {}", e.message),
@@ -1548,9 +1669,10 @@ pub async fn tg_create_saved_folder_impl(
     let owner_id = me.raw.id().to_string();
     let normalized_parent = normalize_saved_path(&parent_path);
 
-    db.ensure_telegram_saved_folders(&owner_id).map_err(|e| TelegramError {
-        message: format!("Failed to ensure default folders: {}", e.message),
-    })?;
+    db.ensure_telegram_saved_folders(&owner_id)
+        .map_err(|e| TelegramError {
+            message: format!("Failed to ensure default folders: {}", e.message),
+        })?;
 
     let folder_item = TelegramSavedItem {
         chat_id: 0,
@@ -1567,9 +1689,10 @@ pub async fn tg_create_saved_folder_impl(
         owner_id,
     };
 
-    db.upsert_telegram_saved_item(&folder_item).map_err(|e| TelegramError {
-        message: format!("Failed to save folder metadata: {}", e.message),
-    })?;
+    db.upsert_telegram_saved_item(&folder_item)
+        .map_err(|e| TelegramError {
+            message: format!("Failed to save folder metadata: {}", e.message),
+        })?;
 
     Ok(folder_item)
 }
@@ -1595,9 +1718,10 @@ pub async fn tg_move_saved_item_to_recycle_bin_impl(
     })?;
 
     let owner_id = me.raw.id().to_string();
-    db.ensure_telegram_saved_folders(&owner_id).map_err(|e| TelegramError {
-        message: format!("Failed to ensure default folders: {}", e.message),
-    })?;
+    db.ensure_telegram_saved_folders(&owner_id)
+        .map_err(|e| TelegramError {
+            message: format!("Failed to ensure default folders: {}", e.message),
+        })?;
 
     let modified_date = chrono::Utc::now().to_rfc3339();
 
@@ -1649,8 +1773,8 @@ pub async fn tg_move_saved_item_to_recycle_bin_impl(
         });
     }
 
-    let (source_parent_path, folder_name) =
-        split_saved_parent_and_name(&source_saved_path).ok_or_else(|| TelegramError {
+    let (source_parent_path, folder_name) = split_saved_parent_and_name(&source_saved_path)
+        .ok_or_else(|| TelegramError {
             message: "Invalid source folder path".to_string(),
         })?;
 
@@ -1708,9 +1832,10 @@ pub async fn tg_restore_saved_item_impl(
     })?;
 
     let owner_id = me.raw.id().to_string();
-    db.ensure_telegram_saved_folders(&owner_id).map_err(|e| TelegramError {
-        message: format!("Failed to ensure default folders: {}", e.message),
-    })?;
+    db.ensure_telegram_saved_folders(&owner_id)
+        .map_err(|e| TelegramError {
+            message: format!("Failed to ensure default folders: {}", e.message),
+        })?;
 
     let modified_date = chrono::Utc::now().to_rfc3339();
 
@@ -1759,8 +1884,8 @@ pub async fn tg_restore_saved_item_impl(
         });
     }
 
-    let (source_parent_path, folder_name) =
-        split_saved_parent_and_name(&source_saved_path).ok_or_else(|| TelegramError {
+    let (source_parent_path, folder_name) = split_saved_parent_and_name(&source_saved_path)
+        .ok_or_else(|| TelegramError {
             message: "Invalid source folder path".to_string(),
         })?;
 
@@ -1861,12 +1986,16 @@ pub async fn tg_delete_saved_item_permanently_impl(
 
         run_telegram_request(
             "tg_delete_saved_item_permanently_impl.delete_message",
-            || async { client.delete_messages(input_peer.clone(), &[message_id]).await },
+            || async {
+                client
+                    .delete_messages(input_peer.clone(), &[message_id])
+                    .await
+            },
         )
         .await
-            .map_err(|e| TelegramError {
-                message: format!("Failed to delete Telegram message: {}", e),
-            })?;
+        .map_err(|e| TelegramError {
+            message: format!("Failed to delete Telegram message: {}", e),
+        })?;
 
         db.delete_telegram_saved_file_by_message_id(&owner_id, message_id)
             .map_err(|e| TelegramError {
@@ -1891,8 +2020,8 @@ pub async fn tg_delete_saved_item_permanently_impl(
         });
     }
 
-    let (source_parent_path, folder_name) =
-        split_saved_parent_and_name(&source_saved_path).ok_or_else(|| TelegramError {
+    let (source_parent_path, folder_name) = split_saved_parent_and_name(&source_saved_path)
+        .ok_or_else(|| TelegramError {
             message: "Invalid source folder path".to_string(),
         })?;
 
@@ -1923,9 +2052,9 @@ pub async fn tg_delete_saved_item_permanently_impl(
             || async { client.delete_messages(input_peer.clone(), chunk).await },
         )
         .await
-            .map_err(|e| TelegramError {
-                message: format!("Failed to delete Telegram messages: {}", e),
-            })?;
+        .map_err(|e| TelegramError {
+            message: format!("Failed to delete Telegram messages: {}", e),
+        })?;
     }
 
     db.delete_telegram_saved_folder_tree(
@@ -1965,13 +2094,15 @@ pub async fn tg_move_saved_item_impl(
     })?;
 
     let owner_id = me.raw.id().to_string();
-    let normalized_destination = virtual_to_saved_path(&destination_path).ok_or_else(|| TelegramError {
-        message: "Invalid destination path".to_string(),
-    })?;
+    let normalized_destination =
+        virtual_to_saved_path(&destination_path).ok_or_else(|| TelegramError {
+            message: "Invalid destination path".to_string(),
+        })?;
 
-    db.ensure_telegram_saved_folders(&owner_id).map_err(|e| TelegramError {
-        message: format!("Failed to ensure default folders: {}", e.message),
-    })?;
+    db.ensure_telegram_saved_folders(&owner_id)
+        .map_err(|e| TelegramError {
+            message: format!("Failed to ensure default folders: {}", e.message),
+        })?;
 
     let modified_date = chrono::Utc::now().to_rfc3339();
 
@@ -1987,10 +2118,15 @@ pub async fn tg_move_saved_item_impl(
             });
         }
 
-        db.move_telegram_saved_file_by_message_id(&owner_id, message_id, &normalized_destination, &modified_date)
-            .map_err(|e| TelegramError {
-                message: format!("Failed to move file metadata: {}", e.message),
-            })?;
+        db.move_telegram_saved_file_by_message_id(
+            &owner_id,
+            message_id,
+            &normalized_destination,
+            &modified_date,
+        )
+        .map_err(|e| TelegramError {
+            message: format!("Failed to move file metadata: {}", e.message),
+        })?;
 
         return Ok(());
     }
@@ -2016,9 +2152,10 @@ pub async fn tg_move_saved_item_impl(
         });
     }
 
-    let (source_parent_path, folder_name) = split_saved_parent_and_name(&source_saved_path).ok_or_else(|| TelegramError {
-        message: "Invalid source folder path".to_string(),
-    })?;
+    let (source_parent_path, folder_name) = split_saved_parent_and_name(&source_saved_path)
+        .ok_or_else(|| TelegramError {
+            message: "Invalid source folder path".to_string(),
+        })?;
 
     if !db
         .telegram_saved_folder_exists(&owner_id, &source_parent_path, &folder_name)
@@ -2031,7 +2168,11 @@ pub async fn tg_move_saved_item_impl(
         });
     }
 
-    let destination_folder_path = format!("{}/{}", normalized_destination.trim_end_matches('/'), folder_name);
+    let destination_folder_path = format!(
+        "{}/{}",
+        normalized_destination.trim_end_matches('/'),
+        folder_name
+    );
 
     db.move_telegram_saved_folder_tree(
         &owner_id,
@@ -2120,8 +2261,8 @@ pub async fn tg_rename_saved_item_impl(
         });
     }
 
-    let (parent_path, current_folder_name) =
-        split_saved_parent_and_name(&source_saved_path).ok_or_else(|| TelegramError {
+    let (parent_path, current_folder_name) = split_saved_parent_and_name(&source_saved_path)
+        .ok_or_else(|| TelegramError {
             message: "Invalid source folder path".to_string(),
         })?;
 
@@ -2209,9 +2350,10 @@ pub async fn tg_send_saved_note_message_impl(
         message: format!("Failed to send note message: {}", e),
     })?;
 
-    let mut telegram_message = categorize_message(&sent_message, chat_id).ok_or_else(|| TelegramError {
-        message: "Failed to map sent message".to_string(),
-    })?;
+    let mut telegram_message =
+        categorize_message(&sent_message, chat_id).ok_or_else(|| TelegramError {
+            message: "Failed to map sent message".to_string(),
+        })?;
 
     telegram_message.category = "Notes".to_string();
 
@@ -2235,9 +2377,10 @@ pub async fn tg_edit_saved_note_message_impl(
     source_path: String,
     text: String,
 ) -> Result<(), TelegramError> {
-    let message_id = parse_message_id_from_virtual_path(&source_path).ok_or_else(|| TelegramError {
-        message: "Only note messages can be edited".to_string(),
-    })?;
+    let message_id =
+        parse_message_id_from_virtual_path(&source_path).ok_or_else(|| TelegramError {
+            message: "Only note messages can be edited".to_string(),
+        })?;
 
     let trimmed_text = text.trim();
     if trimmed_text.is_empty() {
@@ -2299,7 +2442,11 @@ pub async fn tg_edit_saved_note_message_impl(
         let text_to_send = text_to_send.clone();
         async {
             client
-                .edit_message(input_peer.clone(), message_id, InputMessage::new().text(text_to_send))
+                .edit_message(
+                    input_peer.clone(),
+                    message_id,
+                    InputMessage::new().text(text_to_send),
+                )
                 .await
         }
     })
@@ -2341,10 +2488,14 @@ async fn get_or_fetch_message_thumbnail_impl(
                 if !thumb.is_empty() {
                     if thumb.starts_with("data:") {
                         if let Some(image_bytes) = decode_data_url_image_bytes(&thumb) {
-                            if let Ok(cached_path) = cache_thumbnail_bytes(chat_id, message_id, &image_bytes) {
-                                if let Err(e) =
-                                    db.update_telegram_message_thumbnail(chat_id, message_id, &cached_path)
-                                {
+                            if let Ok(cached_path) =
+                                cache_thumbnail_bytes(chat_id, message_id, &image_bytes)
+                            {
+                                if let Err(e) = db.update_telegram_message_thumbnail(
+                                    chat_id,
+                                    message_id,
+                                    &cached_path,
+                                ) {
                                     log::error!(
                                         "tg_get_message_thumbnail_impl: Failed to update cached thumbnail path in telegram_messages: {}",
                                         e.message
@@ -2381,12 +2532,16 @@ async fn get_or_fetch_message_thumbnail_impl(
 
     let mut messages = run_telegram_request(
         "get_or_fetch_message_thumbnail_impl.get_messages_by_id",
-        || async { client.get_messages_by_id(input_peer.clone(), &[message_id]).await },
+        || async {
+            client
+                .get_messages_by_id(input_peer.clone(), &[message_id])
+                .await
+        },
     )
-        .await
-        .map_err(|e| TelegramError {
-            message: format!("Failed to fetch message: {}", e),
-        })?;
+    .await
+    .map_err(|e| TelegramError {
+        message: format!("Failed to fetch message: {}", e),
+    })?;
 
     let message = messages.pop().flatten().ok_or_else(|| TelegramError {
         message: "Message not found".to_string(),
@@ -2467,7 +2622,8 @@ async fn get_or_fetch_message_thumbnail_impl(
             "get_or_fetch_message_thumbnail_impl.upload_get_file",
             || async { client.invoke(&request).await },
         )
-            .await {
+        .await
+        {
             Ok(tl::enums::upload::File::File(f)) => {
                 bytes.extend_from_slice(&f.bytes);
                 if f.bytes.len() < limit as usize {
@@ -2503,8 +2659,14 @@ async fn get_or_fetch_message_thumbnail_impl(
     Ok(Some(cached_path))
 }
 
-pub async fn tg_get_message_thumbnail_impl(db: Database, message_id: i32) -> Result<Option<String>, TelegramError> {
-    log::info!("tg_get_message_thumbnail_impl: Request for message_id={}", message_id);
+pub async fn tg_get_message_thumbnail_impl(
+    db: Database,
+    message_id: i32,
+) -> Result<Option<String>, TelegramError> {
+    log::info!(
+        "tg_get_message_thumbnail_impl: Request for message_id={}",
+        message_id
+    );
 
     if is_thumbnail_flood_wait_active() {
         log::debug!(
@@ -2525,8 +2687,8 @@ pub async fn tg_get_message_thumbnail_impl(db: Database, message_id: i32) -> Res
     let me = run_telegram_request("tg_get_message_thumbnail_impl.get_me", || async {
         client.get_me().await
     })
-        .await
-        .map_err(|e| TelegramError {
+    .await
+    .map_err(|e| TelegramError {
         message: format!("Failed to get user info: {}", e),
     })?;
     let chat_id = me.raw.id();
@@ -2536,10 +2698,15 @@ pub async fn tg_get_message_thumbnail_impl(db: Database, message_id: i32) -> Res
             user_id: u.id,
             access_hash: u.access_hash.unwrap_or(0),
         }),
-        _ => return Err(TelegramError { message: "Invalid user type".to_string() }),
+        _ => {
+            return Err(TelegramError {
+                message: "Invalid user type".to_string(),
+            })
+        }
     };
 
-    match get_or_fetch_message_thumbnail_impl(&db, &client, chat_id, &input_peer, message_id).await {
+    match get_or_fetch_message_thumbnail_impl(&db, &client, chat_id, &input_peer, message_id).await
+    {
         Ok(result) => Ok(result),
         Err(error) => {
             if let Some(wait_seconds) = parse_flood_wait_seconds(&error.message) {
@@ -2571,8 +2738,8 @@ pub async fn tg_prefetch_message_thumbnails_impl(
     let me = run_telegram_request("tg_prefetch_message_thumbnails_impl.get_me", || async {
         client.get_me().await
     })
-        .await
-        .map_err(|e| TelegramError {
+    .await
+    .map_err(|e| TelegramError {
         message: format!("Failed to get user info: {}", e),
     })?;
     let chat_id = me.raw.id();
@@ -2582,7 +2749,11 @@ pub async fn tg_prefetch_message_thumbnails_impl(
             user_id: u.id,
             access_hash: u.access_hash.unwrap_or(0),
         }),
-        _ => return Err(TelegramError { message: "Invalid user type".to_string() }),
+        _ => {
+            return Err(TelegramError {
+                message: "Invalid user type".to_string(),
+            })
+        }
     };
 
     let mut ids: Vec<i32> = message_ids.into_iter().filter(|id| *id > 0).collect();
@@ -2607,7 +2778,9 @@ pub async fn tg_prefetch_message_thumbnails_impl(
             break;
         }
 
-        match get_or_fetch_message_thumbnail_impl(&db, &client, chat_id, &input_peer, message_id).await {
+        match get_or_fetch_message_thumbnail_impl(&db, &client, chat_id, &input_peer, message_id)
+            .await
+        {
             Ok(Some(_)) => {
                 cached_count += 1;
             }
@@ -2672,7 +2845,11 @@ async fn download_saved_media_with_progress(
 
     let mut download = client.iter_download(&media);
     let mut downloaded_bytes = 0_u64;
-    let mut last_emit_at = Instant::now();
+    let download_started_at = Instant::now();
+    let mut last_emit_at = download_started_at;
+    let mut last_speed_sample_bytes = 0_u64;
+    let mut last_speed_sample_at: Option<Instant> = None;
+    let mut emitted_non_zero_speed = false;
 
     emit_download_progress(
         app,
@@ -2682,6 +2859,7 @@ async fn download_saved_media_with_progress(
             stage: "downloading".to_string(),
             progress: 0.0,
             downloaded_bytes,
+            bytes_per_second: None,
             total_bytes,
             destination_path: None,
             message: None,
@@ -2698,6 +2876,7 @@ async fn download_saved_media_with_progress(
                     stage: "cancelled".to_string(),
                     progress: download_progress_percent(downloaded_bytes, total_bytes),
                     downloaded_bytes,
+                    bytes_per_second: None,
                     total_bytes,
                     destination_path: None,
                     message: Some("Download cancelled".to_string()),
@@ -2726,7 +2905,28 @@ async fn download_saved_media_with_progress(
 
         downloaded_bytes += chunk.len() as u64;
 
-        if last_emit_at.elapsed() >= Duration::from_millis(120) {
+        let now = Instant::now();
+
+        if last_speed_sample_at.is_none() {
+            last_speed_sample_at = Some(now);
+            last_speed_sample_bytes = downloaded_bytes;
+            last_emit_at = now;
+        }
+
+        if now.saturating_duration_since(last_emit_at)
+            >= Duration::from_millis(DOWNLOAD_SPEED_SAMPLE_INTERVAL_MS)
+        {
+            let mut bytes_per_second = None;
+
+            if let Some(sampled_at) = last_speed_sample_at {
+                let elapsed = now.saturating_duration_since(sampled_at);
+                let delta_bytes = downloaded_bytes.saturating_sub(last_speed_sample_bytes);
+                bytes_per_second = calculate_bytes_per_second(delta_bytes, elapsed);
+                if bytes_per_second.is_some() {
+                    emitted_non_zero_speed = true;
+                }
+            }
+
             emit_download_progress(
                 app,
                 DownloadProgressPayload {
@@ -2735,19 +2935,41 @@ async fn download_saved_media_with_progress(
                     stage: "downloading".to_string(),
                     progress: download_progress_percent(downloaded_bytes, total_bytes),
                     downloaded_bytes,
+                    bytes_per_second,
                     total_bytes,
                     destination_path: None,
                     message: None,
                 },
             );
 
-            last_emit_at = Instant::now();
+            last_speed_sample_bytes = downloaded_bytes;
+            last_speed_sample_at = Some(now);
+            last_emit_at = now;
         }
     }
 
-    staged_file.flush().await.map_err(|e| TelegramError {
-        message: format!("Failed to flush staged download file: {}", e),
-    })?;
+    let download_finished_at = Instant::now();
+    let mut final_bytes_per_second = if let Some(sampled_at) = last_speed_sample_at {
+        let elapsed = download_finished_at.saturating_duration_since(sampled_at);
+        let delta_bytes = downloaded_bytes.saturating_sub(last_speed_sample_bytes);
+        calculate_bytes_per_second(delta_bytes, elapsed)
+    } else {
+        None
+    };
+
+    if final_bytes_per_second.is_some() {
+        emitted_non_zero_speed = true;
+    }
+
+    let total_elapsed = download_finished_at.saturating_duration_since(download_started_at);
+    if final_bytes_per_second.is_none()
+        && !emitted_non_zero_speed
+        && downloaded_bytes > 0
+        && !total_elapsed.is_zero()
+        && total_elapsed <= Duration::from_millis(DOWNLOAD_SPEED_FAST_TRANSFER_THRESHOLD_MS)
+    {
+        final_bytes_per_second = calculate_bytes_per_second(downloaded_bytes, total_elapsed);
+    }
 
     emit_download_progress(
         app,
@@ -2757,11 +2979,16 @@ async fn download_saved_media_with_progress(
             stage: "downloading".to_string(),
             progress: download_progress_percent(downloaded_bytes, total_bytes),
             downloaded_bytes,
+            bytes_per_second: final_bytes_per_second,
             total_bytes,
             destination_path: None,
             message: None,
         },
     );
+
+    staged_file.flush().await.map_err(|e| TelegramError {
+        message: format!("Failed to flush staged download file: {}", e),
+    })?;
 
     Ok((downloaded_bytes, total_bytes))
 }
@@ -2781,9 +3008,10 @@ pub async fn tg_prepare_saved_media_preview_impl(
     db: Database,
     source_path: String,
 ) -> Result<String, TelegramError> {
-    let message_id = parse_message_id_from_virtual_path(&source_path).ok_or_else(|| TelegramError {
-        message: "Only Saved Message files can be previewed".to_string(),
-    })?;
+    let message_id =
+        parse_message_id_from_virtual_path(&source_path).ok_or_else(|| TelegramError {
+            message: "Only Saved Message files can be previewed".to_string(),
+        })?;
 
     let client = {
         let state_guard = AUTH_STATE.lock().await;
@@ -2796,8 +3024,8 @@ pub async fn tg_prepare_saved_media_preview_impl(
     let me = run_telegram_request("tg_prepare_saved_media_preview_impl.get_me", || async {
         client.get_me().await
     })
-        .await
-        .map_err(|e| TelegramError {
+    .await
+    .map_err(|e| TelegramError {
         message: format!("Failed to get user info: {}", e),
     })?;
 
@@ -2817,12 +3045,16 @@ pub async fn tg_prepare_saved_media_preview_impl(
 
     let mut messages = run_telegram_request(
         "tg_prepare_saved_media_preview_impl.get_messages_by_id",
-        || async { client.get_messages_by_id(input_peer.clone(), &[message_id]).await },
+        || async {
+            client
+                .get_messages_by_id(input_peer.clone(), &[message_id])
+                .await
+        },
     )
-        .await
-        .map_err(|e| TelegramError {
-            message: format!("Failed to fetch message for preview: {}", e),
-        })?;
+    .await
+    .map_err(|e| TelegramError {
+        message: format!("Failed to fetch message for preview: {}", e),
+    })?;
 
     let message = messages.pop().flatten().ok_or_else(|| TelegramError {
         message: "Message not found for preview".to_string(),
@@ -2889,13 +3121,17 @@ pub async fn tg_prepare_saved_media_preview_impl(
                         ),
                     })?;
 
-                db.update_telegram_saved_item_thumbnail(&owner_id, message_id, &cache_file_path_string)
-                    .map_err(|e| TelegramError {
-                        message: format!(
-                            "Failed to persist cached image preview in telegram_saved_items: {}",
-                            e.message
-                        ),
-                    })?;
+                db.update_telegram_saved_item_thumbnail(
+                    &owner_id,
+                    message_id,
+                    &cache_file_path_string,
+                )
+                .map_err(|e| TelegramError {
+                    message: format!(
+                        "Failed to persist cached image preview in telegram_saved_items: {}",
+                        e.message
+                    ),
+                })?;
             }
 
             return Ok(cache_file_path_string);
@@ -2906,7 +3142,8 @@ pub async fn tg_prepare_saved_media_preview_impl(
         "tg_prepare_saved_media_preview_impl.download_media",
         || async { message.download_media(&cache_file_path).await },
     )
-        .await {
+    .await
+    {
         Ok(value) => value,
         Err(error) => {
             if cache_file_path.exists() {
@@ -2956,9 +3193,10 @@ pub async fn tg_download_saved_file_impl(
 ) -> Result<Option<String>, TelegramError> {
     clear_download_cancel(&source_path);
 
-    let message_id = parse_message_id_from_virtual_path(&source_path).ok_or_else(|| TelegramError {
-        message: "Only Saved Message files can be downloaded".to_string(),
-    })?;
+    let message_id =
+        parse_message_id_from_virtual_path(&source_path).ok_or_else(|| TelegramError {
+            message: "Only Saved Message files can be downloaded".to_string(),
+        })?;
 
     let client = {
         let state_guard = AUTH_STATE.lock().await;
@@ -2971,8 +3209,8 @@ pub async fn tg_download_saved_file_impl(
     let me = run_telegram_request("tg_download_saved_file_impl.get_me", || async {
         client.get_me().await
     })
-        .await
-        .map_err(|e| TelegramError {
+    .await
+    .map_err(|e| TelegramError {
         message: format!("Failed to get user info: {}", e),
     })?;
 
@@ -2990,10 +3228,12 @@ pub async fn tg_download_saved_file_impl(
         }
     };
 
-    let mut messages = run_telegram_request(
-        "tg_download_saved_file_impl.get_messages_by_id",
-        || async { client.get_messages_by_id(input_peer.clone(), &[message_id]).await },
-    )
+    let mut messages =
+        run_telegram_request("tg_download_saved_file_impl.get_messages_by_id", || async {
+            client
+                .get_messages_by_id(input_peer.clone(), &[message_id])
+                .await
+        })
         .await
         .map_err(|e| TelegramError {
             message: format!("Failed to fetch message for download: {}", e),
@@ -3043,6 +3283,7 @@ pub async fn tg_download_saved_file_impl(
             stage: "selecting".to_string(),
             progress: 0.0,
             downloaded_bytes: 0,
+            bytes_per_second: None,
             total_bytes: total_bytes_hint,
             destination_path: None,
             message: Some("Choose where to save the file".to_string()),
@@ -3068,6 +3309,7 @@ pub async fn tg_download_saved_file_impl(
                 stage: "cancelled".to_string(),
                 progress: 0.0,
                 downloaded_bytes: 0,
+                bytes_per_second: None,
                 total_bytes: total_bytes_hint,
                 destination_path: None,
                 message: Some("Download cancelled".to_string()),
@@ -3129,6 +3371,7 @@ pub async fn tg_download_saved_file_impl(
                     stage: "failed".to_string(),
                     progress: 0.0,
                     downloaded_bytes: 0,
+                    bytes_per_second: None,
                     total_bytes: total_bytes_hint,
                     destination_path: None,
                     message: Some(error.message.clone()),
@@ -3158,6 +3401,7 @@ pub async fn tg_download_saved_file_impl(
                 stage: "failed".to_string(),
                 progress: 0.0,
                 downloaded_bytes: 0,
+                bytes_per_second: None,
                 total_bytes,
                 destination_path: None,
                 message: Some(error.message.clone()),
@@ -3178,6 +3422,7 @@ pub async fn tg_download_saved_file_impl(
             stage: "moving".to_string(),
             progress: moving_progress,
             downloaded_bytes,
+            bytes_per_second: None,
             total_bytes,
             destination_path: Some(destination_file_path.to_string_lossy().replace('\\', "/")),
             message: Some("Moving file to your selected location".to_string()),
@@ -3195,6 +3440,7 @@ pub async fn tg_download_saved_file_impl(
                 stage: "failed".to_string(),
                 progress: moving_progress,
                 downloaded_bytes,
+                bytes_per_second: None,
                 total_bytes,
                 destination_path: Some(destination_file_path.to_string_lossy().replace('\\', "/")),
                 message: Some(error.message.clone()),
@@ -3216,6 +3462,7 @@ pub async fn tg_download_saved_file_impl(
             stage: "completed".to_string(),
             progress: 100.0,
             downloaded_bytes,
+            bytes_per_second: None,
             total_bytes,
             destination_path: Some(destination_path_string.clone()),
             message: Some("Download complete".to_string()),
@@ -3292,6 +3539,7 @@ pub async fn tg_upload_file_to_saved_messages_impl(
             stage: "uploading".to_string(),
             progress: 0.0,
             uploaded_bytes: 0,
+            bytes_per_second: None,
             total_bytes: Some(total_upload_bytes),
             message: Some("Uploading file".to_string()),
         },
@@ -3320,20 +3568,22 @@ pub async fn tg_upload_file_to_saved_messages_impl(
                             stage: "uploading".to_string(),
                             progress: 0.0,
                             uploaded_bytes: 0,
+                            bytes_per_second: None,
                             total_bytes: Some(total_upload_bytes),
                             message: None,
                         },
                     );
 
-                    let upload_file = tokio::fs::File::open(&temp_path_for_stream)
-                        .await
-                        .map_err(|error| TelegramError {
-                            message: format!(
-                                "Failed to open temporary upload file {}: {}",
-                                temp_path_for_stream.display(),
-                                error
-                            ),
-                        })?;
+                    let upload_file =
+                        tokio::fs::File::open(&temp_path_for_stream)
+                            .await
+                            .map_err(|error| TelegramError {
+                                message: format!(
+                                    "Failed to open temporary upload file {}: {}",
+                                    temp_path_for_stream.display(),
+                                    error
+                                ),
+                            })?;
 
                     let mut progress_reader = UploadProgressReader::new(
                         upload_file,
@@ -3377,6 +3627,7 @@ pub async fn tg_upload_file_to_saved_messages_impl(
                 stage: "sending".to_string(),
                 progress: 100.0,
                 uploaded_bytes: total_upload_bytes,
+                bytes_per_second: None,
                 total_bytes: Some(total_upload_bytes),
                 message: Some("Sending message".to_string()),
             },
@@ -3386,7 +3637,9 @@ pub async fn tg_upload_file_to_saved_messages_impl(
             UploadMediaKind::Photo => InputMessage::new().photo(uploaded_file),
             UploadMediaKind::Video | UploadMediaKind::Audio => {
                 let message = match upload_mime_type {
-                    Some(mime_type) => InputMessage::new().mime_type(mime_type).document(uploaded_file),
+                    Some(mime_type) => InputMessage::new()
+                        .mime_type(mime_type)
+                        .document(uploaded_file),
                     None => InputMessage::new().document(uploaded_file),
                 };
 
@@ -3434,6 +3687,7 @@ pub async fn tg_upload_file_to_saved_messages_impl(
                     stage: "completed".to_string(),
                     progress: 100.0,
                     uploaded_bytes: total_upload_bytes,
+                    bytes_per_second: None,
                     total_bytes: Some(total_upload_bytes),
                     message: Some("Upload complete".to_string()),
                 },
@@ -3453,6 +3707,7 @@ pub async fn tg_upload_file_to_saved_messages_impl(
                     stage: "failed".to_string(),
                     progress: 0.0,
                     uploaded_bytes: 0,
+                    bytes_per_second: None,
                     total_bytes: Some(total_upload_bytes),
                     message: Some(error.message.clone()),
                 },
@@ -3496,13 +3751,15 @@ pub async fn tg_upload_file_to_saved_messages_impl(
         telegram_message.mime_type = upload_mime_type.map(|value| value.to_string());
     }
 
-    db.save_telegram_message(&telegram_message).map_err(|e| TelegramError {
-        message: format!("Failed to save uploaded message metadata: {}", e.message),
-    })?;
+    db.save_telegram_message(&telegram_message)
+        .map_err(|e| TelegramError {
+            message: format!("Failed to save uploaded message metadata: {}", e.message),
+        })?;
 
-    db.ensure_telegram_saved_folders(&owner_id).map_err(|e| TelegramError {
-        message: format!("Failed to ensure default folders: {}", e.message),
-    })?;
+    db.ensure_telegram_saved_folders(&owner_id)
+        .map_err(|e| TelegramError {
+            message: format!("Failed to ensure default folders: {}", e.message),
+        })?;
 
     upsert_saved_item_from_message(
         &db,
@@ -3545,7 +3802,7 @@ fn estimate_photo_message_size(photo: &tl::types::Photo) -> Option<i64> {
 
 fn categorize_message(message: &Message, chat_id: i64) -> Option<TelegramMessage> {
     let media = message.media();
-    
+
     let (category, filename, extension, mime_type, size, thumbnail, file_ref) = match media {
         Some(Media::Photo(photo)) => {
             let (id, access_hash, file_ref_bytes, size) = match &photo.raw.photo {
@@ -3569,10 +3826,12 @@ fn categorize_message(message: &Message, chat_id: i64) -> Option<TelegramMessage
                 None,
                 json!({"type": "photo", "id": id, "access_hash": access_hash, "file_reference": base64_encode(&file_ref_bytes)}).to_string()
             )
-        },
+        }
         Some(Media::Document(doc)) => {
             let (id, access_hash, file_ref_bytes) = match &doc.raw.document {
-                Some(tl::enums::Document::Document(d)) => (d.id, d.access_hash, d.file_reference.clone()),
+                Some(tl::enums::Document::Document(d)) => {
+                    (d.id, d.access_hash, d.file_reference.clone())
+                }
                 _ => return None,
             };
             let file_name = optional_sanitized_name(&doc.name().to_string());
@@ -3595,7 +3854,7 @@ fn categorize_message(message: &Message, chat_id: i64) -> Option<TelegramMessage
                 None,
                 json!({"type": "document", "id": id, "access_hash": access_hash, "file_reference": base64_encode(&file_ref_bytes)}).to_string()
             )
-        },
+        }
         _ => {
             if !message.text().is_empty() {
                 let ext = Some("txt".to_string());
@@ -3607,7 +3866,7 @@ fn categorize_message(message: &Message, chat_id: i64) -> Option<TelegramMessage
                     Some("text/plain".to_string()),
                     Some(message.text().len() as i64),
                     None,
-                    json!({"type": "text"}).to_string()
+                    json!({"type": "text"}).to_string(),
                 )
             } else {
                 return None;
@@ -3624,7 +3883,11 @@ fn categorize_message(message: &Message, chat_id: i64) -> Option<TelegramMessage
         mime_type,
         timestamp: message.date().to_rfc3339(),
         size,
-        text: if message.text().is_empty() { None } else { Some(message.text().to_string()) },
+        text: if message.text().is_empty() {
+            None
+        } else {
+            Some(message.text().to_string())
+        },
         thumbnail,
         file_reference: file_ref,
     })

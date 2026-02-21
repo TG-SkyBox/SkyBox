@@ -24,13 +24,16 @@ export function TelegramButton({
   fullWidth = false,
   className = "",
 }: TelegramButtonProps) {
-  const baseClasses = "inline-flex items-center justify-center font-medium transition-all duration-150 active:scale-[0.98] disabled:opacity-50 disabled:cursor-not-allowed disabled:active:scale-100";
-  
+  const baseClasses =
+    "inline-flex items-center justify-center font-medium transition-all duration-150 active:scale-[0.98] disabled:opacity-50 disabled:cursor-not-allowed disabled:active:scale-100";
+
   const variantClasses = {
     primary: "bg-primary hover:bg-accent text-primary-foreground",
-    secondary: "bg-secondary hover:bg-telegram-panel-2 text-foreground border border-border",
+    secondary:
+      "bg-secondary hover:bg-telegram-panel-2 text-foreground border border-border",
     ghost: "bg-transparent hover:bg-secondary text-foreground",
-    danger: "bg-destructive hover:bg-destructive/90 text-destructive-foreground",
+    danger:
+      "bg-destructive hover:bg-destructive/90 text-destructive-foreground",
   };
 
   const sizeClasses = {

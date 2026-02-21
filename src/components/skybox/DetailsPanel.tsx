@@ -37,8 +37,11 @@ export function DetailsPanel({
   onOpenLocation,
   isFavorite = false,
 }: DetailsPanelProps) {
-  const [previewThumb, setPreviewThumb] = useState<string | undefined>(resolveThumbnailSrc(file?.thumbnail));
-  const [hasRetriedBrokenThumbnail, setHasRetriedBrokenThumbnail] = useState(false);
+  const [previewThumb, setPreviewThumb] = useState<string | undefined>(
+    resolveThumbnailSrc(file?.thumbnail),
+  );
+  const [hasRetriedBrokenThumbnail, setHasRetriedBrokenThumbnail] =
+    useState(false);
 
   useEffect(() => {
     setPreviewThumb(resolveThumbnailSrc(file?.thumbnail));
@@ -55,7 +58,9 @@ export function DetailsPanel({
 
     const fetchThumbnail = async () => {
       try {
-        const result: string | null = await invoke("tg_get_message_thumbnail", { messageId });
+        const result: string | null = await invoke("tg_get_message_thumbnail", {
+          messageId,
+        });
         const resolved = resolveThumbnailSrc(result);
         if (resolved) {
           setPreviewThumb(resolved);
@@ -83,14 +88,20 @@ export function DetailsPanel({
     setHasRetriedBrokenThumbnail(true);
 
     try {
-      const result: string | null = await invoke("tg_get_message_thumbnail", { messageId });
+      const result: string | null = await invoke("tg_get_message_thumbnail", {
+        messageId,
+      });
       const resolved = resolveThumbnailSrc(result);
       if (resolved) {
         setPreviewThumb(resolved);
         return;
       }
     } catch (e) {
-      console.error("Failed to refetch missing thumbnail for message:", messageId, e);
+      console.error(
+        "Failed to refetch missing thumbnail for message:",
+        messageId,
+        e,
+      );
     }
 
     setPreviewThumb(undefined);
@@ -107,7 +118,11 @@ export function DetailsPanel({
     );
   }
 
-  const Icon = file.isDirectory ? Folder : file.extension?.match(/^(jpg|jpeg|png|gif|webp|svg)$/i) ? FileImage : FileText;
+  const Icon = file.isDirectory
+    ? Folder
+    : file.extension?.match(/^(jpg|jpeg|png|gif|webp|svg)$/i)
+      ? FileImage
+      : FileText;
 
   return (
     <div className="w-full h-full glass-sidebar flex flex-col">
@@ -136,8 +151,9 @@ export function DetailsPanel({
             />
           ) : (
             <Icon
-              className={`w-20 h-20 ${file.isDirectory ? "text-primary" : "text-muted-foreground"
-                }`}
+              className={`w-20 h-20 ${
+                file.isDirectory ? "text-primary" : "text-muted-foreground"
+              }`}
             />
           )}
         </div>
@@ -145,7 +161,9 @@ export function DetailsPanel({
           {file.name}
         </h3>
         <p className="text-small text-muted-foreground mt-1">
-          {file.isDirectory ? "Folder" : file.extension?.toUpperCase() || "File"}
+          {file.isDirectory
+            ? "Folder"
+            : file.extension?.toUpperCase() || "File"}
         </p>
       </div>
 
@@ -154,7 +172,9 @@ export function DetailsPanel({
         {!file.isDirectory && file.size !== undefined && (
           <div>
             <p className="text-small text-muted-foreground">Size</p>
-            <p className="text-body text-foreground">{formatFileSize(file.size)}</p>
+            <p className="text-body text-foreground">
+              {formatFileSize(file.size)}
+            </p>
           </div>
         )}
         {file.modifiedAt && (
@@ -180,7 +200,9 @@ export function DetailsPanel({
             onClick={onToggleFavorite}
             className="flex-1"
           >
-            <Star className={`w-4 h-4 ${isFavorite ? "fill-primary text-primary" : ""}`} />
+            <Star
+              className={`w-4 h-4 ${isFavorite ? "fill-primary text-primary" : ""}`}
+            />
             {isFavorite ? "Unfavorite" : "Favorite"}
           </TelegramButton>
           <TelegramButton variant="secondary" size="sm" onClick={onCopyPath}>
@@ -188,11 +210,20 @@ export function DetailsPanel({
           </TelegramButton>
         </div>
         <div className="flex gap-2">
-          <TelegramButton variant="secondary" size="sm" onClick={onRename} className="flex-1">
+          <TelegramButton
+            variant="secondary"
+            size="sm"
+            onClick={onRename}
+            className="flex-1"
+          >
             <Edit2 className="w-4 h-4" />
             Rename
           </TelegramButton>
-          <TelegramButton variant="secondary" size="sm" onClick={onOpenLocation}>
+          <TelegramButton
+            variant="secondary"
+            size="sm"
+            onClick={onOpenLocation}
+          >
             <ExternalLink className="w-4 h-4" />
           </TelegramButton>
         </div>

@@ -46,7 +46,8 @@ interface FileRowProps {
 const getFileIcon = (file: FileItem): LucideIcon => {
   if (file.isDirectory) return Folder;
 
-  const ext = file.extension?.toLowerCase() || file.name.split(".").pop()?.toLowerCase();
+  const ext =
+    file.extension?.toLowerCase() || file.name.split(".").pop()?.toLowerCase();
 
   const iconMap: Record<string, LucideIcon> = {
     // Images
@@ -151,8 +152,11 @@ export function FileRow({
   onDrop,
   isDropTarget,
 }: FileRowProps) {
-  const [thumbUrl, setThumbUrl] = useState<string | undefined>(resolveThumbnailSrc(file.thumbnail));
-  const [hasRetriedBrokenThumbnail, setHasRetriedBrokenThumbnail] = useState(false);
+  const [thumbUrl, setThumbUrl] = useState<string | undefined>(
+    resolveThumbnailSrc(file.thumbnail),
+  );
+  const [hasRetriedBrokenThumbnail, setHasRetriedBrokenThumbnail] =
+    useState(false);
   const Icon = getFileIcon(file);
 
   useEffect(() => {
@@ -174,14 +178,20 @@ export function FileRow({
     setHasRetriedBrokenThumbnail(true);
 
     try {
-      const result: string | null = await invoke("tg_get_message_thumbnail", { messageId: file.messageId });
+      const result: string | null = await invoke("tg_get_message_thumbnail", {
+        messageId: file.messageId,
+      });
       const resolved = resolveThumbnailSrc(result);
       if (resolved) {
         setThumbUrl(resolved);
         return;
       }
     } catch (e) {
-      console.error("Failed to refetch missing thumbnail for message:", file.messageId, e);
+      console.error(
+        "Failed to refetch missing thumbnail for message:",
+        file.messageId,
+        e,
+      );
     }
 
     setThumbUrl(undefined);
@@ -201,8 +211,9 @@ export function FileRow({
         onDragOver={onDragOver}
         onDragLeave={onDragLeave}
         onDrop={onDrop}
-        className={`px-2 py-1 rounded-lg cursor-pointer transition-all duration-150 ${isSelected ? "bg-primary/14" : "hover:bg-primary/8"
-          } ${isDropTarget ? "ring-1 ring-primary/60 bg-primary/12" : ""} ${isCutItem ? "opacity-50 grayscale" : ""}`}
+        className={`px-2 py-1 rounded-lg cursor-pointer transition-all duration-150 ${
+          isSelected ? "bg-primary/14" : "hover:bg-primary/8"
+        } ${isDropTarget ? "ring-1 ring-primary/60 bg-primary/12" : ""} ${isCutItem ? "opacity-50 grayscale" : ""}`}
       >
         <div className="ml-auto max-w-[86%] rounded-2xl rounded-br-md bg-primary/30 px-3 py-2">
           <p className="text-body text-foreground whitespace-pre-wrap break-words leading-5">
@@ -229,8 +240,11 @@ export function FileRow({
       onDragOver={onDragOver}
       onDragLeave={onDragLeave}
       onDrop={onDrop}
-      className={`flex items-center gap-3 px-3 py-1 rounded-lg cursor-pointer transition-all duration-150 ${isSelected ? "bg-sidebar-accent text-foreground" : "hover:bg-sidebar-accent/50"
-        } ${isDropTarget ? "ring-1 ring-primary/60 bg-primary/10" : ""} ${isCutItem ? "opacity-50 grayscale" : ""}`}
+      className={`flex items-center gap-3 px-3 py-1 rounded-lg cursor-pointer transition-all duration-150 ${
+        isSelected
+          ? "bg-sidebar-accent text-foreground"
+          : "hover:bg-sidebar-accent/50"
+      } ${isDropTarget ? "ring-1 ring-primary/60 bg-primary/10" : ""} ${isCutItem ? "opacity-50 grayscale" : ""}`}
     >
       <div className="w-8 h-8 flex-shrink-0 flex items-center justify-center rounded-md overflow-hidden bg-secondary/50">
         {thumbUrl ? (
@@ -244,14 +258,19 @@ export function FileRow({
           />
         ) : (
           <Icon
-            className={`w-5 h-5 ${file.isDirectory ? "text-primary" : "text-muted-foreground"
-              }`}
+            className={`w-5 h-5 ${
+              file.isDirectory ? "text-primary" : "text-muted-foreground"
+            }`}
           />
         )}
       </div>
-      <span className="flex-1 text-body text-foreground truncate">{file.name}</span>
+      <span className="flex-1 text-body text-foreground truncate">
+        {file.name}
+      </span>
       {!file.isDirectory && (
-        <span className="text-small text-muted-foreground">{formatFileSize(file.size)}</span>
+        <span className="text-small text-muted-foreground">
+          {formatFileSize(file.size)}
+        </span>
       )}
       <span className="text-small text-muted-foreground w-20 text-right">
         {formatDate(file.modifiedAt)}

@@ -21,10 +21,9 @@ type PlyrConstructor = new (
   },
 ) => PlyrInstance;
 
-const Plyr = (
-  (PlyrModule as unknown as { default?: PlyrConstructor }).default
-  || (PlyrModule as unknown as PlyrConstructor)
-);
+const Plyr =
+  (PlyrModule as unknown as { default?: PlyrConstructor }).default ||
+  (PlyrModule as unknown as PlyrConstructor);
 
 export type SavedMediaKind = "image" | "video" | "audio";
 
@@ -176,11 +175,16 @@ export function SavedMediaViewer({
 
   const showBlurPlaceholder =
     !!thumbnailSrc &&
-    (isLoading || !mediaSrc || (!isPrimaryMediaReady && (mediaKind === "image" || mediaKind === "video")));
+    (isLoading ||
+      !mediaSrc ||
+      (!isPrimaryMediaReady &&
+        (mediaKind === "image" || mediaKind === "video")));
 
   const showLoadingIndicator =
     isLoading ||
-    (!isPrimaryMediaReady && !!mediaSrc && (mediaKind === "image" || mediaKind === "video"));
+    (!isPrimaryMediaReady &&
+      !!mediaSrc &&
+      (mediaKind === "image" || mediaKind === "video"));
 
   return (
     <div className="saved-media-viewer fixed inset-0 z-[94] bg-black/80 backdrop-blur-sm">
@@ -189,7 +193,9 @@ export function SavedMediaViewer({
       <div className="relative z-[95] h-full w-full p-4 sm:p-6">
         <div className="mx-auto flex h-full max-w-6xl flex-col rounded-2xl bg-glass shadow-2xl shadow-black/60">
           <div className="flex items-center justify-between border-b border-primary/20 px-4 py-3">
-            <p className="truncate text-body font-medium text-foreground">{fileName}</p>
+            <p className="truncate text-body font-medium text-foreground">
+              {fileName}
+            </p>
             <button
               className="rounded-lg p-2 text-muted-foreground transition-colors hover:bg-sidebar-accent/60 hover:text-foreground"
               onClick={onClose}
@@ -234,15 +240,20 @@ export function SavedMediaViewer({
               />
             )}
 
-            {!isLoading && !error && mediaSrc && (mediaKind === "video" || mediaKind === "audio") && (
-              <div className={`saved-media-player w-full transition-opacity duration-300 ${mediaKind === "video" ? "h-full" : "max-w-2xl"} ${isPrimaryMediaReady ? "opacity-100" : "opacity-0"}`}>
-                <PlyrMedia
-                  kind={mediaKind}
-                  src={mediaSrc}
-                  onReady={() => setIsPrimaryMediaReady(true)}
-                />
-              </div>
-            )}
+            {!isLoading &&
+              !error &&
+              mediaSrc &&
+              (mediaKind === "video" || mediaKind === "audio") && (
+                <div
+                  className={`saved-media-player w-full transition-opacity duration-300 ${mediaKind === "video" ? "h-full" : "max-w-2xl"} ${isPrimaryMediaReady ? "opacity-100" : "opacity-0"}`}
+                >
+                  <PlyrMedia
+                    kind={mediaKind}
+                    src={mediaSrc}
+                    onReady={() => setIsPrimaryMediaReady(true)}
+                  />
+                </div>
+              )}
           </div>
 
           {mediaKind === "image" && (

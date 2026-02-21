@@ -11,7 +11,11 @@ interface BreadcrumbsProps {
   homePath?: string;
 }
 
-export function Breadcrumbs({ items, onNavigate, homePath = "/" }: BreadcrumbsProps) {
+export function Breadcrumbs({
+  items,
+  onNavigate,
+  homePath = "/",
+}: BreadcrumbsProps) {
   return (
     <nav className="flex items-center gap-1 text-body overflow-x-auto">
       <button
@@ -26,10 +30,11 @@ export function Breadcrumbs({ items, onNavigate, homePath = "/" }: BreadcrumbsPr
           <ChevronRight className="w-4 h-4 text-muted-foreground flex-shrink-0" />
           <button
             onClick={() => onNavigate(item.path)}
-            className={`px-2 py-1 rounded transition-colors truncate max-w-[150px] ${index === items.length - 1
+            className={`px-2 py-1 rounded transition-colors truncate max-w-[150px] ${
+              index === items.length - 1
                 ? "text-foreground font-medium"
                 : "text-muted-foreground hover:text-foreground hover:bg-secondary"
-              }`}
+            }`}
           >
             {item.name}
           </button>

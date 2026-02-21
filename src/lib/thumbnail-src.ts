@@ -13,7 +13,9 @@ const URL_PREFIXES = [
 
 const WINDOWS_PATH_REGEX = /^[a-zA-Z]:[\\/]/;
 
-export const resolveThumbnailSrc = (thumbnail?: string | null): string | undefined => {
+export const resolveThumbnailSrc = (
+  thumbnail?: string | null,
+): string | undefined => {
   if (!thumbnail) {
     return undefined;
   }

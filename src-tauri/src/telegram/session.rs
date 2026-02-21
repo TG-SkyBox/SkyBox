@@ -1,12 +1,15 @@
-use super::{TelegramAuthResult, TelegramError, UserInfo, AuthState};
+use super::utils::{build_client, decode_session};
 use super::{run_telegram_request, AUTH_STATE};
-use super::utils::{decode_session, build_client};
+use super::{AuthState, TelegramAuthResult, TelegramError, UserInfo};
 use crate::db::Database;
-use tauri::State;
-use std::sync::Arc;
 use log;
+use std::sync::Arc;
+use tauri::State;
 
-pub async fn tg_restore_session_impl(db: State<'_, Database>, session_data: String) -> Result<TelegramAuthResult, TelegramError> {
+pub async fn tg_restore_session_impl(
+    db: State<'_, Database>,
+    session_data: String,
+) -> Result<TelegramAuthResult, TelegramError> {
     log::info!("tg_restore_session_impl: Starting session restore");
 
     let loaded = decode_session(&session_data)?;
@@ -17,20 +20,24 @@ pub async fn tg_restore_session_impl(db: State<'_, Database>, session_data: Stri
     // build_client returns BuiltClient { client, pool_handle, pool_task }
     let built = build_client(Arc::clone(&session));
 
-    log::info!("tg_restore_session_impl: Client built, attempting to get user info to verify session");
+    log::info!(
+        "tg_restore_session_impl: Client built, attempting to get user info to verify session"
+    );
 
     // Instead of checking is_authorized() which might fail, try to get user info directly
     // If this succeeds, the session is valid
     let me = match run_telegram_request("tg_restore_session_impl.get_me", || async {
         built.client.get_me().await
-    }).await {
+    })
+    .await
+    {
         Ok(user) => {
             log::info!("tg_restore_session_impl: Successfully got user info, session is valid");
             user
-        },
+        }
         Err(e) => {
             log::error!("tg_restore_session_impl: Failed to get user info: {}", e);
-            
+
             // Stop the pool cleanly since the session is invalid
             built.pool_handle.quit();
             built.pool_task.abort();
@@ -40,12 +47,15 @@ pub async fn tg_restore_session_impl(db: State<'_, Database>, session_data: Stri
             if msg.contains("AUTH_KEY_UNREGISTERED") || msg.contains("401") {
                 log::warn!("tg_restore_session_impl: Session is invalid (Auth Key Unregistered). Clearing database.");
                 if let Err(db_err) = db.clear_session() {
-                    log::error!("tg_restore_session_impl: Failed to clear invalid session: {}", db_err.message);
+                    log::error!(
+                        "tg_restore_session_impl: Failed to clear invalid session: {}",
+                        db_err.message
+                    );
                 }
             }
 
-            return Err(TelegramError { 
-                message: format!("Session is not valid: {e}") 
+            return Err(TelegramError {
+                message: format!("Session is not valid: {e}"),
             });
         }
     };
@@ -67,7 +77,10 @@ pub async fn tg_restore_session_impl(db: State<'_, Database>, session_data: Stri
         current_dc_id: None, // Will be determined when needed
     });
 
-    log::info!("tg_restore_session_impl: Session restored successfully for user: {:?}", me.username());
+    log::info!(
+        "tg_restore_session_impl: Session restored successfully for user: {:?}",
+        me.username()
+    );
 
     // Get cached profile photo if any
     let cached_photo = match db.get_session() {
@@ -85,12 +98,15 @@ pub async fn tg_restore_session_impl(db: State<'_, Database>, session_data: Stri
 
     // Cache user info in database
     match db.update_session_user_info(
-        user_info.first_name.as_deref(), 
-        user_info.last_name.as_deref(), 
-        user_info.username.as_deref()
+        user_info.first_name.as_deref(),
+        user_info.last_name.as_deref(),
+        user_info.username.as_deref(),
     ) {
         Ok(_) => log::info!("tg_restore_session_impl: Updated user info cache in database"),
-        Err(e) => log::warn!("tg_restore_session_impl: Failed to update user info cache: {}", e.message),
+        Err(e) => log::warn!(
+            "tg_restore_session_impl: Failed to update user info cache: {}",
+            e.message
+        ),
     }
 
     Ok(TelegramAuthResult {

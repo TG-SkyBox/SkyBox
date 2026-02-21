@@ -2,6 +2,7 @@
 trigger: manual
 alwaysApply: false
 ---
+
 # SkyBox — Agent Rules (Qoder)
 
 These rules are mandatory for all work on **SkyBox**.
@@ -9,6 +10,7 @@ These rules are mandatory for all work on **SkyBox**.
 ---
 
 ## 1) No Local Build / No Local Run
+
 - **DO NOT** run the app locally.
 - **DO NOT** attempt to build the app locally.
 - **DO NOT** start dev servers (`npm run dev`, `npx tauri dev`, `cargo run`, etc.).
@@ -19,6 +21,7 @@ These rules are mandatory for all work on **SkyBox**.
 ---
 
 ## 2) Workflow-First Development
+
 - Assume CI is the source of truth.
 - Make changes that are **CI-friendly**:
   - deterministic outputs
@@ -30,24 +33,29 @@ These rules are mandatory for all work on **SkyBox**.
 
 ---
 
-## 3) What You *Should* Do Instead
+## 3) What You _Should_ Do Instead
+
 ### Frontend
+
 - Update code, configs, types, and UI components.
 - Ensure TypeScript types are correct.
 - Keep imports clean and consistent.
 
 ### Backend (Rust/Tauri)
+
 - Implement commands and logic safely.
 - Add structured error handling.
 - Keep platform-specific code behind `#[cfg(...)]`.
 
 ### CI / GitHub Actions
+
 - If a step needs automation, modify workflows rather than running locally.
 - Prefer adding checks: lint, format, tests, typecheck.
 
 ---
 
 ## 4) Quality Gates (Non-Negotiable)
+
 - No breaking TypeScript builds (type errors are unacceptable).
 - No obvious Rust compile errors.
 - No unused imports / dead code where avoidable.
@@ -56,6 +64,7 @@ These rules are mandatory for all work on **SkyBox**.
 ---
 
 ## 5) Commit Rules
+
 - Use conventional commits:
   - `feat(module): ...`
   - `fix(module): ...`
@@ -65,6 +74,7 @@ These rules are mandatory for all work on **SkyBox**.
 - Keep commits scoped and descriptive.
 
 Examples:
+
 - `feat(explorer): add directory breadcrumb navigation`
 - `fix(fs): prevent invalid path traversal`
 - `docs(ci): document github workflow-only build policy`
@@ -72,6 +82,7 @@ Examples:
 ---
 
 ## 6) PR / Change Discipline
+
 - Prefer small, reviewable changes.
 - Avoid large refactors mixed with features.
 - Add notes in PR description when changes affect CI or build steps.
@@ -79,6 +90,7 @@ Examples:
 ---
 
 ## 7) Forbidden Actions
+
 - Installing extra global tooling “just to test”.
 - Hardcoding absolute paths (e.g., `C:\Users\...`).
 - Depending on local environment state.
@@ -87,7 +99,9 @@ Examples:
 ---
 
 ## 8) Definition of Done
+
 A change is considered done only when:
+
 - Code is committed with proper message format.
 - CI workflows pass.
 - The change is documented if it affects setup, configuration, or workflow behavior.
