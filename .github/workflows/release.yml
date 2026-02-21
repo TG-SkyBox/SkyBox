@@ -25,7 +25,7 @@ jobs:
             COMMIT_MSG="${{ github.event.commits[0].message }}"
           fi
           echo "Commit message: $COMMIT_MSG"
-          
+
           if [[ "$COMMIT_MSG" =~ ^[[:space:]]*new[[:space:]]+release ]]; then
             echo "should_release=true" >> $GITHUB_OUTPUT
             echo "Commit message starts with 'new release', proceeding with release"
@@ -34,7 +34,7 @@ jobs:
             echo "Commit message does not start with 'new release', skipping release"
           fi
           echo "commit_message=$COMMIT_MSG" >> $GITHUB_OUTPUT
-          
+
       - name: Extract release notes
         id: extract_release_notes
         run: |
@@ -42,7 +42,7 @@ jobs:
           if [[ -z "$COMMIT_MSG" ]]; then
             COMMIT_MSG="${{ github.event.commits[0].message }}"
           fi
-          
+
           # Extract release notes from commit message (everything after "new release")
           if [[ "$COMMIT_MSG" =~ ^[[:space:]]*new[[:space:]]+release[[:space:]]+(.*) ]]; then
             RELEASE_NOTES="${BASH_REMATCH[1]}"
