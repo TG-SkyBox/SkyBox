@@ -1,6 +1,9 @@
 use super::utils::{build_client, encode_session};
 use super::Arc;
-use super::{get_api_hash, get_api_id, run_telegram_request, Database, AUTH_FLOW_ID, AUTH_STATE};
+use super::{
+    get_api_hash, get_api_id, run_telegram_request, Database, AUTH_FLOW_ID, AUTH_STATE,
+};
+use super::session::ensure_basic_connectivity;
 #[allow(deprecated)]
 use super::{Client, SignInError, TlSession};
 use super::{
@@ -346,6 +349,20 @@ pub async fn tg_generate_qr_code_impl(
     _app: tauri::AppHandle,
 ) -> Result<QrLoginData, TelegramError> {
     log::info!("tg_generate_qr_code_impl: Generating QR login code");
+
+    // Avoid spinning up a Telegram client when basic connectivity is clearly
+    // unavailable. This prevents runtime stack overflows when the device is
+    // offline and we repeatedly try to open a QR login flow.
+    if let Err(e) = ensure_basic_connectivity().await {
+        log::warn!(
+            "tg_generate_qr_code_impl: Skipping QR generation due to failed connectivity check: {}",
+            e
+        );
+        return Err(TelegramError {
+            message: "Network appears offline or unreachable. Please check your connection and try again."
+                .to_string(),
+        });
+    }
 
     // Check if there's already an active QR flow
     {

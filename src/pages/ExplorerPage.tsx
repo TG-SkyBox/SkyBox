@@ -662,6 +662,7 @@ export default function ExplorerPage() {
   const [hasMoreSavedItems, setHasMoreSavedItems] = useState(false);
   const [isLoadingMoreSavedItems, setIsLoadingMoreSavedItems] = useState(false);
   const [isSavedBackfillSyncing, setIsSavedBackfillSyncing] = useState(false);
+  const [isConnecting, setIsConnecting] = useState(false);
   const [isSavedSyncComplete, setIsSavedSyncComplete] = useState(false);
   const [savedSyncProgress, setSavedSyncProgress] = useState(0);
   const [backHistory, setBackHistory] = useState<string[]>([]);
@@ -1239,6 +1240,7 @@ export default function ExplorerPage() {
     let cancelled = false;
 
     const runSavedMessageSync = async () => {
+      setIsConnecting(true);
       setIsSavedBackfillSyncing(true);
       setSavedSyncProgress(5);
       try {
@@ -1269,6 +1271,7 @@ export default function ExplorerPage() {
       } finally {
         if (!cancelled) {
           setIsSavedBackfillSyncing(false);
+          setIsConnecting(false);
         }
       }
     };
@@ -4608,15 +4611,21 @@ export default function ExplorerPage() {
                 <div className="animate-spin rounded-full h-3 w-3 border-b border-primary" />
                 Loading files... {syncProgressLabel}
               </span>
-            ) : (
-              currentPath.startsWith("tg://saved") &&
-              isSavedBackfillSyncing && (
+            ) : currentPath.startsWith("tg://saved") ? (
+              isConnecting ? (
                 <span className="text-small text-muted-foreground inline-flex items-center gap-1">
                   <span className="inline-block w-2 h-2 rounded-full bg-primary animate-pulse" />
-                  Syncing... {syncProgressLabel}
+                  Connecting...
                 </span>
+              ) : (
+                isSavedBackfillSyncing && (
+                  <span className="text-small text-muted-foreground inline-flex items-center gap-1">
+                    <span className="inline-block w-2 h-2 rounded-full bg-primary animate-pulse" />
+                    Syncing... {syncProgressLabel}
+                  </span>
+                )
               )
-            )}
+            ) : null}
             <button className="flex items-center gap-1 px-2 py-1 rounded text-small text-muted-foreground hover:text-foreground hover:bg-secondary transition-colors">
               <SortAsc className="w-3 h-3" />
               Name

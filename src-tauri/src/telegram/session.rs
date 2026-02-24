@@ -5,12 +5,44 @@ use crate::db::Database;
 use log;
 use std::sync::Arc;
 use tauri::State;
+use tokio::net::TcpStream;
+use tokio::time::{timeout, Duration};
+
+pub(crate) async fn ensure_basic_connectivity() -> Result<(), TelegramError> {
+    // Simple, fast connectivity probe to avoid triggering heavy Telegram
+    // client startup work when the device is clearly offline.
+    let addr = "1.1.1.1:443";
+
+    match timeout(Duration::from_secs(2), TcpStream::connect(addr)).await {
+        Ok(Ok(_stream)) => Ok(()),
+        Ok(Err(e)) => Err(TelegramError {
+            message: format!("Basic connectivity check failed: {e}"),
+        }),
+        Err(_) => Err(TelegramError {
+            message: "Basic connectivity check timed out".to_string(),
+        }),
+    }
+}
 
 pub async fn tg_restore_session_impl(
     db: State<'_, Database>,
     session_data: String,
 ) -> Result<TelegramAuthResult, TelegramError> {
     log::info!("tg_restore_session_impl: Starting session restore");
+
+    // Fast path: if we appear offline, avoid spinning up the Telegram client
+    // at all. This prevents native stack overflows when the runtime repeatedly
+    // fails to connect while restoring a session.
+    if let Err(e) = ensure_basic_connectivity().await {
+        log::warn!(
+            "tg_restore_session_impl: Skipping session restore due to failed connectivity check: {}",
+            e
+        );
+        return Err(TelegramError {
+            message: "Network appears offline or unreachable. Please check your connection and try again."
+                .to_string(),
+        });
+    }
 
     let loaded = decode_session(&session_data)?;
     let session = Arc::new(loaded);

@@ -70,6 +70,7 @@ pub fn run() {
             telegram::tg_generate_qr_code,
             telegram::tg_poll_qr_login,
             telegram::tg_restore_session,
+            telegram::tg_ping,
             telegram::tg_logout,
             telegram::tg_get_my_profile_photo,
             telegram::tg_index_saved_messages,
