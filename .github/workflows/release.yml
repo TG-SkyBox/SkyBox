@@ -145,10 +145,23 @@ jobs:
       - name: Build
         run: npm run tauri build
 
+      - name: Collect distributable files
+        shell: bash
+        run: |
+          mkdir -p dist-out
+          # Windows: .exe installer and .msi
+          find src-tauri/target/release/bundle -maxdepth 3 \( -name "*.exe" -o -name "*.msi" \) -exec cp {} dist-out/ \; 2>/dev/null || true
+          # Linux: .deb, .rpm, .AppImage
+          find src-tauri/target/release/bundle -maxdepth 3 \( -name "*.deb" -o -name "*.rpm" -o -name "*.AppImage" \) -exec cp {} dist-out/ \; 2>/dev/null || true
+          # macOS: .dmg
+          find src-tauri/target/release/bundle -maxdepth 3 -name "*.dmg" -exec cp {} dist-out/ \; 2>/dev/null || true
+          echo "--- collected files ---"
+          ls -lh dist-out/
+
       - uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.os }}-artifacts
-          path: src-tauri/target/release/bundle/**/*
+          path: dist-out/
           if-no-files-found: error
 
   publish:
@@ -169,11 +182,10 @@ jobs:
       - run: |
           mkdir release-files
           for os in windows-latest ubuntu-latest macos-latest; do
-            mkdir -p release-files/$os
-            cp -r artifacts/$os-artifacts/* release-files/$os/ 2>/dev/null || true
+            cp artifacts/$os-artifacts/* release-files/ 2>/dev/null || true
           done
-
-          ls -R release-files
+          echo "--- release files ---"
+          ls -lh release-files/
 
       - name: Tag
         run: |
@@ -188,14 +200,14 @@ jobs:
           tag_name: ${{ needs.bump-version.outputs.release_tag }}
           name: ${{ needs.bump-version.outputs.release_tag }}
           body: ${{ github.event.inputs.release_notes }}
-          files: release-files/**/*
+          files: release-files/*
           token: ${{ secrets.PERSONAL_ACCESS_TOKEN }}
 
       - name: Push to download branch
         run: |
           mkdir upload && cd upload
           mkdir "${{ needs.bump-version.outputs.version }}"
-          cp -r ../release-files/* "${{ needs.bump-version.outputs.version }}/"
+          cp ../release-files/* "${{ needs.bump-version.outputs.version }}/"
 
           git init
           git config user.name "pamod-madubashana"
