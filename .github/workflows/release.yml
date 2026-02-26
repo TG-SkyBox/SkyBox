@@ -168,7 +168,16 @@ jobs:
 
       - run: |
           mkdir release-files
-          find artifacts -type f -exec cp {} release-files/ \;
+          # Filter to only include required release files
+          find artifacts -type f \( \
+            -name "SkyBox" -o \
+            -name "SkyBox.Desktop-*-1.x86_64.rpm" -o \
+            -name "SkyBox.Desktop_*_aarch64.dmg" -o \
+            -name "SkyBox.Desktop_*_amd64.AppImage" -o \
+            -name "SkyBox.Desktop_*_amd64.deb" -o \
+            -name "SkyBox.Desktop_*_x64-setup.exe" -o \
+            -name "SkyBox.Desktop_*_x64_en-US.msi" \
+          \) -exec cp {} release-files/ \;
           ls -lh release-files
 
       - name: Tag
