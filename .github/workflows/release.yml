@@ -168,8 +168,13 @@ jobs:
 
       - run: |
           mkdir release-files
-          find artifacts -type f -exec cp {} release-files/ \;
-          ls -lh release-files
+
+          for os in windows-latest ubuntu-latest macos-latest; do
+            mkdir -p release-files/$os
+            cp -r artifacts/$os-artifacts/* release-files/$os/ 2>/dev/null || true
+          done
+
+          ls -R release-files
 
       - name: Tag
         run: |
@@ -184,14 +189,14 @@ jobs:
           tag_name: ${{ needs.bump-version.outputs.release_tag }}
           name: ${{ needs.bump-version.outputs.release_tag }}
           body: ${{ github.event.inputs.release_notes }}
-          files: release-files/*
+          files: release-files/**/*
           token: ${{ secrets.PERSONAL_ACCESS_TOKEN }}
 
       - name: Push to download branch
         run: |
           mkdir upload && cd upload
           mkdir "${{ needs.bump-version.outputs.version }}"
-          cp ../release-files/* "${{ needs.bump-version.outputs.version }}/"
+          cp -r ../release-files/* "${{ needs.bump-version.outputs.version }}/"
 
           git init
           git config user.name "pamod-madubashana"
