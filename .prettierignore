@@ -1,3 +1,5 @@
 target/
 .qoder/
 .github/
+package.json
+tauri.conf.json
