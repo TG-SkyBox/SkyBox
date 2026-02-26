@@ -173,6 +173,8 @@ jobs:
 
       - name: Tag
         run: |
+          git config user.name "pamod-madubashana"
+          git config user.email "pamod.main@gmail.com"
           git tag -a "${{ needs.bump-version.outputs.release_tag }}" -m "release"
           git push origin "${{ needs.bump-version.outputs.release_tag }}"
 
@@ -192,6 +194,8 @@ jobs:
           cp ../release-files/* "${{ needs.bump-version.outputs.version }}/"
 
           git init
+          git config user.name "pamod-madubashana"
+          git config user.email "pamod.main@gmail.com"
           git checkout -b download
           git add .
           git commit -m "${{ needs.bump-version.outputs.version }}"
