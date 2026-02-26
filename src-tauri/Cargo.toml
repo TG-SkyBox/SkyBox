@@ -1,6 +1,6 @@
 [package]
 name = "SkyBox"
-version = "1.0.21"
+version = "1.0.22"
 description = "A Telegram-themed desktop file explorer with cloud integration"
 authors = ["pamod-madubashana"]
 license = ""

@@ -1,7 +1,7 @@
 {
   "$schema": "../node_modules/@tauri-apps/cli/config.schema.json",
   "productName": "SkyBox Desktop",
-  "version": "1.0.21",
+  "version": "1.0.22",
   "identifier": "com.skybox.app",
   "build": {
     "frontendDist": "../dist",
@@ -55,10 +55,14 @@
       "certificateThumbprint": null,
       "digestAlgorithm": "sha256",
       "wix": {
-        "language": ["en-US"]
+        "language": [
+          "en-US"
+        ]
       },
       "nsis": {
-        "languages": ["English"],
+        "languages": [
+          "English"
+        ],
         "displayLanguageSelector": false,
         "installerIcon": "icons/icon.ico",
         "installMode": "perMachine"
