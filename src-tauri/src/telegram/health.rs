@@ -18,10 +18,7 @@ pub async fn tg_ping_impl() -> Result<bool, TelegramError> {
         message: "Connection check timed out".to_string(),
     })?;
 
-    result
-        .map(|_| true)
-        .map_err(|e| TelegramError {
-            message: format!("Connection check failed: {e}"),
-        })
+    result.map(|_| true).map_err(|e| TelegramError {
+        message: format!("Connection check failed: {e}"),
+    })
 }
-

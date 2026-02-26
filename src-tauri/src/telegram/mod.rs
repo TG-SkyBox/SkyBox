@@ -284,12 +284,12 @@ pub fn get_api_hash() -> &'static str {
 }
 // ===== Modules =====
 
+mod health;
 mod login;
 pub mod messages;
 mod photo;
 mod session;
 mod sync;
-mod health;
 pub mod utils;
 
 // ===== Re-export implementation functions =====

@@ -1,9 +1,7 @@
+use super::session::ensure_basic_connectivity;
 use super::utils::{build_client, encode_session};
 use super::Arc;
-use super::{
-    get_api_hash, get_api_id, run_telegram_request, Database, AUTH_FLOW_ID, AUTH_STATE,
-};
-use super::session::ensure_basic_connectivity;
+use super::{get_api_hash, get_api_id, run_telegram_request, Database, AUTH_FLOW_ID, AUTH_STATE};
 #[allow(deprecated)]
 use super::{Client, SignInError, TlSession};
 use super::{
