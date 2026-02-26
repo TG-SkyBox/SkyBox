@@ -168,7 +168,6 @@ jobs:
 
       - run: |
           mkdir release-files
-
           for os in windows-latest ubuntu-latest macos-latest; do
             mkdir -p release-files/$os
             cp -r artifacts/$os-artifacts/* release-files/$os/ 2>/dev/null || true
