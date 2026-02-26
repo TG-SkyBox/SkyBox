@@ -149,7 +149,8 @@ export default function LoginPage() {
       } else if (parsed.type === "session_error") {
         toast({
           title: "Session could not be restored",
-          description: "We couldn't load your saved session. Please log in again.",
+          description:
+            "We couldn't load your saved session. Please log in again.",
           variant: "destructive",
         });
       }
@@ -399,8 +400,7 @@ export default function LoginPage() {
     } catch (error) {
       const typedError = error as TelegramError;
       console.error("Error generating QR code:", error);
-      const description =
-        typedError.message || "Failed to generate QR code";
+      const description = typedError.message || "Failed to generate QR code";
       const isOfflineError = description.includes(
         "Network appears offline or unreachable",
       );

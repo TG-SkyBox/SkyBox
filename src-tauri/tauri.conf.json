@@ -55,14 +55,10 @@
       "certificateThumbprint": null,
       "digestAlgorithm": "sha256",
       "wix": {
-        "language": [
-          "en-US"
-        ]
+        "language": ["en-US"]
       },
       "nsis": {
-        "languages": [
-          "English"
-        ],
+        "languages": ["English"],
         "displayLanguageSelector": false,
         "installerIcon": "icons/icon.ico",
         "installMode": "perMachine"
