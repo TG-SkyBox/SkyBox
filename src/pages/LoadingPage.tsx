@@ -58,9 +58,33 @@ export default function LoadingPage() {
   }, []);
 
   useEffect(() => {
+    let cancelled = false;
+
+    const withTimeout = <T,>(promise: Promise<T>, ms: number): Promise<T> => {
+      return new Promise<T>((resolve, reject) => {
+        const timeoutId = setTimeout(() => {
+          reject(new Error("Loading timed out"));
+        }, ms);
+
+        promise
+          .then((value) => {
+            clearTimeout(timeoutId);
+            resolve(value);
+          })
+          .catch((error) => {
+            clearTimeout(timeoutId);
+            reject(error);
+          });
+      });
+    };
+
     const checkLoginStatus = async () => {
+      if (cancelled) return;
       try {
-        const session: Session | null = await invoke("db_get_session");
+        const session = await withTimeout<Session | null>(
+          invoke("db_get_session"),
+          8000,
+        );
         logger.info(
           `LoadingPage: Retrieved session from DB: ${session ? JSON.stringify(session.phone) : "null"}`,
         );
@@ -70,12 +94,30 @@ export default function LoadingPage() {
             "LoadingPage: Session exists with data, attempting to restore",
           );
 
+          // Avoid triggering Telegram client initialization when offline,
+          // which can cause native stack overflows in the runtime.
+          if (typeof navigator !== "undefined" && !navigator.onLine) {
+            logger.warn(
+              "LoadingPage: Device is offline, skipping Telegram session restore and redirecting to login",
+            );
+            if (!cancelled) {
+              if (typeof window !== "undefined") {
+                window.sessionStorage.setItem(
+                  "skybox_login_notice",
+                  JSON.stringify({ type: "offline" }),
+                );
+              }
+              navigate("/login");
+            }
+            return;
+          }
+
           try {
-            const result: TelegramAuthResult = await invoke(
-              "tg_restore_session",
-              {
+            const result = await withTimeout<TelegramAuthResult>(
+              invoke("tg_restore_session", {
                 sessionData: session.session_data,
-              },
+              }),
+              10000,
             );
             logger.info("LoadingPage: tg_restore_session result:", result);
 
@@ -102,18 +144,39 @@ export default function LoadingPage() {
         }
 
         // Redirect to login if no valid session found
-        navigate("/login");
+        if (!cancelled) {
+          if (typeof window !== "undefined") {
+            window.sessionStorage.setItem(
+              "skybox_login_notice",
+              JSON.stringify({ type: "session_error" }),
+            );
+          }
+          navigate("/login");
+        }
       } catch (error) {
         logger.error("LoadingPage: Error checking login status:", error);
         // In case of error, redirect to login
-        navigate("/login");
+        if (!cancelled) {
+          if (typeof window !== "undefined") {
+            window.sessionStorage.setItem(
+              "skybox_login_notice",
+              JSON.stringify({ type: "session_error" }),
+            );
+          }
+          navigate("/login");
+        }
       }
     };
 
     // Small delay to show the loading screen
-    const timer = setTimeout(checkLoginStatus, 1000);
+    const timer = setTimeout(() => {
+      void checkLoginStatus();
+    }, 1000);
 
-    return () => clearTimeout(timer);
+    return () => {
+      cancelled = true;
+      clearTimeout(timer);
+    };
   }, [navigate]);
 
   return (

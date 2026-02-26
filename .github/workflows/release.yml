@@ -1,66 +1,26 @@
-name: Build & Release Tauri App
+name: Build And Release
 
 on:
-  push:
-    branches: [main, master]
   workflow_dispatch:
+    inputs:
+      confirm:
+        description: "Type 'release' to proceed"
+        required: true
+      release_notes:
+        description: "Release notes (Markdown supported)"
+        required: false
 
 permissions:
   contents: write
   packages: write
 
 jobs:
-  check-commit-message:
-    if: contains(github.event.head_commit.message, 'new release')
-    runs-on: ubuntu-latest
-    outputs:
-      should_release: ${{ steps.check.outputs.should_release }}
-      commit_message: ${{ steps.check.outputs.commit_message }}
-      release_notes: ${{ steps.extract_release_notes.outputs.release_notes }}
-    steps:
-      - name: Get commit message
-        id: check
-        run: |
-          COMMIT_MSG="${{ github.event.head_commit.message }}"
-          if [[ -z "$COMMIT_MSG" ]]; then
-            COMMIT_MSG="${{ github.event.commits[0].message }}"
-          fi
-          echo "Commit message: $COMMIT_MSG"
-
-          if [[ "$COMMIT_MSG" =~ ^[[:space:]]*new[[:space:]]+release ]]; then
-            echo "should_release=true" >> $GITHUB_OUTPUT
-            echo "Commit message starts with 'new release', proceeding with release"
-          else
-            echo "should_release=false" >> $GITHUB_OUTPUT
-            echo "Commit message does not start with 'new release', skipping release"
-          fi
-          echo "commit_message=$COMMIT_MSG" >> $GITHUB_OUTPUT
-
-      - name: Extract release notes
-        id: extract_release_notes
-        run: |
-          COMMIT_MSG="${{ github.event.head_commit.message }}"
-          if [[ -z "$COMMIT_MSG" ]]; then
-            COMMIT_MSG="${{ github.event.commits[0].message }}"
-          fi
-
-          # Extract release notes from commit message (everything after "new release")
-          if [[ "$COMMIT_MSG" =~ ^[[:space:]]*new[[:space:]]+release[[:space:]]+(.*) ]]; then
-            RELEASE_NOTES="${BASH_REMATCH[1]}"
-            echo "release_notes=$RELEASE_NOTES" >> $GITHUB_OUTPUT
-            echo "Extracted release notes: $RELEASE_NOTES"
-          else
-            echo "release_notes=" >> $GITHUB_OUTPUT
-          fi
-
   bump-version:
-    needs: check-commit-message
-    if: needs.check-commit-message.outputs.should_release == 'true'
+    if: github.event.inputs.confirm == 'release'
     runs-on: ubuntu-latest
     outputs:
       version: ${{ steps.get_version.outputs.version }}
       release_tag: ${{ steps.get_version.outputs.release_tag }}
-      release_notes: ${{ needs.check-commit-message.outputs.release_notes }}
       bump_sha: ${{ steps.commit_version.outputs.bump_sha }}
 
     steps:
@@ -74,124 +34,65 @@ jobs:
 
       - name: Bump version
         id: get_version
+        shell: bash
         run: |
           python - <<'PY'
           import json, os, re
 
-          def increment_version(v):
-              parts = [int(x) for x in v.split('.')]
-              parts[-1] += 1
-              return ".".join(map(str, parts))
+          def inc(v):
+              p = [int(x) for x in v.split('.')]
+              p[-1] += 1
+              return '.'.join(map(str, p))
 
-          # 1. Read current version
           try:
-              with open('VERSION', 'r') as f:
-                  current_version = f.read().strip()
+              with open('VERSION') as f:
+                  cur = f.read().strip()
           except FileNotFoundError:
-              current_version = "1.0.0"
+              cur = '1.0.0'
 
-          new_version = increment_version(current_version)
-          print(f"Bumping version: {current_version} -> {new_version}")
+          new = inc(cur)
+          print(f"{cur} -> {new}")
 
-          # 2. Update VERSION
-          with open('VERSION', 'w') as f:
-              f.write(new_version)
+          open('VERSION','w').write(new)
 
-          # 3. Update package.json
           if os.path.exists('package.json'):
-              with open('package.json', 'r') as f:
-                  pkg = json.load(f)
-              pkg['version'] = new_version
-              with open('package.json', 'w') as f:
-                  json.dump(pkg, f, indent=2)
+              pkg = json.load(open('package.json'))
+              pkg['version'] = new
+              json.dump(pkg, open('package.json','w'), indent=2)
 
-          # 4. Update tauri.conf.json
-          tauri_path = 'src-tauri/tauri.conf.json'
-          if os.path.exists(tauri_path):
-              with open(tauri_path, 'r') as f:
-                  tauri = json.load(f)
-              tauri['version'] = new_version
-              with open(tauri_path, 'w') as f:
-                  json.dump(tauri, f, indent=2)
+          tc = 'src-tauri/tauri.conf.json'
+          if os.path.exists(tc):
+              t = json.load(open(tc))
+              t['version'] = new
+              json.dump(t, open(tc,'w'), indent=2)
 
-          # 5. Update Cargo.toml
-          cargo_path = 'src-tauri/Cargo.toml'
-          if os.path.exists(cargo_path):
-              with open(cargo_path, 'r') as f:
-                  cargo = f.read()
-              cargo = re.sub(r'^version = "[^"]+"', f'version = "{new_version}"', cargo, count=1, flags=re.MULTILINE)
-              with open(cargo_path, 'w') as f:
-                  f.write(cargo)
+          cargo = 'src-tauri/Cargo.toml'
+          if os.path.exists(cargo):
+              s = open(cargo).read()
+              s = re.sub(r'^version = ".*"', f'version = "{new}"', s, flags=re.M)
+              open(cargo,'w').write(s)
 
-          # 6. Set Output
-          out_path = os.environ.get('GITHUB_OUTPUT')
-          if out_path:
-              with open(out_path, 'a') as f:
-                  f.write(f"version={new_version}\n")
-                  f.write(f"release_tag=v{new_version}\n")
+          with open(os.environ['GITHUB_OUTPUT'],'a') as o:
+              o.write(f"version={new}\n")
+              o.write(f"release_tag=v{new}\n")
           PY
-        shell: bash
 
-      - name: Extract release notes from PR body
-        id: get_release_notes
-        run: |
-          python - <<'PY'
-          import json, os
-
-          ev_path = os.environ.get('GITHUB_EVENT_PATH')
-          if not ev_path:
-              raise SystemExit('GITHUB_EVENT_PATH not set')
-
-          with open(ev_path, 'r', encoding='utf-8') as f:
-              ev = json.load(f)
-
-          # Get PR body for release notes
-          pr_body = ev.get('pull_request', {}).get('body') or ''
-
-          out_path = os.environ.get('GITHUB_OUTPUT')
-          if not out_path:
-              raise SystemExit('GITHUB_OUTPUT not set')
-
-          with open(out_path, 'a', encoding='utf-8') as out:
-              out.write('release_notes<<EOF\n')
-              out.write(pr_body + '\n')
-              out.write('EOF\n')
-          PY
-        shell: bash
-
-      - name: Commit and Push Version Bump
+      - name: Commit and push version bump
         id: commit_version
+        shell: bash
         run: |
           git config user.name "pamod-madubashana"
           git config user.email "pamod.main@gmail.com"
+
           git add VERSION package.json src-tauri/tauri.conf.json src-tauri/Cargo.toml
-
-          if git diff --cached --quiet; then
-            echo "No version changes to commit."
-            exit 1
-          fi
-
-          # Include release notes in commit message
-          RELEASE_NOTES=$(cat <<'EOF'
-          ${{ steps.get_release_notes.outputs.release_notes }}
-          EOF
-          )
-
-          # Create commit message with release notes
-          git commit -m "new version v${{ steps.get_version.outputs.version }}" -m "${RELEASE_NOTES}"
+          git commit -m "release: v${{ steps.get_version.outputs.version }}"
           git push origin main
-          echo "bump_sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
-        shell: bash
 
-  # Step 2: Build on all platforms in parallel
+          echo "bump_sha=$(git rev-parse HEAD)" >> $GITHUB_OUTPUT
+
   build:
-    needs: [bump-version, check-commit-message]
-    if: needs.check-commit-message.outputs.should_release == 'true'
-    env:
-      TAURI_PRIVATE_KEY: ${{ secrets.TAURI_PRIVATE_KEY }}
-      TAURI_KEY_PASSWORD: ${{ secrets.TAURI_KEY_PASSWORD }}
-      TELEGRAM_API_ID: ${{ secrets.TELEGRAM_API_ID }}
-      TELEGRAM_API_HASH: ${{ secrets.TELEGRAM_API_HASH }}
+    needs: bump-version
+    if: github.event.inputs.confirm == 'release'
     runs-on: ${{ matrix.os }}
 
     strategy:
@@ -199,68 +100,51 @@ jobs:
       matrix:
         os: [windows-latest, ubuntu-latest, macos-latest]
 
+    env:
+      TAURI_PRIVATE_KEY: ${{ secrets.TAURI_PRIVATE_KEY }}
+      TAURI_KEY_PASSWORD: ${{ secrets.TAURI_KEY_PASSWORD }}
+      TELEGRAM_API_ID: ${{ secrets.TELEGRAM_API_ID }}
+      TELEGRAM_API_HASH: ${{ secrets.TELEGRAM_API_HASH }}
+
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
         with:
           ref: ${{ needs.bump-version.outputs.bump_sha }}
           token: ${{ secrets.PERSONAL_ACCESS_TOKEN }}
 
-      # Install system dependencies for Linux
-      - name: Install Linux dependencies
+      - name: Linux deps
         if: matrix.os == 'ubuntu-latest'
         run: |
           sudo apt-get update
           sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf
-        shell: bash
 
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
+      - uses: actions/setup-node@v4
         with:
           node-version: "20"
-          cache: "npm"
+          cache: npm
 
-      - name: Install Rust
-        uses: dtolnay/rust-toolchain@stable
-        with:
-          toolchain: stable
+      - uses: dtolnay/rust-toolchain@stable
 
-      - name: Rust cache
-        uses: swatinem/rust-cache@v2
+      - uses: swatinem/rust-cache@v2
         with:
           workspaces: "./src-tauri -> target"
 
-      - name: Install dependencies
-        run: npm install
-        shell: bash
+      - run: npm install
+      - run: npm install -g @tauri-apps/cli
 
-      - name: Install Tauri CLI
-        run: npm install -g @tauri-apps/cli
-        shell: bash
-
-      # macOS needs extra setup for signing disabled
       - name: Disable macOS signing
         if: matrix.os == 'macos-latest'
         run: |
           echo "TAURI_SIGNING_PRIVATE_KEY=" >> $GITHUB_ENV
           echo "TAURI_SIGNING_PASSWORD=" >> $GITHUB_ENV
-        shell: bash
 
-      # macOS needs create-dmg for bundling DMG files
-      - name: Install macOS dependencies
+      - name: macOS deps
         if: matrix.os == 'macos-latest'
-        run: |
-          brew install create-dmg
-        shell: bash
+        run: brew install create-dmg
 
-      - name: Build Tauri app
+      - name: Build
         run: npm run tauri build
-        shell: bash
-        env:
-          TAURI_PRIVATE_KEY: ${{ secrets.TAURI_PRIVATE_KEY }}
-          TAURI_KEY_PASSWORD: ${{ secrets.TAURI_KEY_PASSWORD }}
 
-      # Upload artifacts for the publish job
       - name: Upload Windows artifacts
         if: matrix.os == 'windows-latest'
         uses: actions/upload-artifact@v4
@@ -296,109 +180,55 @@ jobs:
             src-tauri/target/release/bundle/macos/*.app
           if-no-files-found: error
 
-  # Step 3: Publish release and push to download branch (after all builds complete)
+
   publish:
-    needs: [bump-version, build, check-commit-message]
-    if: needs.check-commit-message.outputs.should_release == 'true'
+    needs: [bump-version, build]
+    if: github.event.inputs.confirm == 'release'
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
         with:
           ref: ${{ needs.bump-version.outputs.bump_sha }}
-          fetch-depth: 0
-          fetch-tags: true
           token: ${{ secrets.PERSONAL_ACCESS_TOKEN }}
 
-      - name: Download all artifacts
-        uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v4
         with:
           path: artifacts
 
-      - name: Display structure of downloaded files
-        run: ls -R artifacts
-
-      - name: Prepare release files
-        run: |
+      - run: |
           mkdir -p release-files
-
-          # Copy all files from artifact folders to release-files (flattening structure)
           find artifacts -type f -exec cp -v {} release-files/ \;
-
           echo "Release files prepared:"
           ls -lh release-files/
-        shell: bash
 
-      - name: Create and push release tag
-        shell: bash
-        env:
-          RELEASE_TAG: ${{ needs.bump-version.outputs.release_tag }}
-          TARGET_SHA: ${{ needs.bump-version.outputs.bump_sha }}
+      - name: Tag
         run: |
-          set -euo pipefail
-          TAG="$(printf '%s' "$RELEASE_TAG" | tr -d '\r\n')"
-
-          if [ -z "$TAG" ]; then
-            echo "Release tag is empty."
-            exit 1
-          fi
-
           git config user.name "pamod-madubashana"
           git config user.email "pamod.main@gmail.com"
+          git tag -a "${{ needs.bump-version.outputs.release_tag }}" -m "release"
+          git push origin "${{ needs.bump-version.outputs.release_tag }}"
 
-          if [ -z "$(git ls-remote --tags origin "refs/tags/$TAG")" ]; then
-            git tag -a "$TAG" "$TARGET_SHA" -m "$TAG"
-            git push origin "refs/tags/$TAG"
-          else
-            echo "Tag $TAG already exists on origin."
-          fi
-
-      - name: Create GitHub Release
+      - name: GitHub Release
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ needs.bump-version.outputs.release_tag }}
           name: ${{ needs.bump-version.outputs.release_tag }}
-          body: ${{ needs.check-commit-message.outputs.release_notes }}
-          draft: false
-          prerelease: false
-          token: ${{ secrets.PERSONAL_ACCESS_TOKEN }}
+          body: ${{ github.event.inputs.release_notes }}
           files: release-files/*
+          token: ${{ secrets.PERSONAL_ACCESS_TOKEN }}
 
-      - name: Push to "download" branch
-        shell: bash
-        env:
-          TAG_NAME: ${{ needs.bump-version.outputs.version }}
-          TOKEN: ${{ secrets.PERSONAL_ACCESS_TOKEN }}
+      - name: Push to download branch
         run: |
-          # Create temp directory to stage files
-          mkdir -p upload
-          cd upload
-
-          # Create version-named directory and copy all release files into it
-          if [ -d "../release-files" ] && [ -n "$(ls -A ../release-files/)" ]; then
-            mkdir -p "${TAG_NAME}"
-            cp -r ../release-files/* "${TAG_NAME}/"
-          else
-            echo "Warning: release-files directory does not exist or is empty"
-            # Create a placeholder to maintain structure
-            mkdir -p "${TAG_NAME}"
-            touch "${TAG_NAME}/README.md"
-            echo "# Release ${TAG_NAME}" > "${TAG_NAME}/README.md"
-            echo "No release artifacts available for this version." >> "${TAG_NAME}/README.md"
-          fi
-
-          # Create .github/workflows directory and copy readme.yml
-          mkdir -p .github/workflows
-          if [ -f "../.github/workflows/readme.yml" ]; then
-            cp ../.github/workflows/readme.yml .github/workflows/readme.yml
-          fi
+          mkdir upload && cd upload
+          mkdir "${{ needs.bump-version.outputs.version }}"
+          cp ../release-files/* "${{ needs.bump-version.outputs.version }}/"
 
           git init
-          git config user.name "${{ github.actor }}"
-          git config user.email "${{ github.actor }}@users.noreply.github.com"
+          git config user.name "pamod-madubashana"
+          git config user.email "pamod.main@gmail.com"
           git checkout -b download
           git add .
-          git commit -m "${TAG_NAME}"
+          git commit -m "${{ needs.bump-version.outputs.version }}"
           git remote add origin "https://${{ github.actor }}:${{ secrets.PERSONAL_ACCESS_TOKEN }}@github.com/${{ github.repository }}"
           git push -f origin download

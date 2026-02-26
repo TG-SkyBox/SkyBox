@@ -284,6 +284,7 @@ pub fn get_api_hash() -> &'static str {
 }
 // ===== Modules =====
 
+mod health;
 mod login;
 pub mod messages;
 mod photo;
@@ -298,6 +299,7 @@ use login::{
     tg_request_auth_code_impl, tg_sign_in_with_code_impl, tg_sign_in_with_password_impl,
 };
 
+use health::tg_ping_impl;
 use session::{tg_logout_impl, tg_restore_session_impl};
 
 use photo::tg_get_my_profile_photo_impl;
@@ -359,6 +361,11 @@ pub async fn tg_restore_session(
     session_data: String,
 ) -> Result<TelegramAuthResult, TelegramError> {
     tg_restore_session_impl(db, session_data).await
+}
+
+#[tauri::command]
+pub async fn tg_ping() -> Result<bool, TelegramError> {
+    tg_ping_impl().await
 }
 
 #[tauri::command]

@@ -8,18 +8,17 @@ A Tauri-based file explorer application with Telegram integration
 
 </div>
 
-
 ## Download
 
-### Latest Release: v1.0.20
+### Latest Release: v1.0.21
 
-| Platform | Download |
-|----------|----------|
-| Windows (MSI) | [Download](https://raw.githubusercontent.com/TG-SkyBox/SkyBox/download/1.0.20/SkyBox_1.0.20_x64_en-US.msi) |
-| Windows (NSIS) | [Download](https://raw.githubusercontent.com/TG-SkyBox/SkyBox/download/1.0.20/SkyBox_1.0.20_x64-setup.exe) |
-| macOS (DMG) | [Download](https://raw.githubusercontent.com/TG-SkyBox/SkyBox/download/1.0.20/SkyBox_1.0.20_aarch64.dmg) |
-| Linux (AppImage) | [Download](https://raw.githubusercontent.com/TG-SkyBox/SkyBox/download/1.0.20/SkyBox_1.0.20_amd64.AppImage) |
-| Linux (DEB) | [Download](https://raw.githubusercontent.com/TG-SkyBox/SkyBox/download/1.0.20/SkyBox_1.0.20_amd64.deb) |
+| Platform         | Download                                                                                                              |
+| ---------------- | --------------------------------------------------------------------------------------------------------------------- |
+| Windows (MSI)    | [Download](https://raw.githubusercontent.com/TG-SkyBox/SkyBox/download/1.0.21/SkyBox%20Desktop_1.0.21_x64_en-US.msi)  |
+| Windows (NSIS)   | [Download](https://raw.githubusercontent.com/TG-SkyBox/SkyBox/download/1.0.21/SkyBox%20Desktop_1.0.21_x64-setup.exe)  |
+| macOS (DMG)      | [Download](https://raw.githubusercontent.com/TG-SkyBox/SkyBox/download/1.0.21/SkyBox%20Desktop_1.0.21_aarch64.dmg)    |
+| Linux (AppImage) | [Download](https://raw.githubusercontent.com/TG-SkyBox/SkyBox/download/1.0.21/SkyBox%20Desktop_1.0.21_amd64.AppImage) |
+| Linux (DEB)      | [Download](https://raw.githubusercontent.com/TG-SkyBox/SkyBox/download/1.0.21/SkyBox%20Desktop_1.0.21_amd64.deb)      |
 
 ---
 
@@ -112,21 +111,24 @@ We welcome contributions to SkyBox! Here's how you can get involved:
 ### Development Setup
 
 1. **Clone the repository:**
+
    ```bash
    git clone https://github.com/pamod-madubashana/SkyBox.git
    cd SkyBox
    ```
 
 2. **Install dependencies:**
+
    ```bash
    npm install
    ```
 
 3. **Run the development server:**
+
    ```bash
    npm run tauri:dev
    ```
-   
+
    This will start the Vite development server and launch the Tauri application in development mode.
 
 4. **Alternative development commands:**

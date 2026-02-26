@@ -90,6 +90,9 @@ export default function LoginPage() {
   const [password, setPassword] = useState("");
   const [isLoading, setIsLoading] = useState(false);
   const [appVersion, setAppVersion] = useState<string>("...");
+  const [isOffline, setIsOffline] = useState(
+    typeof navigator !== "undefined" ? !navigator.onLine : false,
+  );
 
   // QR Login state
   const [qrData, setQrData] = useState<string | null>(null);
@@ -123,6 +126,49 @@ export default function LoginPage() {
     void loadAppVersion();
     return () => {
       cancelled = true;
+    };
+  }, []);
+
+  // Show any startup notice from LoadingPage (offline/session errors)
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const raw = window.sessionStorage.getItem("skybox_login_notice");
+    if (!raw) return;
+    window.sessionStorage.removeItem("skybox_login_notice");
+
+    try {
+      const parsed = JSON.parse(raw) as { type?: string };
+      if (parsed.type === "offline") {
+        toast({
+          title: "Offline",
+          description:
+            "You're offline. Connect to the internet to log in with QR or phone.",
+          variant: "destructive",
+        });
+        setIsOffline(true);
+      } else if (parsed.type === "session_error") {
+        toast({
+          title: "Session could not be restored",
+          description:
+            "We couldn't load your saved session. Please log in again.",
+          variant: "destructive",
+        });
+      }
+    } catch {
+      // ignore parse errors
+    }
+  }, []);
+
+  // Track browser offline/online events
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const handleOnline = () => setIsOffline(false);
+    const handleOffline = () => setIsOffline(true);
+    window.addEventListener("online", handleOnline);
+    window.addEventListener("offline", handleOffline);
+    return () => {
+      window.removeEventListener("online", handleOnline);
+      window.removeEventListener("offline", handleOffline);
     };
   }, []);
 
@@ -318,6 +364,17 @@ export default function LoginPage() {
   };
 
   const generateQrCode = async () => {
+    if (typeof navigator !== "undefined" && !navigator.onLine) {
+      setIsOffline(true);
+      toast({
+        title: "Offline",
+        description:
+          "You're offline. Connect to the internet to log in with QR code.",
+        variant: "destructive",
+      });
+      return;
+    }
+
     setIsQrRefreshing(true);
     try {
       // Clear any existing polling interval before generating new QR
@@ -343,9 +400,18 @@ export default function LoginPage() {
     } catch (error) {
       const typedError = error as TelegramError;
       console.error("Error generating QR code:", error);
+      const description = typedError.message || "Failed to generate QR code";
+      const isOfflineError = description.includes(
+        "Network appears offline or unreachable",
+      );
+
+      if (isOfflineError) {
+        setIsOffline(true);
+      }
+
       toast({
-        title: "QR Code Generation Failed",
-        description: typedError.message || "Failed to generate QR code",
+        title: isOfflineError ? "Offline" : "QR Code Generation Failed",
+        description,
         variant: "destructive",
       });
     } finally {
@@ -481,18 +547,22 @@ export default function LoginPage() {
 
   // Auto-generate QR code when entering QR mode (with guard to prevent double generation)
   useEffect(() => {
-    if (loginMode === "qr" && step === "phone") {
+    if (loginMode === "qr" && step === "phone" && !isOffline) {
       // Use ref to ensure this only runs once per mount, even if dependencies change
       if (!qrStartedRef.current) {
         logger.info("LoginPage: Auto-generating QR code (first time)");
         qrStartedRef.current = true;
         generateQrCode();
       }
+    } else if (loginMode === "qr" && step === "phone" && isOffline) {
+      logger.warn(
+        "LoginPage: Skipping auto QR generation because device appears offline",
+      );
     } else {
       // Reset the guard when leaving QR mode
       qrStartedRef.current = false;
     }
-  }, [loginMode, step]);
+  }, [loginMode, step, isOffline]);
 
   // Listen for QR token update events from backend
   useEffect(() => {
