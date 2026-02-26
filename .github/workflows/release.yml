@@ -1,17 +1,17 @@
 name: Build & Release Tauri App
 
 on:
-  push:
-    branches: [main, master]
   workflow_dispatch:
-
+    inputs:
+      confirm:
+        description: "Type 'release' to proceed"
+        required: true
 permissions:
   contents: write
   packages: write
 
 jobs:
   check-commit-message:
-    if: contains(github.event.head_commit.message, 'new release')
     runs-on: ubuntu-latest
     outputs:
       should_release: ${{ steps.check.outputs.should_release }}
