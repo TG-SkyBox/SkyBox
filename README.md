@@ -12,6 +12,7 @@ A Tauri-based file explorer application with Telegram integration
 
 ### Latest Release: v1.0.21
 
+
 | Platform         | Download                                                                                                              |
 | ---------------- | --------------------------------------------------------------------------------------------------------------------- |
 | Windows (MSI)    | [Download](https://raw.githubusercontent.com/TG-SkyBox/SkyBox/download/1.0.21/SkyBox%20Desktop_1.0.21_x64_en-US.msi)  |
@@ -20,6 +21,7 @@ A Tauri-based file explorer application with Telegram integration
 | Linux (AppImage) | [Download](https://raw.githubusercontent.com/TG-SkyBox/SkyBox/download/1.0.21/SkyBox%20Desktop_1.0.21_amd64.AppImage) |
 | Linux (DEB)      | [Download](https://raw.githubusercontent.com/TG-SkyBox/SkyBox/download/1.0.21/SkyBox%20Desktop_1.0.21_amd64.deb)      |
 
+**Microsoft Store**: [Get it from Microsoft](https://apps.microsoft.com/store/detail/9N31K8G7Z3J7?cid=DevShareMCLPCS)
 ---
 
 ## Tech Stack
@@ -78,12 +80,10 @@ tailwind.config.ts
 <h2 align="center">Screenshots</h2>
 
 <p align="center">
-  <img src="screenshots/Screenshot-1.png" alt="Screenshot 1" width="420" />
-  <img src="screenshots/Screenshot-2.png" alt="Screenshot 2" width="420" />
-  <img src="screenshots/Screenshot-3.png" alt="Screenshot 3" width="420" />
-  <img src="screenshots/Screenshot-4.png" alt="Screenshot 4" width="420" />
-  <img src="screenshots/Screenshot-5.png" alt="Screenshot 5" width="420" />
-  <img src="screenshots/Screenshot-6.png" alt="Screenshot 6" width="420" />
+  <img src="screenshots/Screenshot-1.png" alt="Screenshot 1" width="320" />
+  <img src="screenshots/Screenshot-2.png" alt="Screenshot 2" width="320" />
+  <img src="screenshots/Screenshot-3.png" alt="Screenshot 3" width="320" />
+  <img src="screenshots/Screenshot-4.png" alt="Screenshot 4" width="320" />
 </p>
 
 ## Key Features
@@ -113,7 +113,7 @@ We welcome contributions to SkyBox! Here's how you can get involved:
 1. **Clone the repository:**
 
    ```bash
-   git clone https://github.com/pamod-madubashana/SkyBox.git
+   git clone https://github.com/TG-SkyBox/SkyBox.git
    cd SkyBox
    ```
 
@@ -170,3 +170,9 @@ The project follows a typical Tauri application structure:
 3. Make your changes
 4. Ensure your code follows the style guidelines
 5. Submit a pull request with a clear description of your changes
+
+## 💖 Acknowledgements & Credits
+
+Skybox wouldn't be possible without these amazing open-source projects:
+
+* **[Grammers](https://codeberg.org/Lonami/grammers)** – A set of Rust crates for the Telegram MTProto protocol, created by **[Lonami](https://codeberg.org/Lonami)**.
